@@ -2,9 +2,9 @@
 // ファイルの読み書きそのものは VaultIO に任せる(本番は Electron の main、試験は一時ディレクトリ)。
 
 import { parseNode, serializeNode } from "./frontmatter";
-import { ID_RE, newId, nowIso } from "./ids";
+import { ID_RE, newId, nowIso, randomId } from "./ids";
 import { Index } from "./indexer";
-import { cloneNode, ROOT_ID, ROOT_TITLE, type CardRef, type Link, type LinkKind, type NodeType, type SpreadRef, type TDNode } from "./types";
+import { cloneNode, ROOT_ID, ROOT_TITLE, type CardRef, type Link, type LinkKind, type NodeType, type SpreadRef, type Stroke, type TDNode } from "./types";
 
 export interface VaultIO {
   /** 一時ファイルに書いてからリネームする。.trash/ に同じ名前があれば消す(復元) */
@@ -91,7 +91,7 @@ export class Vault {
       const t = this.now();
       const root: TDNode = {
         id: ROOT_ID, title: ROOT_TITLE, type: "group", color: 0, created: t, updated: t,
-        members: [], links: [], body: "", extra: {},
+        members: [], refs: [], strokes: [], links: [], body: "", extra: {},
       };
       this.setRaw(ROOT_ID, root);
     } else if (this.nodes.get(ROOT_ID)!.type !== "group") {
@@ -145,6 +145,33 @@ export class Vault {
   memberPos(group: string, id: string): { x: number; y: number } | null {
     const m = this.nodes.get(group)?.members.find((m) => m.id === id);
     return m ? { x: m.x, y: m.y } : null;
+  }
+  /** このグループに引用として置いてあるもの(存在するもの。所属しているものは除く) */
+  refsOf(group: string): { id: string; x: number; y: number }[] {
+    const g = this.nodes.get(group);
+    if (!g || g.type !== "group") return [];
+    return g.refs.filter((m) => this.nodes.has(m.id) && !g.members.some((x) => x.id === m.id));
+  }
+  /** キャンバスに描くもの全部(所属 + 引用) */
+  itemsOf(group: string): { id: string; x: number; y: number; ref: boolean }[] {
+    return [...this.membersOf(group).map((m) => ({ ...m, ref: false })), ...this.refsOf(group).map((m) => ({ ...m, ref: true }))];
+  }
+  itemPos(group: string, id: string): { x: number; y: number; ref: boolean } | null {
+    const m = this.memberPos(group, id);
+    if (m) return { ...m, ref: false };
+    const r = this.nodes.get(group)?.refs.find((m) => m.id === id);
+    return r ? { x: r.x, y: r.y, ref: true } : null;
+  }
+  isRefIn(group: string, id: string): boolean {
+    return this.itemPos(group, id)?.ref === true;
+  }
+  /** このノードを引用しているグループ */
+  quotedBy(id: string): string[] {
+    return this.index.quotedByOf(id).filter((g) => this.nodes.get(g)?.type === "group");
+  }
+  strokesOf(group: string): Stroke[] {
+    const g = this.nodes.get(group);
+    return g?.type === "group" ? g.strokes : [];
   }
   /** 両方向のどちらかに線があれば返す */
   findLine(a: string, b: string): { from: string; link: Link } | null {
@@ -284,7 +311,7 @@ export class Vault {
       const t = this.now();
       const n: TDNode = {
         id, title: o.title ?? "", type: o.type, color: o.color ?? 0, created: t, updated: t,
-        members: [], links: [], body: o.body ?? "", extra: {},
+        members: [], refs: [], strokes: [], links: [], body: o.body ?? "", extra: {},
       };
       if (o.card) n.card = { ...o.card };
       if (o.spread) n.spread = { ...o.spread };
@@ -315,7 +342,7 @@ export class Vault {
     this.tx(() => {
       const g = this.mut(group);
       for (const p of positions) {
-        const m = g.members.find((m) => m.id === p.id);
+        const m = g.members.find((m) => m.id === p.id) ?? g.refs.find((m) => m.id === p.id);
         if (m) {
           m.x = p.x;
           m.y = p.y;
@@ -408,8 +435,61 @@ export class Vault {
     });
   }
 
-  /** 外す: このグループの members から抜く。最後の所属なら根に入る。根が最後の所属なら何もしない(false) */
+  // ---------- 引用 ----------
+
+  /** 引用する: このグループに、ほかの物を見せる(所属はしない)。すでに所属・引用していれば何もしない */
+  addRef(group: string, child: string, x: number, y: number): boolean {
+    const g = this.nodes.get(group);
+    if (!g || g.type !== "group" || group === child || !this.nodes.has(child)) return false;
+    if (g.members.some((m) => m.id === child) || g.refs.some((m) => m.id === child)) return false;
+    this.tx(() => {
+      const gm = this.mut(group);
+      gm.refs.push({ id: child, x, y });
+      this.index.update(group, gm);
+    });
+    return true;
+  }
+
+  removeRef(group: string, child: string): boolean {
+    const g = this.nodes.get(group);
+    if (!g || !g.refs.some((m) => m.id === child)) return false;
+    this.tx(() => {
+      const gm = this.mut(group);
+      gm.refs = gm.refs.filter((m) => m.id !== child);
+      this.index.update(group, gm);
+    });
+    return true;
+  }
+
+  // ---------- ペンの線 ----------
+
+  addStroke(group: string, s: Omit<Stroke, "id">): Stroke {
+    const st: Stroke = { ...s, id: randomId().slice(0, 8), p: [...s.p] };
+    this.tx(() => {
+      this.mut(group).strokes.push(st);
+    });
+    return st;
+  }
+  removeStrokes(group: string, ids: string[]): void {
+    if (!ids.length) return;
+    this.tx(() => {
+      const g = this.mut(group);
+      g.strokes = g.strokes.filter((s) => !ids.includes(s.id));
+    });
+  }
+  moveStrokes(group: string, ids: string[], dx: number, dy: number): void {
+    if (!ids.length || (!dx && !dy)) return;
+    this.tx(() => {
+      for (const s of this.mut(group).strokes) {
+        if (!ids.includes(s.id)) continue;
+        s.p = s.p.map((v, i) => (i % 2 ? v + dy : v + dx));
+      }
+    });
+  }
+
+  /** 外す: このグループから抜く。引用なら引用を外す。所属で、最後の所属なら根に入る。根が最後の所属なら何もしない(false) */
   removeFromGroup(group: string, child: string): boolean {
+    if (this.isRefIn(group, child)) return this.removeRef(group, child);
     const parents = this.parentsOf(child);
     if (!parents.includes(group)) return false;
     if (group === ROOT_ID && parents.length === 1) return false;
@@ -423,8 +503,15 @@ export class Vault {
     return true;
   }
 
-  /** 別のグループへ移す(入れる + 外す) */
+  /** 別のグループへ移す(入れる + 外す)。引用なら、引用を移す */
   moveToGroup(from: string, to: string, child: string, x: number, y: number): void {
+    if (this.isRefIn(from, child)) {
+      this.tx(() => {
+        this.removeRef(from, child);
+        this.addRef(to, child, x, y);
+      });
+      return;
+    }
     if (!this.canContain(to, child)) throw new CycleError();
     this.tx(() => {
       this.addToGroup(to, child, x, y);
@@ -444,6 +531,12 @@ export class Vault {
           g.members = g.members.filter((m) => m.id !== id);
           this.index.update(p, g);
         }
+        // 元が消えたら、引用も消える
+        for (const q of this.quotedBy(id)) {
+          const g = this.mut(q);
+          g.refs = g.refs.filter((m) => m.id !== id);
+          this.index.update(q, g);
+        }
       }
       for (const id of targets) {
         const n = this.nodes.get(id)!;
@@ -458,20 +551,34 @@ export class Vault {
     });
   }
 
-  /** 束ねる: 選んだノードから新しいグループを作り、元の場所にそのグループを置く */
-  bundle(group: string, ids: string[], title = ""): TDNode {
-    const picked = ids.filter((id) => id !== ROOT_ID && this.memberPos(group, id));
-    if (!picked.length) throw new Error("束ねるノードがありません");
+  /** 束ねる: 選んだノード(と線)から新しいグループを作り、元の場所にそのグループを置く。引用は引用のまま移る */
+  bundle(group: string, ids: string[], title = "", strokeIds: string[] = []): TDNode {
+    const picked = ids.filter((id) => id !== ROOT_ID && this.itemPos(group, id));
+    const strokes = this.strokesOf(group).filter((s) => strokeIds.includes(s.id));
+    if (!picked.length && !strokes.length) throw new Error("束ねるノードがありません");
     return this.tx(() => {
-      const pos = picked.map((id) => ({ id, ...this.memberPos(group, id)! }));
-      const cx = pos.reduce((a, p) => a + p.x, 0) / pos.length;
-      const cy = pos.reduce((a, p) => a + p.y, 0) / pos.length;
-      const g = this.create({ type: "group", title, group, x: Math.round(cx), y: Math.round(cy) });
+      const pos = picked.map((id) => ({ id, ...this.itemPos(group, id)! }));
+      let cx: number, cy: number;
+      if (pos.length) {
+        cx = pos.reduce((a, p) => a + p.x, 0) / pos.length;
+        cy = pos.reduce((a, p) => a + p.y, 0) / pos.length;
+      } else {
+        const xs = strokes.flatMap((s) => s.p.filter((_, i) => i % 2 === 0));
+        const ys = strokes.flatMap((s) => s.p.filter((_, i) => i % 2 === 1));
+        cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+        cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      }
+      cx = Math.round(cx);
+      cy = Math.round(cy);
+      const g = this.create({ type: "group", title, group, x: cx, y: cy });
       const gm = this.mut(g.id);
-      for (const p of pos) gm.members.push({ id: p.id, x: Math.round(p.x - cx), y: Math.round(p.y - cy) });
+      for (const p of pos) (p.ref ? gm.refs : gm.members).push({ id: p.id, x: Math.round(p.x - cx), y: Math.round(p.y - cy) });
+      for (const s of strokes) gm.strokes.push({ ...s, p: s.p.map((v, i) => (i % 2 ? v - cy : v - cx)) });
       this.index.update(g.id, gm);
       const parent = this.mut(group);
       parent.members = parent.members.filter((m) => !picked.includes(m.id));
+      parent.refs = parent.refs.filter((m) => !picked.includes(m.id));
+      parent.strokes = parent.strokes.filter((s) => !strokeIds.includes(s.id));
       this.index.update(group, parent);
       return gm;
     });
@@ -485,11 +592,18 @@ export class Vault {
       const members = this.membersOf(groupId);
       const cx = members.length ? members.reduce((a, m) => a + m.x, 0) / members.length : 0;
       const cy = members.length ? members.reduce((a, m) => a + m.y, 0) / members.length : 0;
+      const refs = this.refsOf(groupId);
+      const strokes = this.strokesOf(groupId);
       for (const p of this.parentsOf(groupId)) {
         const gp = this.memberPos(p, groupId)!;
         for (const m of members) {
           if (this.memberPos(p, m.id)) continue;
           this.addToGroup(p, m.id, Math.round(gp.x + m.x - cx), Math.round(gp.y + m.y - cy));
+        }
+        for (const r of refs) this.addRef(p, r.id, Math.round(gp.x + r.x - cx), Math.round(gp.y + r.y - cy));
+        if (strokes.length) {
+          const pm = this.mut(p);
+          for (const s of strokes) pm.strokes.push({ ...s, id: randomId().slice(0, 8), p: s.p.map((v, i) => (i % 2 ? v + gp.y - cy : v + gp.x - cx)) });
         }
       }
       this.trash([groupId]);

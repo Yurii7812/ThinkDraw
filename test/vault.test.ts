@@ -207,3 +207,59 @@ describe("本文と元に戻す", () => {
     expect(v.get(a)!.body).toBe("新しい本文");
   });
 });
+
+describe("引用(所属とは別)", () => {
+  it("引用は所属に数えない・元を消すと引用も消える・外すと引用だけ外れる", () => {
+    const G = group("G");
+    const H = group("H");
+    const a = text("a", G);
+    expect(v.addRef(H, a, 5, 5)).toBe(true);
+    expect(v.parentsOf(a)).toEqual([G]);
+    expect(v.quotedBy(a)).toEqual([H]);
+    expect(v.itemsOf(H).find((i) => i.id === a)?.ref).toBe(true);
+    expect(v.addRef(G, a, 0, 0)).toBe(false); // 所属しているところには引用しない
+    v.removeFromGroup(H, a);
+    expect(v.quotedBy(a)).toEqual([]);
+    expect(v.parentsOf(a)).toEqual([G]);
+    v.addRef(H, a, 5, 5);
+    v.trash([a]);
+    expect(v.refsOf(H)).toEqual([]);
+    v.undo();
+    expect(v.quotedBy(a)).toEqual([H]);
+  });
+  it("引用だけのノードは、所属を失うと根に入る", () => {
+    const G = group("G");
+    const H = group("H");
+    const a = text("a", G);
+    v.addRef(H, a, 0, 0);
+    v.trash([G]);
+    expect(v.parentsOf(a)).toEqual([ROOT_ID]);
+    expect(v.quotedBy(a)).toEqual([H]);
+  });
+  it("グループは祖先も引用できる(入れ子ではないので循環にならない)", () => {
+    const A = group("A");
+    const B = group("B", A);
+    expect(v.addRef(B, A, 0, 0)).toBe(true);
+  });
+  it("束ねると、引用は引用のまま、線も一緒に移る", () => {
+    const G = group("G");
+    const a = text("a", G, 0, 0);
+    const b = text("b");
+    v.addRef(G, b, 100, 0);
+    const s = v.addStroke(G, { c: 1, w: 3, p: [0, 0, 100, 0] });
+    const n = v.bundle(G, [a, b], "束", [s.id]);
+    expect(v.parentsOf(b)).toEqual([ROOT_ID]);
+    expect(v.quotedBy(b)).toEqual([n.id]);
+    expect(v.strokesOf(G)).toEqual([]);
+    expect(v.strokesOf(n.id)[0].p).toEqual([-50, 0, 50, 0]);
+  });
+  it("ペンの線: 足す・動かす・消す・元に戻す", () => {
+    const s = v.addStroke(ROOT_ID, { c: 2, w: 3, p: [0, 0, 1, 1] });
+    v.moveStrokes(ROOT_ID, [s.id], 10, 20);
+    expect(v.strokesOf(ROOT_ID)[0].p).toEqual([10, 20, 11, 21]);
+    v.removeStrokes(ROOT_ID, [s.id]);
+    expect(v.strokesOf(ROOT_ID)).toEqual([]);
+    v.undo();
+    expect(v.strokesOf(ROOT_ID).length).toBe(1);
+  });
+});

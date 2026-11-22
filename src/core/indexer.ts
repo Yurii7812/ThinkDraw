@@ -6,6 +6,7 @@ import type { TDNode } from "./types";
 
 interface Contribution {
   members: string[];
+  refs: string[];
   linkTargets: string[]; // 線と本文のリンクの両方
 }
 
@@ -14,12 +15,15 @@ export class Index {
   private parents = new Map<string, Set<string>>();
   /** リンク先 → リンク元 */
   private backlinks = new Map<string, Set<string>>();
+  /** 引用されているノード → 引用しているグループ */
+  private quotedBy = new Map<string, Set<string>>();
   private contrib = new Map<string, Contribution>();
   private haystack = new Map<string, { title: string; body: string }>();
 
   clear(): void {
     this.parents.clear();
     this.backlinks.clear();
+    this.quotedBy.clear();
     this.contrib.clear();
     this.haystack.clear();
   }
@@ -29,11 +33,18 @@ export class Index {
     if (old) {
       for (const c of old.members) this.parents.get(c)?.delete(id);
       for (const t of old.linkTargets) this.backlinks.get(t)?.delete(id);
+      for (const r of old.refs) this.quotedBy.get(r)?.delete(id);
       this.contrib.delete(id);
       this.haystack.delete(id);
     }
     if (!node) return;
     const members = node.type === "group" ? [...new Set(node.members.map((m) => m.id))] : [];
+    const refs = node.type === "group" ? [...new Set(node.refs.map((m) => m.id))] : [];
+    for (const r of refs) {
+      let s = this.quotedBy.get(r);
+      if (!s) this.quotedBy.set(r, (s = new Set()));
+      s.add(id);
+    }
     const linkTargets = [...new Set([...node.links.map((l) => l.to), ...bodyLinkTargets(node.body)])].filter(
       (t) => t !== id,
     );
@@ -47,12 +58,15 @@ export class Index {
       if (!s) this.backlinks.set(t, (s = new Set()));
       s.add(id);
     }
-    this.contrib.set(id, { members, linkTargets });
+    this.contrib.set(id, { members, refs, linkTargets });
     this.haystack.set(id, { title: node.title.toLowerCase(), body: node.body.toLowerCase() });
   }
 
   parentsOf(id: string): string[] {
     return [...(this.parents.get(id) ?? [])];
+  }
+  quotedByOf(id: string): string[] {
+    return [...(this.quotedBy.get(id) ?? [])];
   }
   backlinksOf(id: string): string[] {
     return [...(this.backlinks.get(id) ?? [])];

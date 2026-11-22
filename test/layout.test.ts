@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildGroupGraph, buildNodeGraph, layoutGraph } from "../src/core/graphLayout";
+import { buildGroupGraph, buildLocalGraph, layoutGraph } from "../src/core/graphLayout";
 import { CARD_H, CARD_W, drawCards, placeFree, placeSpread } from "../src/core/spreadLayout";
 import { ROOT_ID } from "../src/core/types";
 import type { Vault } from "../src/core/vault";
@@ -49,11 +49,22 @@ describe("グラフの配置", () => {
     expect(l1.nodes.find((n) => n.id === ids.g1)!.y).toBeLessThan(g3.y);
   });
 
-  it("ノード表示の範囲は、今のグループの中身 + リンクで 1 歩", () => {
+  it("この辺り: 今のグループ・親子・引用・外へのリンクの先と、その所属先", () => {
     const ids = build(v);
-    const g = buildNodeGraph(v, ids.g1, "(無題)");
-    expect(g.nodes.map((n) => n.id).sort()).toEqual([ids.a, ids.b, ids.c].sort());
-    expect(g.edges.length).toBe(2);
+    const far = v.create({ type: "group", title: "遠く", group: ROOT_ID, x: 0, y: 0, id: "g000000009" }).id;
+    const q = v.create({ type: "text", title: "引用元", group: far, x: 0, y: 0, id: "t000000009" }).id;
+    v.addRef(ids.g1, q, 0, 0);
+    const g = buildLocalGraph(v, ids.g1, null, "(無題)");
+    const names = g.nodes.map((n) => n.id);
+    expect(names).toEqual(expect.arrayContaining([ids.g1, ROOT_ID, ids.g3, q, far, ids.c, ids.g2, ids.b]));
+    expect(names).not.toContain(ids.a); // 中だけでつながる物は出さない
+    expect(g.edges).toEqual(expect.arrayContaining([{ from: ids.g1, to: q, kind: "ref" }, { from: far, to: q, kind: "member" }]));
+    // 選んだノードが入っているほかのグループ
+    const h = v.create({ type: "group", title: "別", group: ROOT_ID, x: 0, y: 0, id: "g000000008" }).id;
+    v.addToGroup(h, ids.a, 0, 0);
+    const g2 = buildLocalGraph(v, ids.g1, ids.a, "(無題)");
+    expect(g2.edges).toEqual(expect.arrayContaining([{ from: h, to: ids.a, kind: "member" }]));
+    expect(layoutGraph(g2).nodes.length).toBe(g2.nodes.length);
   });
 
   it("構造が変わると key が変わる", () => {

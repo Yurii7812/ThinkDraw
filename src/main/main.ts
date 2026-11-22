@@ -7,6 +7,12 @@ import { atomicWrite, FsVaultIO } from "./fsio";
 
 // 試験のときは、利用者の設定・フォルダに触らないよう、環境変数で場所を差し替える
 if (process.env.THINKDRAW_USERDATA) app.setPath("userData", process.env.THINKDRAW_USERDATA);
+// 画面の試験(xvfb)では、窓が隠れていると見なされて描画が止まることがあるので、止めないようにする
+if (process.env.THINKDRAW_TEST) {
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("disable-background-timer-throttling");
+}
 
 protocol.registerSchemesAsPrivileged([{ scheme: "vault", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 

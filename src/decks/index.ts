@@ -38,7 +38,8 @@ export const DECKS: Record<string, Deck> = {
     cards: tarotCards as CardDef[],
     spreads: tarotSpreads as SpreadDef[],
     canReverse: true,
-    initialBody: "## この位置での読み\n\n\n\n## 自分の解釈\n\n",
+    // 2026-11-22 利用者の希望: 解釈はブレストの文字で書くので、カードの本文に初期の見出しは入れない
+    initialBody: "",
   },
 };
 
@@ -47,4 +48,18 @@ export function cardDef(deck: string, id: string): CardDef | undefined {
 }
 export function spreadDef(deck: string, id: string | undefined): SpreadDef | undefined {
   return id ? DECKS[deck]?.spreads.find((s) => s.id === id) : undefined;
+}
+
+import { HEX_BY_ID } from "./iching";
+import { PROMPT_BY_ID } from "./prompts";
+import type { CardRef } from "../core/types";
+
+/** どのデッキのカードでも、表示する名前 */
+export function cardName(c: CardRef): string {
+  if (c.deck === "iching") {
+    const h = HEX_BY_ID[c.id];
+    return h ? `第${h.num}卦 ${h.name}` : c.id;
+  }
+  if (c.deck === "prompt") return PROMPT_BY_ID[c.id]?.name ?? c.id;
+  return (cardDef(c.deck, c.id)?.ja ?? c.id) + (c.reversed ? "(逆位置)" : "");
 }

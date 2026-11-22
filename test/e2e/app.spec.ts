@@ -27,7 +27,7 @@ test.beforeEach(async () => {
   const base = process.env.TMPDIR || tmpdir();
   vault = mkdtempSync(path.join(base, "td-vault-"));
   userData = mkdtempSync(path.join(base, "td-user-"));
-  app = await electron.launch({ args: ["."], env: { ...process.env, THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData } });
+  app = await electron.launch({ args: ["."], env: { ...process.env, THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1" } });
   page = await app.firstWindow();
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.waitForSelector(".canvas");
@@ -38,42 +38,57 @@ test.afterEach(async () => {
   rmSync(userData, { recursive: true, force: true });
 });
 
-test("書いて Enter・Tab・Esc で、ノードと線ができる", async () => {
+async function write(x: number, y: number, t: string) {
+  await page.mouse.click(x, y);
+  await page.keyboard.type(t);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".node:not(.editing)", { hasText: t })).toHaveCount(1);
+}
+const idOf = (t: string) => Object.entries(mdFiles()).find(([, s]) => s.includes(`title: ${t}\n`))![0].replace(".md", "");
+
+test("書いて Enter・Tab・Esc で、ノードと線ができる(まわりに散らばる)", async () => {
   await settle();
   expect(mdFiles()["root.md"]).toContain("title: ホーム");
-  await page.mouse.click(300, 250);
+  await page.mouse.click(400, 300);
   await page.keyboard.type("考え");
-  await page.keyboard.press("Enter");
-  await page.keyboard.type("次の考え");
   await page.keyboard.press("Tab");
-  await page.keyboard.type("子");
+  await page.keyboard.type("子1");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("子2");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("子3");
   await page.keyboard.press("Escape");
   await settle();
   await shot("01-write");
-  expect(titles().sort()).toEqual(["ホーム", "子", "次の考え", "考え"].sort());
+  expect(titles().sort()).toEqual(["ホーム", "子1", "子2", "子3", "考え"].sort());
   const files = mdFiles();
-  const id = (t: string) => Object.entries(files).find(([, s]) => s.includes(`title: ${t}\n`))![0].replace(".md", "");
-  expect(files[id("次の考え") + ".md"]).toContain(`to: ${id("子")}`);
-  // 空にすると消える
-  await page.locator(".node", { hasText: "子" }).click();
+  for (const c of ["子1", "子2", "子3"]) expect(files[idOf("考え") + ".md"]).toContain(`to: ${idOf(c)}`);
+  // 重ならない
+  const boxes = await page.locator(".node").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => [r.x, r.y, r.width, r.height]));
+  for (let i = 0; i < boxes.length; i++)
+    for (let j = i + 1; j < boxes.length; j++) {
+      const [ax, ay, aw, ah] = boxes[i], [bx, by, bw, bh] = boxes[j];
+      expect(ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah).toBe(false);
+    }
+  // 1 回目のクリックは選ぶだけ、2 回目で書き直し。空にすると消える
+  await page.locator(".node", { hasText: "子3" }).click();
+  await expect(page.locator(".node.selected", { hasText: "子3" })).toHaveCount(1);
+  await expect(page.locator("textarea.draft")).toHaveCount(0);
+  await page.locator(".node", { hasText: "子3" }).click();
+  await expect(page.locator("textarea.draft")).toHaveCount(1);
   await page.keyboard.press("Control+a");
   await page.keyboard.press("Backspace");
   await page.keyboard.press("Escape");
   await settle();
-  expect(titles()).not.toContain("子");
-  // 元に戻す
+  expect(titles()).not.toContain("子3");
   await page.keyboard.press("Control+z");
   await settle();
-  expect(titles()).toContain("子");
+  expect(titles()).toContain("子3");
 });
 
-test("束ねる・開く・戻る、循環の拒否、検索", async () => {
-  for (const [x, y, t] of [[300, 200, "りんご"], [300, 300, "みかん"]] as const) {
-    await page.mouse.click(x, y);
-    await page.keyboard.type(t);
-    await page.keyboard.press("Escape");
-  }
-  await page.locator(".canvas").click({ position: { x: 900, y: 600 }, modifiers: ["Control"] });
+test("束ねる・開く・戻る、検索、グラフ", async () => {
+  await write(300, 200, "りんご");
+  await write(300, 300, "みかん");
   await page.keyboard.press("Control+a");
   await page.keyboard.press("Control+g");
   await page.keyboard.type("果物");
@@ -83,81 +98,139 @@ test("束ねる・開く・戻る、循環の拒否、検索", async () => {
   await page.locator(".node.t-group").dblclick();
   await expect(page.locator(".group-title")).toHaveText("果物");
   await expect(page.locator(".node")).toHaveCount(2);
-  await shot("02-in-group");
   await page.locator(".i-back").click();
   await expect(page.locator(".group-title")).toHaveText("ホーム");
-  // 検索で中のノードへ
   await page.keyboard.press("Control+k");
   await page.keyboard.type("みかん");
   await page.keyboard.press("Enter");
   await expect(page.locator(".group-title")).toHaveText("果物");
-  // グラフ
-  await page.keyboard.press("Control+e");
-  await expect(page.locator(".graph-panel")).toBeVisible();
+  if (!(await page.locator(".side-panel").isVisible())) await page.keyboard.press("Control+e");
+  await page.locator(".side-tabs .seg-b[data-tab=graph]").click();
+  await page.locator(".seg-b[data-mode=groups]").click();
   await expect(page.locator(".g-node")).toHaveCount(2);
+  await page.locator(".seg-b[data-mode=local]").click();
+  // 今のグループ・その親・選んでいるノード(検索で選ばれた「みかん」)
+  await expect(page.locator(".g-node")).toHaveCount(3);
   await shot("03-graph");
-  await page.locator(".seg-b[data-mode=nodes]").click();
-  await expect(page.locator(".g-node")).toHaveCount(2);
 });
 
-test("本文のポップアップ: 書く・リンク・バックリンク・大画面", async () => {
-  await page.mouse.click(300, 200);
-  await page.keyboard.type("相手");
-  await page.keyboard.press("Escape");
+test("ノートは大画面で開く・Ctrl+L で検索してリンク・バックリンク", async () => {
+  await write(300, 200, "相手");
   await page.mouse.click(300, 400, { button: "right" });
   await page.getByText("ノートを作る").click();
+  await expect(page.locator(".popup.expanded")).toBeVisible();
   await page.keyboard.type("メモ");
   await page.keyboard.press("Enter");
-  await page.keyboard.type("ここを見る");
-  await page.keyboard.press("Shift+Home");
-  await page.keyboard.press("Control+k");
+  await page.keyboard.type("前置き ");
+  await page.keyboard.press("Control+l");
   await page.keyboard.type("相手");
   await page.keyboard.press("Enter");
-  await page.locator(".b-expand").click();
-  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await page.keyboard.type(" を見る");
   await shot("04-popup");
   await page.keyboard.press("Escape");
   await settle();
-  const files = mdFiles();
-  const target = Object.entries(files).find(([, s]) => s.includes("title: 相手\n"))![0];
-  const note = Object.values(files).find((s) => s.includes("title: メモ\n"))!;
+  const note = Object.values(mdFiles()).find((s) => s.includes("title: メモ\n"))!;
   expect(note).toContain("type: note");
-  expect(note).toContain(`[ここを見る](${target})`);
-  // 相手のバックリンクにメモが出る
-  await page.locator(".node", { hasText: "相手" }).click({ button: "right" });
+  expect(note).toContain(`前置き [相手](${idOf("相手")}.md) を見る`);
+  await page.locator(".node.t-text", { hasText: "相手" }).click({ button: "right" });
   await page.getByText("本文を開く").click();
   await expect(page.locator(".pop-foot")).toContainText("メモ");
 });
 
-test("タロット: スプレッドを画面の中心に置く", async () => {
-  await page.locator(".tbtn.draw").click();
-  await page.locator(".spread-row", { hasText: "ケルト十字" }).click();
-  await page.locator(".modal .btn.primary").click();
+test("タロット: 引くメニューから置き、右の欄に解説、押すとつながった文字", async () => {
+  await page.locator(".draw-caret").click();
+  await expect(page.locator(".drawmenu")).toBeVisible();
+  await page.locator(".dm-q").fill("仕事はどうなる?");
+  await page.locator(".dm-tile", { hasText: "ケルト十字" }).click();
   await expect(page.locator(".node.t-card")).toHaveCount(10);
+  await expect(page.locator(".node.t-text", { hasText: "仕事はどうなる?" })).toHaveCount(1);
   await expect(page.locator(".spreadframe")).toHaveCount(1);
-  await expect(page.locator(".poslabel").first()).toBeVisible();
-  // 画像が読めている
   await expect.poll(() => page.locator(".node.t-card img").first().evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth > 0)).toBe(true);
-  const card = page.locator(".node.t-card").first();
-  await card.hover();
-  await page.waitForTimeout(100);
-  await card.hover({ position: { x: 20, y: 30 } });
-  await expect(page.locator(".cardtip")).toBeVisible();
+  await page.locator(".node.t-card").first().click();
+  await expect(page.locator(".side-panel .d-reading")).toBeVisible();
+  // 右の欄が、スクロールしなくても見える(1280×800)
+  const over = await page.locator(".side-panel .detail").evaluate((e) => e.scrollHeight - e.clientHeight);
+  expect(over).toBeLessThanOrEqual(0);
   await shot("05-tarot");
+  const chip = page.locator(".side-panel .d-sec .chip").first();
+  const word = (await chip.textContent())!;
+  await chip.click();
+  await expect(page.locator("textarea.draft")).toHaveValue(word);
+  await page.keyboard.press("Escape");
   await settle();
   const cards = Object.values(mdFiles()).filter((s) => s.includes("type: card"));
   expect(cards.length).toBe(10);
-  expect(cards[0]).toContain("deck: tarot");
-  expect(cards[0]).toContain("この位置での読み");
+  expect(titles()).toContain(word);
+});
+
+test("易と発想カード", async () => {
+  await page.locator(".draw-caret").click();
+  await page.locator(".dm-tabs button", { hasText: "易" }).click();
+  await page.locator(".dm-tile", { hasText: "卦を立てる" }).click();
+  await expect(page.locator(".node.deck-iching").first()).toBeVisible();
+  await page.locator(".node.deck-iching").first().click();
+  await expect(page.locator(".side-panel")).toContainText("易の読み方");
+  await page.locator(".draw-caret").click();
+  await page.locator(".dm-tabs button", { hasText: "発想カード" }).click();
+  await page.locator(".dm-tile", { hasText: "SCAMPER" }).click();
+  await expect(page.locator(".node.deck-prompt")).toHaveCount(7);
+  await shot("06-iching-prompt");
+  // 「引く」ボタンは最後の引き方をもう一度
+  await page.locator(".tbtn.draw").click();
+  await expect(page.locator(".node.deck-prompt")).toHaveCount(14);
+});
+
+test("ペン: 描く・選んで消す・元に戻す", async () => {
+  await page.locator(".i-pen").click();
+  await expect(page.locator(".penbar")).toBeVisible();
+  await page.locator(".penbar .sw.c1").click();
+  await page.mouse.move(300, 300);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(300 + i * 20, 300 + (i % 2) * 15);
+  await page.mouse.up();
+  await expect(page.locator("path.stroke")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".penbar")).toBeHidden();
+  await settle();
+  expect(mdFiles()["root.md"]).toMatch(/strokes:\n  - \{ id: \w+, c: 1, w: \d+, p: "-?\d+,-?\d+ /);
+  // 範囲選択で選んで消す
+  await page.mouse.move(250, 250);
+  await page.mouse.down();
+  await page.mouse.move(600, 380, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.locator("path.stroke.selected")).toHaveCount(1);
+  await page.keyboard.press("Delete");
+  await expect(page.locator("path.stroke")).toHaveCount(0);
+  await page.keyboard.press("Control+z");
+  await expect(page.locator("path.stroke")).toHaveCount(1);
+  await shot("07-pen");
+});
+
+test("引用: Ctrl+L でほかのグループの物を引用して線でつなぐ(点線の枠)", async () => {
+  await write(300, 200, "遠い話");
+  await page.locator(".node", { hasText: "遠い話" }).click();
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("別の箱");
+  await page.keyboard.press("Escape");
+  await write(300, 400, "こちら");
+  await page.locator(".node", { hasText: "こちら" }).click();
+  await page.keyboard.press("Control+l");
+  await page.keyboard.type("遠い話");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".node.ref", { hasText: "遠い話" })).toHaveCount(1);
+  await expect(page.locator(".edge")).toHaveCount(1);
+  await settle();
+  expect(mdFiles()["root.md"]).toContain(`refs:\n  - { id: ${idOf("遠い話")}`);
+  // 所属先は元のグループのまま
+  await page.locator(".node.ref").click();
+  await expect(page.locator(".side-panel .rel-row").first()).toContainText("別の箱");
+  await expect(page.locator(".side-panel .rel-row").nth(1)).toContainText("ホーム");
+  await shot("08-ref");
 });
 
 test("右ドラッグで動かす・重ねるとグループ・状態の復元", async () => {
-  for (const [x, y, t] of [[300, 200, "あ"], [600, 400, "い"]] as const) {
-    await page.mouse.click(x, y);
-    await page.keyboard.type(t);
-    await page.keyboard.press("Escape");
-  }
-  await expect(page.locator(".node:not(.editing)")).toHaveCount(2);
+  await write(300, 200, "あ");
+  await write(600, 400, "い");
   const a = page.locator(".node", { hasText: "あ" });
   const b = page.locator(".node", { hasText: "い" });
   const bb = (await b.boundingBox())!;
@@ -170,7 +243,6 @@ test("右ドラッグで動かす・重ねるとグループ・状態の復元",
   await page.keyboard.press("Escape");
   await expect(page.locator(".node.t-group")).toHaveCount(1);
   await settle();
-  // 左ドラッグで線: 空きへ引くと、つながった新しいノード
   await page.locator(".node.t-group").dblclick();
   const n = page.locator(".node", { hasText: "あ" });
   const nb = (await n.boundingBox())!;
@@ -183,8 +255,7 @@ test("右ドラッグで動かす・重ねるとグループ・状態の復元",
   await expect(page.locator(".edge")).toHaveCount(1);
   await settle();
   await app.close();
-  // 再び起動すると、最後のグループを開く
-  app = await electron.launch({ args: ["."], env: { ...process.env, THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData } });
+  app = await electron.launch({ args: ["."], env: { ...process.env, THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1" } });
   page = await app.firstWindow();
   await page.waitForSelector(".canvas");
   await expect(page.locator(".group-title")).not.toHaveText("ホーム");
@@ -192,20 +263,16 @@ test("右ドラッグで動かす・重ねるとグループ・状態の復元",
 });
 
 test("外部のエディタの変更を取り込む・ダーク・設定の画面", async () => {
-  await page.mouse.click(300, 200);
-  await page.keyboard.type("外から直す");
-  await page.keyboard.press("Escape");
+  await write(300, 200, "外から直す");
   await settle();
   const [name, src] = Object.entries(mdFiles()).find(([, s]) => s.includes("外から直す"))!;
   writeFileSync(path.join(vault, name), src.replace("title: 外から直す", "title: 直された"));
   await expect(page.locator(".node", { hasText: "直された" })).toBeVisible();
   await page.locator(".i-theme").click();
-  await page.locator(".tbtn.draw").click();
-  await page.locator(".spread-row", { hasText: "3枚（過去・現在・未来）" }).click();
-  await page.locator(".modal .btn.primary").click();
-  await page.keyboard.press("Control+e");
-  await shot("06-dark");
+  await page.locator(".draw-caret").click();
+  await page.locator(".dm-tile", { hasText: "過去・現在・未来" }).click();
+  await page.locator(".node.t-card").first().click();
+  await shot("09-dark");
   await page.keyboard.press("Control+/");
   await expect(page.locator(".shortcuts")).toBeVisible();
-  await shot("07-settings");
 });

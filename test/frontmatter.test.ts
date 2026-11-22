@@ -37,7 +37,7 @@ describe("frontmatter", () => {
   it("厄介な題・ラベル・カード・知らないキーも往復で壊れない", () => {
     const n: TDNode = {
       id: "abcdefghij", title: "a: b, {c} #d 'e\" - [f]", type: "card", color: 0,
-      created: "", updated: "", members: [], body: "---\n本文の中の --- \n",
+      created: "", updated: "", members: [], refs: [], strokes: [], body: "---\n本文の中の --- \n",
       links: [{ to: "zzzzzzzzzz", kind: "oppose", label: "なぜ, {か}: \"違う\"" }],
       card: { deck: "tarot", id: "m16", reversed: true },
       spread: { run: "q7w8e9r0t1", pos: "future", spread: "three" },
@@ -48,6 +48,17 @@ describe("frontmatter", () => {
       const back = parseNode(serializeNode(m), m.id);
       expect(back).toEqual(m);
     }
+  });
+
+  it("引用・ペンの線・易の変わる爻も往復で壊れない", () => {
+    const g: TDNode = {
+      id: "gggggggggg", title: "G", type: "group", color: 0, created: "", updated: "", body: "", extra: {}, links: [],
+      members: [{ id: "aaaaaaaaaa", x: 1, y: 2 }], refs: [{ id: "bbbbbbbbbb", x: -3, y: 4 }],
+      strokes: [{ id: "s1", c: 3, w: 2.5, p: [0, 0, 10, 5, 20, -7] }, { id: "s2", c: 0, w: 12, hl: true, p: [1, 1, 2, 2] }],
+    };
+    expect(parseNode(serializeNode(g), g.id)).toEqual(g);
+    const c: TDNode = { ...g, id: "cccccccccc", type: "card", members: [], refs: [], strokes: [], card: { deck: "iching", id: "h12", reversed: false, moving: [0, 4] } };
+    expect(parseNode(serializeNode(c), c.id)).toEqual(c);
   });
 
   it("frontmatter の無い .md は note として読む", () => {

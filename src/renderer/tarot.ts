@@ -1,117 +1,311 @@
-// タロット(SPEC 第 7 章): 「引く」の窓と、カードの意味の小さな窓
-import { randomInt, newId } from "../core/ids";
-import { CARD_H, CARD_W, drawCards, placeFree, placeSpread, type Placement } from "../core/spreadLayout";
+// 引く(SPEC 第 7 章 + 2026-11-22 の希望): 「引く」の横の ▾ で、デッキのタブ(タロット/易/発想カード/設定)。
+// 問いを書いてから引くと、問いを文字として置き、カードをそこにつなぐ。
+import { newId } from "../core/ids";
+import { freeOffset } from "../core/placement";
+import { CARD_H, CARD_W, placeFree, placeSpread, type Placement, type SpreadDef } from "../core/spreadLayout";
 import type { Vault } from "../core/vault";
 import { cardDef, DECKS, spreadDef } from "../decks";
+import { DEFAULT_DRAW, drawIching, drawPrompt, drawTarot, type DrawSettings } from "../decks/draw";
+import { HEX_BY_ID } from "../decks/iching";
+import { PROMPT_SETS } from "../decks/prompts";
+import { makeRand, RNG_METHODS, type RngMethod } from "../decks/rng";
+import { faceHeight, hexSvg } from "./cardface";
 import { T } from "./strings";
-import { h } from "./ui";
+import { h, svg } from "./ui";
 
-export interface DrawOptions {
-  spread: string | null; // null = 自由に引く
-  count: number;
-  reversed: boolean;
+/** 最後に使った引き方(「引く」ボタンで同じものをもう一度) */
+export type DrawKind =
+  | { k: "tarot"; spread: string | null; count: number }
+  | { k: "iching" }
+  | { k: "prompt"; mode: "one" | "random" }
+  | { k: "promptSet"; set: string };
+
+export interface DrawConfig extends DrawSettings {
+  method: RngMethod;
+  seedText: string;
+  last: DrawKind;
+}
+export const DEFAULT_CONFIG: DrawConfig = { ...DEFAULT_DRAW, method: "crypto", seedText: "", last: { k: "tarot", spread: "one", count: 1 } };
+
+export interface DrawTarget {
+  vault: Vault;
+  group: string;
+  center: { x: number; y: number };
+  /** 選んでいるノード(発想カードをつなぐ先) */
+  anchor: string | null;
+  /** anchor のまわりの空いている所 */
+  spotNear(id: string): { x: number; y: number };
+  /** 置く前にあったもの(重ならないようにずらすため) */
+  obstacles: { x: number; y: number; w: number; h: number }[];
 }
 
-/** 見えている画面の中心にスプレッドを置く。作ったカードの ID を返す */
-export function placeDraw(v: Vault, group: string, center: { x: number; y: number }, o: DrawOptions, deckId = "tarot"): string[] {
-  const deck = DECKS[deckId];
-  const sp = o.spread ? deck.spreads.find((s) => s.id === o.spread) : undefined;
-  const places: Placement[] = sp ? placeSpread(sp, center) : placeFree(Math.max(1, Math.min(deck.cards.length, o.count)), center);
-  const cards = drawCards(deck.cards, places.length, randomInt);
-  const run = newId(() => false);
+export function drawLabel(k: DrawKind): string {
+  if (k.k === "tarot") return k.spread ? DECKS.tarot.spreads.find((s) => s.id === k.spread)?.name ?? T.deckTarot : T.drawFreeN(k.count);
+  if (k.k === "iching") return T.ichingCast;
+  if (k.k === "prompt") return k.mode === "one" ? T.promptOne : T.promptRandom;
+  return PROMPT_SETS.find((s) => s.id === k.set)?.name ?? T.deckPrompt;
+}
+
+/** 引いて置く。置いたノードの ID を返す */
+export function runDraw(t: DrawTarget, cfg: DrawConfig, kind: DrawKind, question: string): string[] {
+  const v = t.vault;
+  const rand = makeRand(cfg.method, cfg.seedText || question);
   const ids: string[] = [];
+  const run = newId(() => false);
   v.tx(() => {
-    places.forEach((p, i) => {
-      const c = cards[i];
-      const n = v.create({
-        type: "card",
-        title: c.ja,
-        body: deck.initialBody,
-        group,
-        x: p.x,
-        y: p.y,
-        card: { deck: deckId, id: c.id, reversed: deck.canReverse && o.reversed && randomInt(2) === 1 },
-        spread: p.pos ? { run, pos: p.pos.id, spread: sp!.id } : { run },
+    const putQuestion = (x: number, y: number): string | null => {
+      if (!question.trim()) return null;
+      return v.create({ type: "text", title: question.trim(), group: t.group, x, y }).id;
+    };
+    if (kind.k === "tarot") {
+      const sp = kind.spread ? DECKS.tarot.spreads.find((s) => s.id === kind.spread) : undefined;
+      const places: Placement[] = sp ? placeSpread(sp, t.center) : placeFree(Math.max(1, Math.min(78, kind.count)), t.center);
+      const cards = drawTarot(places.length, cfg, rand);
+      const top = Math.min(...places.map((p) => p.y));
+      const q = putQuestion(Math.round(t.center.x - 60), Math.round(top - 90));
+      places.slice(0, cards.length).forEach((p, i) => {
+        const c = cards[i];
+        const n = v.create({
+          type: "card", title: c.def.ja, group: t.group, x: p.x, y: p.y,
+          card: { deck: "tarot", id: c.def.id, reversed: c.reversed },
+          spread: p.pos ? { run, pos: p.pos.id, spread: sp!.id } : { run },
+        });
+        ids.push(n.id);
+        if (q) v.addLink(q, n.id);
       });
+      if (q) ids.unshift(q);
+    } else if (kind.k === "iching") {
+      const r = drawIching(rand);
+      const hgt = faceHeight("iching", CARD_H);
+      const x0 = Math.round(t.center.x - (r.after ? CARD_W + 40 : CARD_W / 2));
+      const y0 = Math.round(t.center.y - hgt / 2);
+      const q = putQuestion(x0, y0 - 90);
+      const base = v.create({ type: "card", title: r.base.name, group: t.group, x: x0, y: y0, card: { deck: "iching", id: r.base.id, reversed: false, moving: r.moving }, spread: { run } });
+      ids.push(base.id);
+      if (q) {
+        v.addLink(q, base.id);
+        ids.unshift(q);
+      }
+      if (r.after) {
+        const after = v.create({ type: "card", title: r.after.name, group: t.group, x: x0 + CARD_W + 80, y: y0, card: { deck: "iching", id: r.after.id, reversed: false }, spread: { run } });
+        v.addLink(base.id, after.id, "arrow");
+        ids.push(after.id);
+      }
+    } else if (kind.k === "prompt") {
+      const sets = kind.mode === "one" ? cfg.promptSets : PROMPT_SETS.map((s) => s.id);
+      const p = drawPrompt(sets, rand);
+      const pos = t.anchor ? t.spotNear(t.anchor) : { x: Math.round(t.center.x - CARD_W / 2), y: Math.round(t.center.y - 60) };
+      const n = v.create({ type: "card", title: p.name, group: t.group, x: pos.x, y: pos.y, card: { deck: "prompt", id: p.id, reversed: false } });
+      if (t.anchor) v.addLink(t.anchor, n.id);
       ids.push(n.id);
-    });
+    } else {
+      // 発想カードの種類を、全部並べる(3 列の表。選んでいるものの下か、画面の真ん中)
+      const set = PROMPT_SETS.find((s) => s.id === kind.set)!;
+      const hgt = faceHeight("prompt", CARD_H) + 30;
+      const cols = 3;
+      let ox: number, oy: number;
+      if (t.anchor) {
+        const a = v.itemPos(t.group, t.anchor)!;
+        ox = a.x;
+        oy = a.y + 80;
+      } else {
+        const rows = Math.ceil(set.items.length / cols);
+        ox = Math.round(t.center.x - (cols * (CARD_W + 30)) / 2);
+        oy = Math.round(t.center.y - (rows * hgt) / 2);
+      }
+      set.items.forEach((p, i) => {
+        const n = v.create({ type: "card", title: p.name, group: t.group, x: ox + (i % cols) * (CARD_W + 30), y: oy + Math.floor(i / cols) * hgt, card: { deck: "prompt", id: p.id, reversed: false }, spread: { run } });
+        if (t.anchor) v.addLink(t.anchor, n.id);
+        ids.push(n.id);
+      });
+    }
+    // すでにあるものと重なるなら、まとめて一番近い空いた所へずらす(つなぐ先の近くに置く 1 枚は除く)
+    if (ids.length > 1 || !t.anchor) {
+      const boxes = ids.map((id) => {
+        const p = v.itemPos(t.group, id)!;
+        const n = v.get(id)!;
+        const w = n.type === "card" ? CARD_W : 120;
+        const hh = n.type === "card" ? faceHeight(n.card!.deck, CARD_H) + 34 : 30;
+        return { x: p.x, y: p.y, w, h: hh };
+      });
+      const { dx, dy } = freeOffset(boxes, t.obstacles);
+      if (dx || dy) v.move(t.group, ids.map((id) => { const p = v.itemPos(t.group, id)!; return { id, x: p.x + dx, y: p.y + dy }; }));
+    }
   });
   return ids;
 }
 
-export function openDrawDialog(initialReversed: boolean, last: { spread: string | null; count: number }): Promise<DrawOptions | null> {
-  return new Promise((resolve) => {
-    const deck = DECKS.tarot;
-    let chosen: string | null = last.spread ?? deck.spreads[0].id;
-    const list = h("div", { class: "spread-list" });
-    const count = h("input", { type: "number", min: 1, max: 78, value: String(last.count || 3), class: "count-input" });
-    const rows: HTMLElement[] = [];
-    const mark = () => rows.forEach((r) => r.classList.toggle("active", (r.dataset.id || null) === chosen));
-    const ordered = [...deck.spreads].sort((a, b) => a.pos.length - b.pos.length);
-    for (const s of ordered) {
-      const r = h("button", { class: "spread-row", "data-id": s.id }, h("span", { class: "sp-name", text: s.name }), h("span", { class: "sp-pos", text: s.pos.map((p) => p.name).join("・") }));
-      r.addEventListener("click", () => {
-        chosen = s.id;
-        mark();
-      });
-      r.addEventListener("dblclick", () => go());
-      rows.push(r);
-      list.append(r);
-    }
-    const free = h("button", { class: "spread-row", "data-id": "" }, h("span", { class: "sp-name", text: T.drawFree }), h("span", { class: "sp-pos" }, T.drawCount + " ", count));
-    free.addEventListener("click", () => {
-      chosen = null;
-      mark();
-    });
-    count.addEventListener("focus", () => {
-      chosen = null;
-      mark();
-    });
-    rows.push(free);
-    list.append(free);
-    mark();
-    const rev = h("input", { type: "checkbox", id: "draw-rev" });
-    rev.checked = initialReversed;
-    const ok = h("button", { class: "btn primary", text: T.drawGo });
-    const cancel = h("button", { class: "btn", text: T.cancel });
-    const box = h(
-      "div",
-      { class: "modal draw" },
-      h("div", { class: "modal-title", text: T.drawTitle }),
-      list,
-      h("div", { class: "row-between" }, h("label", { class: "check", for: "draw-rev" }, rev, T.drawReversed), h("div", { class: "row-end" }, cancel, ok)),
-    );
-    const back = h("div", { class: "backdrop" }, box);
-    const done = (r: DrawOptions | null) => {
-      back.remove();
-      removeEventListener("keydown", onKey, true);
-      resolve(r);
-    };
-    const go = () => done({ spread: chosen, count: Math.max(1, Math.min(78, Number(count.value) || 1)), reversed: rev.checked });
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        done(null);
-      } else if (e.key === "Enter" && !e.isComposing) {
-        e.stopPropagation();
-        e.preventDefault();
-        go();
-      }
-    };
-    addEventListener("keydown", onKey, true);
-    ok.addEventListener("click", go);
-    cancel.addEventListener("click", () => done(null));
-    back.addEventListener("mousedown", (e) => e.target === back && done(null));
-    document.body.append(back);
-    ok.focus();
-  });
+// ---------- メニュー ----------
+function mini(s: SpreadDef): SVGSVGElement {
+  const xs = s.pos.map((p) => p.x), ys = s.pos.map((p) => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const W = 72, H = 46, cw = 7, ch = 11;
+  const k = Math.min((W - cw) / Math.max(1, x1 - x0), (H - ch) / Math.max(1, y1 - y0), 0.09);
+  const ox = (W - (x1 - x0) * k - cw) / 2, oy = (H - (y1 - y0) * k - ch) / 2;
+  const el = svg("svg", { class: "dm-mini", viewBox: `0 0 ${W} ${H}`, width: W, height: H });
+  for (const p of s.pos) el.append(svg("rect", { x: (ox + (p.x - x0) * k).toFixed(1), y: (oy + (p.y - y0) * k).toFixed(1), width: cw, height: ch, rx: 1.5 }));
+  return el;
 }
 
+type Tab = "tarot" | "iching" | "prompt" | "settings";
+let openPop: HTMLElement | null = null;
+export function closeDrawMenu(): void {
+  openPop?.remove();
+  openPop = null;
+}
+export function drawMenuOpen(): boolean {
+  return !!openPop;
+}
+
+/**
+ * 引くメニューを開く。go(kind, question) で引く。設定を変えたら save(cfg)。
+ */
+export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, hasAnchor: boolean, go: (k: DrawKind, q: string) => void, save: (c: DrawConfig) => void): void {
+  closeDrawMenu();
+  const pop = h("div", { class: "drawmenu", role: "dialog" });
+  let question = "";
+  const tabs: [Tab, string][] = [["tarot", T.deckTarot], ["iching", T.deckIching], ["prompt", T.deckPrompt], ["settings", T.settingsTitle]];
+  const tile = (o: { name: string; sub?: string; pic?: Element | null; big?: boolean; n?: string; run: () => void }) => {
+    const b = h("button", { class: "dm-tile" + (o.big ? " big" : "") }, o.pic ?? null, h("span", { class: "dm-tx" }, h("b", { text: o.name }), o.sub ? h("small", { text: o.sub }) : null), o.n ? h("i", { class: "dm-n", text: o.n }) : null);
+    b.addEventListener("click", () => {
+      closeDrawMenu();
+      o.run();
+    });
+    return b;
+  };
+  const qInput = () => {
+    const i = h("input", { class: "dm-q", placeholder: T.questionPlaceholder, value: question });
+    i.addEventListener("input", () => (question = i.value));
+    i.addEventListener("keydown", (e) => e.stopPropagation());
+    return i;
+  };
+  const render = (t: Tab) => {
+    tab = t;
+    const head = h("div", { class: "dm-tabs" });
+    for (const [k, label] of tabs) {
+      const b = h("button", { class: k === t ? "on" : "", text: label });
+      b.addEventListener("click", () => render(k));
+      head.append(b);
+    }
+    const body = h("div", { class: "dm-body" });
+    if (t === "tarot") {
+      const groups: [string, string[]][] = [
+        ["1〜3 枚", ["one", "three", "three-sit", "three-rel", "three-mbs"]],
+        ["4〜7 枚", ["diamond", "five", "choice", "hexagram", "horseshoe"]],
+        ["たくさん", ["celtic", "tree", "year", "horoscope"]],
+      ];
+      body.append(qInput());
+      for (const [g, ids] of groups) {
+        body.append(h("div", { class: "dm-h", text: g }));
+        const grid = h("div", { class: "dm-grid" });
+        for (const id of ids) {
+          const s = DECKS.tarot.spreads.find((x) => x.id === id);
+          if (!s) continue;
+          grid.append(tile({ name: s.name.replace(/(.+?)(（.*）)$/, "$1"), sub: s.pos.map((p) => p.name).join("・"), pic: mini(s), n: `${s.pos.length}枚`, run: () => go({ k: "tarot", spread: s.id, count: s.pos.length }, question) }));
+        }
+        body.append(grid);
+      }
+      const count = h("input", { type: "number", min: 1, max: 78, value: "3", class: "count-input" });
+      count.addEventListener("keydown", (e) => e.stopPropagation());
+      const free = h("button", { class: "btn small", text: T.drawGo });
+      free.addEventListener("click", () => {
+        closeDrawMenu();
+        go({ k: "tarot", spread: null, count: Math.max(1, Math.min(78, Number(count.value) || 1)) }, question);
+      });
+      body.append(h("div", { class: "dm-h", text: T.drawFree }), h("div", { class: "row" }, count, h("span", { text: "枚" }), free));
+    } else if (t === "iching") {
+      body.append(
+        qInput(),
+        tile({ big: true, name: T.ichingCast, sub: T.ichingCastSub, pic: hexSvg(HEX_BY_ID.h11.lines, [2], 40), run: () => go({ k: "iching" }, question) }),
+        h("ol", { class: "dm-steps" },
+          h("li", {}, h("b", { text: T.ichingBase }), " " + T.ichingBaseHint),
+          h("li", {}, h("b", { text: T.ichingMoving }), " " + T.ichingMovingShort),
+          h("li", {}, h("b", { text: T.ichingAfter }), " " + T.ichingAfterHint)),
+      );
+    } else if (t === "prompt") {
+      body.append(
+        h("div", { class: "dm-grid" },
+          tile({ name: T.promptOne, sub: T.promptOneSub + (hasAnchor ? T.promptConnect : ""), run: () => go({ k: "prompt", mode: "one" }, "") }),
+          tile({ name: T.promptRandom, sub: T.promptRandomSub, run: () => go({ k: "prompt", mode: "random" }, "") })),
+        h("div", { class: "dm-h", text: hasAnchor ? T.promptAllNear : T.promptAll }),
+      );
+      const grid = h("div", { class: "dm-grid" });
+      for (const s of PROMPT_SETS.filter((x) => x.id !== "word" && x.id !== "ask"))
+        grid.append(tile({ name: s.name, sub: s.items.map((i) => i.name).join("・"), n: `${s.items.length}枚`, pic: h("span", { class: `dm-sw c${s.color}` }), run: () => go({ k: "promptSet", set: s.id }, "") }));
+      body.append(grid);
+    } else {
+      const set = (patch: Partial<DrawConfig>) => {
+        Object.assign(cfg, patch);
+        save(cfg);
+        render("settings");
+      };
+      const check = (label: string, on: boolean, f: (v: boolean) => void) => {
+        const i = h("input", { type: "checkbox" });
+        i.checked = on;
+        i.addEventListener("change", () => f(i.checked));
+        return h("label", { class: "check" }, i, label);
+      };
+      const select = <K extends string>(label: string, val: K, opts: [K, string][], f: (v: K) => void) => {
+        const s = h("select", {});
+        for (const [k, t2] of opts) {
+          const o = h("option", { value: k, text: t2 });
+          if (k === val) o.selected = true;
+          s.append(o);
+        }
+        s.addEventListener("change", () => f(s.value as K));
+        return h("label", { class: "dm-field" }, h("span", { text: label }), s);
+      };
+      body.append(
+        check(T.drawReversed, cfg.reversed, (v) => set({ reversed: v })),
+        select(T.poolLabel, cfg.pool, [["all", T.poolAll], ["major", T.poolMajor], ["minor", T.poolMinor]], (v) => set({ pool: v })),
+        select(T.shuffleLabel, cfg.shuffle, [["full", T.shuffleFull], ["riffle", T.shuffleRiffle]], (v) => set({ shuffle: v })),
+      );
+      if (cfg.shuffle === "riffle") {
+        const r = h("input", { type: "range", min: 1, max: 12, value: String(cfg.riffles) });
+        const lab = h("span", { class: "muted", text: `${cfg.riffles}回` });
+        r.addEventListener("input", () => (lab.textContent = `${r.value}回`));
+        r.addEventListener("change", () => set({ riffles: +r.value }));
+        body.append(h("div", { class: "row" }, h("span", { class: "muted", text: T.riffleCount }), r, lab));
+      }
+      body.append(select(T.methodLabel, cfg.method, RNG_METHODS.map(([k, t2, d]) => [k, `${t2}(${d})`] as [RngMethod, string]), (v) => set({ method: v })));
+      if (cfg.method === "word") {
+        const i = h("input", { class: "dm-q", placeholder: T.seedPlaceholder, value: cfg.seedText });
+        i.addEventListener("keydown", (e) => e.stopPropagation());
+        i.addEventListener("change", () => set({ seedText: i.value }));
+        body.append(i);
+      }
+      body.append(h("div", { class: "dm-h", text: T.promptSetsLabel }));
+      const checks = h("div", { class: "checks" });
+      for (const s of PROMPT_SETS)
+        checks.append(check(s.name, cfg.promptSets.includes(s.id), (v) => set({ promptSets: v ? [...cfg.promptSets, s.id] : cfg.promptSets.filter((x) => x !== s.id) })));
+      body.append(checks);
+    }
+    pop.replaceChildren(head, body);
+  };
+  render(tab);
+  document.body.append(pop);
+  const b = anchorEl.getBoundingClientRect();
+  pop.style.left = Math.max(8, Math.min(b.right - pop.offsetWidth, innerWidth - pop.offsetWidth - 8)) + "px";
+  pop.style.top = b.bottom + 6 + "px";
+  openPop = pop;
+  setTimeout(() => (pop.querySelector(".dm-q") as HTMLInputElement | null)?.focus(), 0);
+}
+
+addEventListener("pointerdown", (e) => {
+  if (openPop && !openPop.contains(e.target as Node) && !(e.target as Element).closest?.(".draw-caret")) closeDrawMenu();
+}, true);
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && openPop) {
+    e.stopPropagation();
+    closeDrawMenu();
+  }
+}, true);
+
+// ---------- カードにカーソルを合わせたときの小さな窓 ----------
 let tip: HTMLElement | null = null;
 let tipFor: string | null = null;
 let tipTimer: ReturnType<typeof setTimeout> | undefined;
 
-/** カードにカーソルを合わせると、意味を小さな窓で見せる(位置の意味も) */
 export function cardTip(v: Vault, id: string | null, e?: MouseEvent): void {
   if (!id) {
     clearTimeout(tipTimer);
@@ -132,21 +326,24 @@ export function cardTip(v: Vault, id: string | null, e?: MouseEvent): void {
   tipTimer = setTimeout(() => {
     const n = v.get(id);
     if (!n?.card || tipFor !== id) return;
-    const def = cardDef(n.card.deck, n.card.id);
-    if (!def) return;
-    const rv = n.card.reversed;
-    const pos = n.spread?.pos ? spreadDef(n.card.deck, n.spread.spread)?.pos.find((p) => p.id === n.spread!.pos) : undefined;
-    tip = h(
-      "div",
-      { class: "cardtip" },
-      h("div", { class: "ct-name", text: `${def.ja}  ${def.en}` }),
-      h("div", { class: "ct-orient", text: rv ? T.reversedLabel : T.upright }),
-      h("div", { class: "ct-text", text: (rv ? def.rv : def.up) ?? "" }),
-      def.kwUp ? h("div", { class: "ct-kw" }, h("b", { text: T.keywords + ": " }), (rv ? def.kwRv : def.kwUp) ?? "") : null,
-      def.question ? h("div", { class: "ct-q" }, h("b", { text: T.question + ": " }), def.question) : null,
-      pos ? h("div", { class: "ct-pos" }, h("b", { text: `${T.positionMeaning}(${pos.name}): ` }), pos.hint) : null,
-      ...(def.facts ?? []).map((f) => h("div", { class: "ct-fact", text: f })),
-    );
+    let parts: (HTMLElement | null)[] = [];
+    if (n.card.deck === "tarot") {
+      const def = cardDef(n.card.deck, n.card.id);
+      if (!def) return;
+      const rv = n.card.reversed;
+      const pos = n.spread?.pos ? spreadDef(n.card.deck, n.spread.spread)?.pos.find((p) => p.id === n.spread!.pos) : undefined;
+      parts = [
+        h("div", { class: "ct-name", text: `${def.ja}  ${def.en}` }),
+        h("div", { class: "ct-orient", text: rv ? T.reversedLabel : T.upright }),
+        h("div", { class: "ct-text", text: (rv ? def.rv : def.up) ?? "" }),
+        pos ? h("div", { class: "ct-pos" }, h("b", { text: `${T.positionMeaning}(${pos.name}): ` }), pos.hint) : null,
+      ];
+    } else if (n.card.deck === "iching") {
+      const hx = HEX_BY_ID[n.card.id];
+      if (!hx) return;
+      parts = [h("div", { class: "ct-name", text: `第${hx.num}卦 ${hx.name}` }), h("div", { class: "ct-orient", text: hx.kw }), h("div", { class: "ct-text", text: hx.text })];
+    } else return;
+    tip = h("div", { class: "cardtip" }, ...parts);
     document.body.append(tip);
     if (ev) position(ev);
   }, 350);
@@ -160,5 +357,3 @@ function position(e: MouseEvent): void {
   tip.style.left = x + "px";
   tip.style.top = y + "px";
 }
-
-export { CARD_W, CARD_H };

@@ -3,9 +3,9 @@
 // 書くのは自前(SPEC の例と同じ、1 行 1 項目の見やすい形にそろえるため)。
 
 import YAML from "yaml";
-import { LINK_KINDS, type Link, type LinkKind, type Member, type NodeType, type TDNode } from "./types";
+import { LINK_KINDS, type Link, type LinkKind, type Member, type NodeType, type Stroke, type TDNode } from "./types";
 
-const KNOWN = new Set(["id", "title", "type", "color", "created", "updated", "members", "links", "card", "spread"]);
+const KNOWN = new Set(["id", "title", "type", "color", "created", "updated", "members", "refs", "strokes", "links", "card", "spread"]);
 const TYPES: NodeType[] = ["text", "note", "group", "card"];
 
 export class ParseError extends Error {}
@@ -50,10 +50,24 @@ export function parseNode(src: string, fallbackId: string): TDNode {
     }
   }
   const type = TYPES.includes(data.type as NodeType) ? (data.type as NodeType) : fm === null ? "note" : "text";
-  const members: Member[] = Array.isArray(data.members)
-    ? (data.members as unknown[])
-        .filter((m): m is Record<string, unknown> => !!m && typeof m === "object" && "id" in (m as object))
-        .map((m) => ({ id: str(m.id), x: num(m.x), y: num(m.y) }))
+  const posList = (v: unknown): Member[] =>
+    Array.isArray(v)
+      ? (v as unknown[])
+          .filter((m): m is Record<string, unknown> => !!m && typeof m === "object" && "id" in (m as object))
+          .map((m) => ({ id: str(m.id), x: num(m.x), y: num(m.y) }))
+      : [];
+  const members = posList(data.members);
+  const refs = posList(data.refs);
+  const strokes: Stroke[] = Array.isArray(data.strokes)
+    ? (data.strokes as unknown[])
+        .filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
+        .map((s) => {
+          const pts = str(s.p).trim().split(/[\s,]+/).filter(Boolean).map(Number).filter(Number.isFinite);
+          const out: Stroke = { id: str(s.id), c: Math.max(0, Math.trunc(num(s.c))), w: Math.max(0.5, num(s.w, 3)), p: pts.length % 2 ? pts.slice(0, -1) : pts };
+          if (s.hl === true) out.hl = true;
+          return out;
+        })
+        .filter((s) => s.id && s.p.length >= 2)
     : [];
   const links: Link[] = Array.isArray(data.links)
     ? (data.links as unknown[])
@@ -76,6 +90,8 @@ export function parseNode(src: string, fallbackId: string): TDNode {
     created: str(data.created),
     updated: str(data.updated),
     members,
+    refs,
+    strokes,
     links,
     body,
     extra,
@@ -83,6 +99,7 @@ export function parseNode(src: string, fallbackId: string): TDNode {
   if (data.card && typeof data.card === "object") {
     const c = data.card as Record<string, unknown>;
     node.card = { deck: str(c.deck, "tarot"), id: str(c.id), reversed: c.reversed === true };
+    if (Array.isArray(c.moving)) node.card.moving = (c.moving as unknown[]).map((x) => Math.trunc(num(x))).filter((x) => x >= 0 && x <= 5);
   }
   if (data.spread && typeof data.spread === "object") {
     const s = data.spread as Record<string, unknown>;
@@ -140,6 +157,18 @@ export function serializeNode(n: TDNode): string {
       L.push("members:");
       for (const m of n.members) L.push(`  - ${flowMap({ id: m.id, x: round(m.x), y: round(m.y) })}`);
     }
+    if (n.refs.length) {
+      L.push("refs:");
+      for (const m of n.refs) L.push(`  - ${flowMap({ id: m.id, x: round(m.x), y: round(m.y) })}`);
+    }
+    if (n.strokes.length) {
+      L.push("strokes:");
+      for (const s of n.strokes) {
+        const pts: string[] = [];
+        for (let i = 0; i + 1 < s.p.length; i += 2) pts.push(`${Math.round(s.p[i])},${Math.round(s.p[i + 1])}`);
+        L.push(`  - ${flowMap({ id: s.id, c: s.c, w: round(s.w), hl: s.hl ? true : undefined, p: pts.join(" ") })}`);
+      }
+    }
   }
   if (n.links.length) {
     L.push("links:");
@@ -150,6 +179,7 @@ export function serializeNode(n: TDNode): string {
     L.push(`  deck: ${scalar(n.card.deck)}`);
     L.push(`  id: ${scalar(n.card.id)}`);
     L.push(`  reversed: ${n.card.reversed}`);
+    if (n.card.moving?.length) L.push(`  moving: [${n.card.moving.join(", ")}]`);
   }
   if (n.spread) {
     L.push("spread:");

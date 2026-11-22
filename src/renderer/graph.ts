@@ -1,16 +1,18 @@
 // グラフビュー(右のサイドパネル。SPEC 第 5 章)。静止した層状の配置。丸は動かせない(パンとズームだけ)
-import { buildGroupGraph, buildNodeGraph, graphKey, layoutGraph, type Layout } from "../core/graphLayout";
+import { buildGroupGraph, buildLocalGraph, graphKey, layoutGraph, type Layout } from "../core/graphLayout";
 import { ROOT_ID } from "../core/types";
 import type { Vault } from "../core/vault";
 import { T } from "./strings";
 import { api, h, svg } from "./ui";
 
-export type GraphMode = "groups" | "nodes";
+export type GraphMode = "local" | "groups";
 const LAYOUT_FILE = "graph-layout.json";
 
 export interface GraphHost {
   vault: Vault;
   currentGroup(): string;
+  /** キャンバスで選んでいるノード(1 つのとき) */
+  selectedNode(): string | null;
   openGroup(id: string): void;
   goToNode(id: string): void;
   onModeChange(m: GraphMode): void;
@@ -18,7 +20,7 @@ export interface GraphHost {
 
 export class GraphPanel {
   readonly el: HTMLElement;
-  mode: GraphMode = "groups";
+  mode: GraphMode = "local";
   private svgEl: SVGSVGElement;
   private gRoot: SVGGElement;
   private info: HTMLElement;
@@ -32,7 +34,7 @@ export class GraphPanel {
 
   constructor(private host: GraphHost, parent: HTMLElement) {
     const tabs = h("div", { class: "seg" });
-    for (const [m, label] of [["groups", T.graphGroups], ["nodes", T.graphNodes]] as const) {
+    for (const [m, label] of [["local", T.graphLocal], ["groups", T.graphGroups]] as const) {
       const b = h("button", { class: "seg-b", "data-mode": m, text: label });
       b.addEventListener("click", () => this.setMode(m));
       tabs.append(b);
@@ -45,7 +47,7 @@ export class GraphPanel {
     this.gRoot = svg("g");
     this.svgEl.append(defs, this.gRoot);
     this.info = h("div", { class: "graph-info" });
-    this.el = h("aside", { class: "graph-panel" }, h("div", { class: "graph-head" }, h("span", { class: "graph-title", text: T.graph }), tabs), this.svgEl, this.info);
+    this.el = h("div", { class: "graph-panel" }, h("div", { class: "graph-head" }, tabs), this.svgEl, this.info);
     parent.append(this.el);
     this.bind();
   }
@@ -73,22 +75,25 @@ export class GraphPanel {
     await this.loadCache();
     const v = this.host.vault;
     const cur = this.host.currentGroup();
-    const g = this.mode === "groups" ? buildGroupGraph(v, T.untitledGroup) : buildNodeGraph(v, cur, T.untitled);
+    const selNode = this.host.selectedNode();
+    const g = this.mode === "groups" ? buildGroupGraph(v, T.untitledGroup) : buildLocalGraph(v, cur, selNode, T.untitled);
     for (const n of g.nodes) if (n.id === ROOT_ID) n.label = T.home;
-    const slot = this.mode === "groups" ? "groups" : `nodes:${cur}`;
+    const slot = this.mode === "groups" ? "groups" : `local:${cur}`;
     let lay = this.cache[slot];
     const key = graphKey(g);
     if (!lay || lay.key !== key) {
       lay = layoutGraph(g);
       this.cache[slot] = lay;
       // ノード表示の保存は、直近のいくつかのグループだけ残す
-      const nodeSlots = Object.keys(this.cache).filter((k) => k.startsWith("nodes:"));
+      const nodeSlots = Object.keys(this.cache).filter((k) => k.startsWith("local:"));
       for (const k of nodeSlots.slice(0, Math.max(0, nodeSlots.length - 20))) delete this.cache[k];
       clearTimeout(this.saveTimer);
       this.saveTimer = setTimeout(() => api().writeApp(LAYOUT_FILE, JSON.stringify(this.cache)), 500);
     }
     this.layout = lay;
     if (this.selected && !lay.nodes.some((n) => n.id === this.selected)) this.selected = null;
+    // キャンバスで選んでいるノードを、グラフでも強調する
+    if (selNode && lay.nodes.some((n) => n.id === selNode)) this.selected = selNode;
     this.draw();
     if (this.fitted !== slot) {
       this.fitted = slot;
@@ -124,7 +129,7 @@ export class GraphPanel {
       const a = pos.get(e.from), b = pos.get(e.to);
       if (!a || !b) continue;
       let x1 = a.x, y1 = a.y, x2 = b.x, y2 = b.y;
-      if (e.kind === "member") {
+      if (e.kind === "member" && b.y > a.y) {
         y1 = a.y + a.h / 2;
         y2 = b.y - b.h / 2;
       } else {
@@ -139,8 +144,8 @@ export class GraphPanel {
       }
       const hot = sel && (e.from === sel || e.to === sel);
       const line = svg("path", {
-        d: e.kind === "member" ? `M${x1},${y1} C${x1},${(y1 + y2) / 2} ${x2},${(y1 + y2) / 2} ${x2},${y2}` : `M${x1},${y1} L${x2},${y2}`,
-        class: `g-edge ${e.kind === "member" ? "member" : "link k-" + e.kind}${hot ? " hot" : ""}`,
+        d: e.kind === "member" && b.y > a.y ? `M${x1},${y1} C${x1},${(y1 + y2) / 2} ${x2},${(y1 + y2) / 2} ${x2},${y2}` : `M${x1},${y1} L${x2},${y2}`,
+        class: `g-edge ${e.kind === "member" ? "member" : e.kind === "ref" ? "ref" : "link k-" + e.kind}${hot ? " hot" : ""}`,
       });
       if (e.kind === "arrow" || e.kind === "double") line.setAttribute("marker-end", "url(#g-arrow)");
       if (e.kind === "double") line.setAttribute("marker-start", "url(#g-arrow)");
@@ -175,7 +180,8 @@ export class GraphPanel {
     const n = v.get(id);
     this.info.replaceChildren(
       h("div", { class: "gi-title", text: id === ROOT_ID ? T.home : n?.title || T.untitled }),
-      h("div", { class: "gi-counts", text: T.graphCounts(v.parentsOf(id).length, v.backlinksOf(id).length) }),
+      h("div", { class: "gi-counts", text: T.graphCounts(v.parentsOf(id).length, v.quotedBy(id).length, v.backlinksOf(id).length) }),
+      h("div", { class: "gi-legend" }, h("span", { class: "lg member", text: T.belongsTo }), h("span", { class: "lg ref", text: T.quote }), h("span", { class: "lg link", text: T.linkWord })),
     );
   }
 

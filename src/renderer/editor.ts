@@ -10,7 +10,7 @@ import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { hrefToNodeId, nodeHref } from "../core/links";
 import { ROOT_ID } from "../core/types";
 import type { Vault } from "../core/vault";
-import { cardDef, DECKS } from "../decks";
+import { cardName } from "../decks";
 import { openPicker } from "./picker";
 import { T } from "./strings";
 import { api, h } from "./ui";
@@ -132,8 +132,7 @@ export class BodyPopup {
     };
     const head = h("div", { class: "pop-head" });
     if (n.type === "card" && n.card) {
-      const def = cardDef(n.card.deck, n.card.id);
-      head.append(h("div", { class: "pop-title static", text: (n.title || def?.ja || "") + (n.card.reversed ? T.reversedMark : "") }));
+      head.append(h("div", { class: "pop-title static", text: cardName(n.card) }));
     } else {
       const ti = h("input", { class: "pop-title", placeholder: n.type === "group" ? T.untitledGroup : T.titlePlaceholder, value: id === ROOT_ID ? T.home : n.title });
       if (id === ROOT_ID) ti.disabled = true;
@@ -178,8 +177,12 @@ export class BodyPopup {
           "Mod-Shift-z": redo,
           "Mod-b": toggleMark(schema.marks.strong),
           "Mod-i": toggleMark(schema.marks.em),
-          "Mod-k": () => {
+          "Mod-l": () => {
             this.makeLink();
+            return true;
+          },
+          "Mod-k": () => {
+            this.host.openSearch();
             return true;
           },
           Enter: splitListItem(schema.nodes.list_item),
@@ -229,10 +232,6 @@ export class BodyPopup {
     });
     this.renderFooter();
     this.unsub = v.onChange((ids) => this.onVaultChange(ids));
-    if (n.type === "card" && !n.body.trim()) {
-      // カードの本文の初期の見出し(旧アプリに合わせる)
-      this.view.dispatch(this.view.state.tr.replaceWith(0, this.view.state.doc.content.size, parseMarkdown(DECKS[n.card?.deck ?? "tarot"]?.initialBody ?? "").content));
-    }
     if (this.titleInput && !n.title && id !== ROOT_ID) this.titleInput.focus();
     else this.view.focus();
   }
@@ -311,22 +310,28 @@ export class BodyPopup {
     const back = v.backlinksOf(this.id);
     this.footer.replaceChildren(
       h("div", { class: "bl-row" }, h("span", { class: "bl-label", text: T.belongsTo }), ...chips(parents, (g) => this.host.goToGroup(g, this.id))),
+      h("div", { class: "bl-row" }, h("span", { class: "bl-label", text: T.quotedIn }), ...chips(v.quotedBy(this.id), (g) => this.host.goToGroup(g, this.id))),
       h("div", { class: "bl-row" }, h("span", { class: "bl-label", text: T.linkedFrom }), ...chips(back, (s) => this.host.goToNode(s, true))),
     );
   }
 
+  /** Ctrl+L: 検索してリンクをポンと入れる。文章を選んでいればそれをリンクに、無ければ [題](ID.md) を入れる */
   private async makeLink(): Promise<void> {
     const { from, to, empty } = this.view.state.selection;
-    if (empty) {
-      // 文章を選んでいないときは、普通の検索
-      this.host.openSearch();
-      return;
-    }
     const r = await openPicker(this.host.vault, { title: T.pickLinkTitle, mode: "link", exclude: (n) => n.id === this.id });
     this.view.focus();
     if (!r) return;
     const href = "id" in r ? nodeHref(r.id) : r.url;
-    const tr = this.view.state.tr.addMark(from, to, schema.marks.link.create({ href }));
+    const mark = schema.marks.link.create({ href });
+    if (empty) {
+      const n = "id" in r ? this.host.vault.get(r.id) : null;
+      const label = "id" in r ? (r.id === ROOT_ID ? T.home : n?.title || T.untitled) : r.url;
+      const tr = this.view.state.tr.insert(from, schema.text(label, [mark]));
+      const end = from + label.length;
+      this.view.dispatch(tr.setSelection(TextSelection.create(tr.doc, end)).removeStoredMark(schema.marks.link));
+      return;
+    }
+    const tr = this.view.state.tr.addMark(from, to, mark);
     this.view.dispatch(tr.setSelection(TextSelection.create(tr.doc, to)));
   }
 

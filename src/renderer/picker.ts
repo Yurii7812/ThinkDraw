@@ -8,7 +8,7 @@ export type PickResult = { id: string } | { url: string } | null;
 
 interface Opts {
   title: string;
-  mode: "search" | "link" | "group";
+  mode: "search" | "link" | "group" | "node";
   exclude?: (n: TDNode) => boolean;
   initial?: string;
 }

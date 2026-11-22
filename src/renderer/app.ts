@@ -1,49 +1,55 @@
-// 画面全体: 上部バー・キャンバス・グラフパネル・履歴・状態の保存・自動保存
+// 画面全体: 上部バー・キャンバス・右の欄(詳細|グラフ)・ペン・履歴・状態の保存・自動保存
 import { ROOT_ID } from "../core/types";
 import { Vault } from "../core/vault";
-import { Canvas, type View } from "./canvas";
+import { Canvas, PRESET_COLORS, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
-import { GraphPanel, type GraphMode } from "./graph";
+import type { GraphMode } from "./graph";
 import { openPicker } from "./picker";
+import { SidePanel, type SideTab } from "./side";
 import { SHORTCUTS, T } from "./strings";
-import { cardTip, openDrawDialog, placeDraw } from "./tarot";
+import { cardTip, closeDrawMenu, DEFAULT_CONFIG, drawLabel, drawMenuOpen, openDrawMenu, runDraw, type DrawConfig, type DrawKind } from "./tarot";
 import { api, closeMenu, h, menuOpen, toast } from "./ui";
 
 type Theme = "system" | "light" | "dark";
 interface AppState {
   views: Record<string, View>;
-  graphOpen: boolean;
+  graphOpen: boolean; // 右の欄が開いているか(名前は前の版のまま)
   graphMode: GraphMode;
+  sideTab: SideTab;
   lastGroup: string;
-  lastSpread?: string | null;
-  lastCount?: number;
 }
 interface Config {
   theme?: Theme;
-  reversed?: boolean;
+  draw?: Partial<DrawConfig>;
+  pen?: Partial<PenState>;
 }
 const STATE_FILE = "state.json";
 
 class App {
   vault!: Vault;
   canvas!: Canvas;
-  graph!: GraphPanel;
+  side!: SidePanel;
   popup: BodyPopup | null = null;
-  state: AppState = { views: {}, graphOpen: false, graphMode: "groups", lastGroup: ROOT_ID };
+  state: AppState = { views: {}, graphOpen: false, graphMode: "local", sideTab: "detail", lastGroup: ROOT_ID };
   config: Config = {};
+  draw: DrawConfig = { ...DEFAULT_CONFIG };
   dir = "";
   private backStack: string[] = [];
   private fwdStack: string[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private stateTimer: ReturnType<typeof setTimeout> | undefined;
-  private graphTimer: ReturnType<typeof setTimeout> | undefined;
+  private sideTimer: ReturnType<typeof setTimeout> | undefined;
   private titleEl!: HTMLElement;
   private btnBack!: HTMLButtonElement;
   private btnFwd!: HTMLButtonElement;
+  private btnDraw!: HTMLButtonElement;
+  private btnPen!: HTMLButtonElement;
+  private penBar!: HTMLElement;
   private main!: HTMLElement;
 
   async boot(): Promise<void> {
     this.config = (await api().getConfig()) ?? {};
+    this.draw = { ...DEFAULT_CONFIG, ...(this.config.draw ?? {}) };
     this.applyTheme();
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => this.applyTheme());
     const dir = await api().initialVault();
@@ -84,7 +90,9 @@ class App {
     this.vault = new Vault({ write: (n, c) => api().write(n, c), trash: (n, c) => api().trash(n, c) });
     this.vault.load(files);
     try {
-      this.state = { ...this.state, ...JSON.parse((await api().readApp(STATE_FILE)) ?? "{}") };
+      const st = JSON.parse((await api().readApp(STATE_FILE)) ?? "{}");
+      if (st.graphMode !== "local" && st.graphMode !== "groups") delete st.graphMode;
+      this.state = { ...this.state, ...st };
     } catch {
       /* 壊れていたら初期値 */
     }
@@ -114,6 +122,9 @@ class App {
     this.titleEl.addEventListener("click", () => this.openBody(this.canvas.group));
     const search = h("button", { class: "searchbox", text: T.searchPlaceholder });
     search.addEventListener("click", () => this.search());
+    this.btnDraw = btn("draw", "", () => this.drawAgain(), T.draw);
+    const caret = btn("draw-caret", T.drawMenu, () => this.openDraw(), "▾");
+    this.btnPen = btn("i-pen", T.penOn, () => this.togglePen(), T.pen);
     const bar = h(
       "header",
       { class: "topbar" },
@@ -123,60 +134,93 @@ class App {
         "div",
         { class: "tb-right" },
         search,
-        btn("draw", T.draw, () => this.draw(), T.draw),
+        this.btnPen,
+        h("div", { class: "split" }, this.btnDraw, caret),
         btn("i-theme", T.theme, () => this.setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")),
-        btn("i-graph", T.graph + " (Ctrl+E)", () => this.toggleGraph()),
+        btn("i-graph", T.sidePanel + " (Ctrl+E)", () => this.toggleSide()),
         btn("i-settings", T.settings + " (Ctrl+/)", () => this.settings()),
       ),
     );
+    this.updateDrawTitle();
     this.main = h("main", { class: "main" });
+    this.penBar = h("div", { class: "penbar" });
     document.body.replaceChildren(bar, this.main);
     this.canvas = new Canvas(
       {
         vault: this.vault,
         openGroup: (id) => this.openGroup(id),
         openBody: (id) => this.openBody(id),
-        pickGroup: async () => {
-          const r = await openPicker(this.vault, { title: T.pickGroupTitle, mode: "group" });
+        goToNode: (id) => this.goToNode(id, false, true),
+        pickGroup: async (title) => {
+          const r = await openPicker(this.vault, { title, mode: "group" });
           return r && "id" in r ? r.id : null;
         },
         cardHover: (id, e) => cardTip(this.vault, id, e),
-        cardImageUrl: (deck, file) => `../../assets/decks/${deck}/${file}`,
         onViewChange: (g, v) => {
           this.state.views[g] = v;
           this.saveState();
         },
-        onSelectionChange: () => {},
+        onSelectionChange: (ids) => this.onSelection(ids),
       },
       this.main,
     );
-    this.graph = new GraphPanel(
+    this.main.append(this.penBar);
+    this.side = new SidePanel(
       {
         vault: this.vault,
         currentGroup: () => this.canvas.group,
+        selectedNode: () => (this.canvas.selection.size === 1 ? [...this.canvas.selection][0] : null),
+        selection: () => [...this.canvas.selection],
         openGroup: (id) => this.openGroup(id),
         goToNode: (id) => this.goToNode(id, false),
         onModeChange: (m) => {
           this.state.graphMode = m;
           this.saveState();
         },
+        addConnected: (from, text, edit) => this.canvas.addConnected(from, text, edit),
+        select: (id) => this.canvas.setSelection([id]),
+        openBody: (id) => this.openBody(id),
+        openNode: (id) => this.canvas.open(id),
+        bundleSelection: () => this.canvas.bundleSelection(),
+        onTabChange: (t) => {
+          this.state.sideTab = t;
+          this.saveState();
+        },
       },
       this.main,
     );
-    this.graph.mode = this.state.graphMode;
-    this.main.classList.toggle("graph-open", this.state.graphOpen);
-    if (this.state.graphOpen) requestAnimationFrame(() => this.graph.render());
+    this.side.graph.mode = this.state.graphMode;
+    this.side.setTab(this.state.sideTab, false);
+    this.main.classList.toggle("side-open", this.state.graphOpen);
+    if (this.state.graphOpen) requestAnimationFrame(() => this.side.render());
+    this.canvas.setPen({ ...this.config.pen, on: false });
+    this.renderPenBar();
     this.bindKeys();
+  }
+
+  // ---------- 選択と右の欄 ----------
+  private onSelection(ids: string[]): void {
+    // カードと文字を選ぶと、右の欄の「詳細」を開く(2026-11-22 利用者の希望)
+    if (ids.length === 1) {
+      const t = this.vault.get(ids[0])?.type;
+      if (t === "card" || t === "text") {
+        if (!this.state.graphOpen) this.toggleSide(true);
+        if (this.side.tab !== "detail" && t === "card") this.side.setTab("detail");
+      }
+    }
+    this.renderSideSoon();
+  }
+  private renderSideSoon(): void {
+    if (!this.state.graphOpen) return;
+    clearTimeout(this.sideTimer);
+    this.sideTimer = setTimeout(() => this.side.render(), 60);
   }
 
   // ---------- 保存 ----------
   private onVaultChange(ids: Set<string>): void {
     this.canvas.requestRender();
     this.scheduleFlush();
-    if (this.state.graphOpen) {
-      clearTimeout(this.graphTimer);
-      this.graphTimer = setTimeout(() => this.graph.render(), 120);
-    }
+    this.renderSideSoon();
     if (!this.vault.exists(this.canvas.group)) {
       // 開いていたグループが消えた
       this.backStack = this.backStack.filter((g) => this.vault.exists(g));
@@ -226,7 +270,7 @@ class App {
     this.state.lastGroup = id;
     this.saveState();
     this.updateBar();
-    if (this.state.graphOpen) this.graph.render();
+    this.renderSideSoon();
   }
   back(): void {
     const g = this.backStack.pop();
@@ -240,11 +284,12 @@ class App {
     this.backStack.push(this.canvas.group);
     this.showGroup(this.vault.exists(g) ? g : ROOT_ID, "in");
   }
-  /** そのノード(が含まれるグループ)へ移る */
-  goToNode(id: string, openBody: boolean): void {
+  /** そのノード(が含まれるグループ)へ移る。home = 引用ではなく、所属しているグループへ */
+  goToNode(id: string, openBody: boolean, home = false): void {
     if (!this.vault.exists(id)) return;
     let g = this.canvas.group;
-    if (!this.vault.memberPos(g, id)) {
+    const here = this.vault.itemPos(g, id);
+    if (!here || (home && here.ref)) {
       const parents = this.vault.parentsOf(id);
       g = parents.includes(ROOT_ID) ? ROOT_ID : parents.sort()[0] ?? ROOT_ID;
     }
@@ -255,7 +300,8 @@ class App {
   // ---------- ポップアップ ----------
   openBody(id: string): void {
     if (!this.vault.exists(id)) return;
-    const expanded = this.popup?.expanded ?? false;
+    // ノートは最初から大画面で開く(2026-11-22 利用者の希望)。ほかは小さいポップアップ
+    const expanded = this.vault.get(id)!.type === "note";
     this.closePopup();
     this.canvas.commitDraft("esc");
     this.popup = new BodyPopup(
@@ -265,6 +311,7 @@ class App {
         goToNode: (n, ob) => this.goToNode(n, ob),
         closedEditor: () => {
           this.popup = null;
+          this.canvas.el.focus();
         },
         openSearch: () => this.search(),
       },
@@ -278,7 +325,7 @@ class App {
     this.popup = null;
   }
 
-  // ---------- 検索・引く・グラフ・設定 ----------
+  // ---------- 検索・引く・右の欄・設定 ----------
   async search(): Promise<void> {
     const r = await openPicker(this.vault, { title: T.searchTitle, mode: "search" });
     if (!r || !("id" in r)) return;
@@ -287,27 +334,89 @@ class App {
     else this.goToNode(r.id, false);
   }
 
-  async draw(): Promise<void> {
-    const o = await openDrawDialog(!!this.config.reversed, { spread: this.state.lastSpread ?? null, count: this.state.lastCount ?? 3 });
-    if (!o) return;
-    if (o.reversed !== !!this.config.reversed) {
-      this.config.reversed = o.reversed;
-      api().setConfig({ reversed: o.reversed });
+  private updateDrawTitle(): void {
+    this.btnDraw.title = `${T.draw}: ${drawLabel(this.draw.last)}(▾ で種類を選ぶ)`;
+  }
+  private saveDraw(): void {
+    this.config.draw = this.draw;
+    api().setConfig({ draw: this.draw });
+    this.updateDrawTitle();
+  }
+  openDraw(tab?: "tarot" | "iching" | "prompt" | "settings"): void {
+    if (drawMenuOpen()) {
+      closeDrawMenu();
+      return;
     }
-    this.state.lastSpread = o.spread;
-    this.state.lastCount = o.count;
-    this.saveState();
-    const ids = placeDraw(this.vault, this.canvas.group, this.canvas.visibleCenter(), o);
+    const lastTab = this.draw.last.k === "iching" ? "iching" : this.draw.last.k.startsWith("prompt") ? "prompt" : "tarot";
+    openDrawMenu(this.btnDraw.parentElement!, this.draw, tab ?? lastTab, this.canvas.selection.size === 1, (k, q) => this.doDraw(k, q), () => this.saveDraw());
+  }
+  drawAgain(): void {
+    this.doDraw(this.draw.last, "");
+  }
+  private doDraw(k: DrawKind, question: string): void {
+    this.draw.last = k;
+    this.saveDraw();
+    const anchor = this.canvas.selection.size === 1 ? [...this.canvas.selection][0] : null;
+    const ids = runDraw(
+      { vault: this.vault, group: this.canvas.group, center: this.canvas.visibleCenter(), anchor, spotNear: (id) => this.canvas.spot(id), obstacles: this.canvas.obstacles() },
+      this.draw,
+      k,
+      question,
+    );
     this.canvas.renderNow();
-    this.canvas.setSelection(ids);
+    this.canvas.setSelection(ids.length === 1 ? ids : []);
     this.canvas.ensureVisible(ids);
   }
 
-  toggleGraph(): void {
-    this.state.graphOpen = !this.state.graphOpen;
-    this.main.classList.toggle("graph-open", this.state.graphOpen);
+  toggleSide(open?: boolean): void {
+    this.state.graphOpen = open ?? !this.state.graphOpen;
+    this.main.classList.toggle("side-open", this.state.graphOpen);
     this.saveState();
-    if (this.state.graphOpen) requestAnimationFrame(() => this.graph.render());
+    if (this.state.graphOpen) requestAnimationFrame(() => this.side.render());
+  }
+
+  // ---------- ペン ----------
+  togglePen(on?: boolean): void {
+    this.canvas.setPen({ on: on ?? !this.canvas.pen.on });
+    this.renderPenBar();
+  }
+  private setPen(p: Partial<PenState>): void {
+    this.canvas.setPen(p);
+    const { on: _on, ...keep } = this.canvas.pen;
+    this.config.pen = keep;
+    api().setConfig({ pen: keep });
+    this.renderPenBar();
+  }
+  private renderPenBar(): void {
+    const p = this.canvas.pen;
+    this.btnPen.classList.toggle("on", p.on);
+    this.penBar.hidden = !p.on;
+    if (!p.on) return;
+    const tool = (t: PenState["tool"], label: string) => {
+      const b = h("button", { class: "pb-tool" + (p.tool === t ? " on" : ""), text: label, title: label });
+      b.addEventListener("click", () => this.setPen({ tool: t }));
+      return b;
+    };
+    const sizes = [2, 4, 8].map((w, i) => {
+      const b = h("button", { class: "pb-size" + (p.width === w ? " on" : ""), title: `${T.penSize}: ${T.penSizes[i]}` }, h("i", { style: `width:${w + 2}px;height:${w + 2}px` }));
+      b.addEventListener("click", () => this.setPen({ width: w }));
+      return b;
+    });
+    const range = h("input", { type: "range", min: 1, max: 30, value: String(p.width), title: T.penSize });
+    range.addEventListener("input", () => this.setPen({ width: +range.value }));
+    const colors = Array.from({ length: PRESET_COLORS + 1 }, (_, c) => {
+      const b = h("button", { class: `sw ink c${c}${p.color === c ? " active" : ""}`, title: c ? `${T.color} ${c}` : T.inkDefault });
+      b.addEventListener("click", () => this.setPen({ color: c }));
+      return b;
+    });
+    const done = h("button", { class: "btn small", text: T.penDone });
+    done.addEventListener("click", () => this.togglePen(false));
+    this.penBar.replaceChildren(
+      tool("pen", T.penPen), tool("hl", T.penHl), tool("eraser", T.penEraser),
+      h("span", { class: "pb-sep" }), ...sizes, range, h("span", { class: "pb-w", text: String(p.width) }),
+      h("span", { class: "pb-sep" }), ...colors,
+      h("span", { class: "pb-sep" }), done,
+    );
   }
 
   settings(): void {
@@ -318,12 +427,7 @@ class App {
       r.addEventListener("change", () => this.setTheme(t));
       return h("label", { class: "check" }, r, t === "system" ? T.themeSystem : t === "light" ? T.themeLight : T.themeDark);
     });
-    const rev = h("input", { type: "checkbox" });
-    rev.checked = !!this.config.reversed;
-    rev.addEventListener("change", () => {
-      this.config.reversed = rev.checked;
-      api().setConfig({ reversed: rev.checked });
-    });
+    const drawSet = h("button", { class: "btn", text: T.drawSettings });
     const open = h("button", { class: "btn", text: T.openFolder });
     open.addEventListener("click", async () => {
       const d = await api().chooseVault();
@@ -339,7 +443,7 @@ class App {
       { class: "modal settings" },
       h("div", { class: "modal-title", text: T.settingsTitle }),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.theme }), ...radios),
-      h("div", { class: "set-row" }, h("label", { class: "check" }, rev, T.drawReversed)),
+      h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.draw }), drawSet),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.vaultLabel }), h("code", { text: this.dir }), open),
       h("div", { class: "modal-title sub", text: T.shortcutsTitle }),
       table,
@@ -351,6 +455,10 @@ class App {
       back.remove();
       removeEventListener("keydown", onKey, true);
     };
+    drawSet.addEventListener("click", () => {
+      done();
+      this.openDraw("settings");
+    });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
@@ -370,7 +478,7 @@ class App {
       if (e.button === 4) this.forward();
     });
     addEventListener("keydown", (e) => {
-      if (document.querySelector(".backdrop") || menuOpen()) return; // 窓が開いている
+      if (document.querySelector(".backdrop") || menuOpen() || drawMenuOpen()) return; // 窓が開いている
       const inField = (e.target as Element)?.closest?.("input, textarea, .ProseMirror");
       const k = e.key.toLowerCase();
       if (e.ctrlKey && k === "k") {
@@ -395,7 +503,7 @@ class App {
       }
       if (e.ctrlKey && k === "e") {
         e.preventDefault();
-        this.toggleGraph();
+        this.toggleSide();
         return;
       }
       if (e.ctrlKey && e.key === "/") {
@@ -406,6 +514,10 @@ class App {
       if (inField) return;
       if (e.key === "Escape" && this.popup) {
         this.closePopup();
+        return;
+      }
+      if (e.key === "Escape" && this.canvas.pen.on) {
+        this.togglePen(false);
         return;
       }
       if (e.ctrlKey && k === "z") {

@@ -14,7 +14,7 @@ export interface GNode {
 export interface GEdge {
   from: string;
   to: string;
-  kind: "member" | LinkKind;
+  kind: "member" | "ref" | LinkKind;
 }
 export interface Graph {
   nodes: GNode[];
@@ -60,34 +60,72 @@ export function buildGroupGraph(v: Vault, emptyLabel: string): Graph {
     if (n.type !== "group") continue;
     nodes.push({ id: n.id, label: shortLabel(n.title, emptyLabel), kind: n.id === ROOT_ID ? "root" : "group" });
     for (const m of n.members) if (v.get(m.id)?.type === "group") edges.push({ from: n.id, to: m.id, kind: "member" });
+    for (const r of n.refs) if (v.get(r.id)?.type === "group") edges.push({ from: n.id, to: r.id, kind: "ref" });
     for (const l of n.links) if (v.get(l.to)?.type === "group") edges.push({ from: n.id, to: l.to, kind: l.kind });
   }
   return { nodes, edges };
 }
 
-/** ノード表示: 丸 = グループ以外のノード。線 = リンクだけ。範囲 = 今のグループの中身 + リンクで 1 歩 */
-export function buildNodeGraph(v: Vault, group: string, emptyLabel: string): Graph {
-  const isLeaf = (id: string) => {
+/**
+ * 「この辺り」表示(2026-11-22 利用者の希望): 今のグループを中心に、
+ * 親・子のグループ、引用し合うグループ、線でつながるグループ、中に引用している物(とその所属先)、
+ * 中の物から線・本文のリンクで出ている先(とその所属先)を出す。
+ * selected があれば、それと、それが所属・引用されているグループも出す。
+ */
+export function buildLocalGraph(v: Vault, group: string, selected: string | null, emptyLabel: string, max = 60): Graph {
+  const nodes = new Map<string, GNode>();
+  const edges = new Map<string, GEdge>();
+  const add = (id: string) => {
+    if (nodes.has(id) || nodes.size >= max) return nodes.has(id);
     const n = v.get(id);
-    return !!n && n.type !== "group";
+    if (!n) return false;
+    nodes.set(id, { id, label: shortLabel(n.title, emptyLabel), kind: id === ROOT_ID ? "root" : n.type });
+    return true;
   };
-  const set = new Set<string>();
-  for (const m of v.membersOf(group)) if (isLeaf(m.id)) set.add(m.id);
-  for (const id of [...set]) {
-    for (const t of v.index.outlinksOf(id)) if (isLeaf(t)) set.add(t);
-    for (const s of v.backlinksOf(id)) if (isLeaf(s)) set.add(s);
+  const edge = (from: string, to: string, kind: GEdge["kind"]) => {
+    if (from === to || !nodes.has(from) || !nodes.has(to)) return;
+    const k = `${from}>${to}:${kind}`;
+    if (!edges.has(k)) edges.set(k, { from, to, kind });
+  };
+  const homes = (id: string) => {
+    for (const p of v.parentsOf(id)) if (add(p)) edge(p, id, "member");
+  };
+  const quoters = (id: string) => {
+    for (const q of v.quotedBy(id)) if (add(q)) edge(q, id, "ref");
+  };
+  add(group);
+  homes(group);
+  quoters(group);
+  const g = v.get(group);
+  for (const m of v.membersOf(group)) if (v.get(m.id)?.type === "group" && add(m.id)) edge(group, m.id, "member");
+  for (const r of v.refsOf(group)) if (add(r.id)) {
+    edge(group, r.id, "ref");
+    homes(r.id);
   }
-  const nodes: GNode[] = [];
-  const edges: GEdge[] = [];
-  for (const id of set) {
+  for (const l of g?.links ?? []) if (add(l.to)) edge(group, l.to, l.kind);
+  for (const s of v.backlinksOf(group)) if (add(s)) edge(s, group, "line");
+  // 中の物から外へのリンク
+  const inside = new Set(v.itemsOf(group).map((i) => i.id));
+  for (const id of inside) {
     const n = v.get(id)!;
-    nodes.push({ id, label: shortLabel(n.title, emptyLabel), kind: n.type });
-    for (const l of n.links) if (set.has(l.to)) edges.push({ from: id, to: l.to, kind: l.kind });
-    // 本文のリンクは "line" として描く
-    for (const t of v.index.outlinksOf(id))
-      if (set.has(t) && !n.links.some((l) => l.to === t)) edges.push({ from: id, to: t, kind: "line" });
+    for (const t of v.index.outlinksOf(id)) {
+      if (inside.has(t) || !v.exists(t)) continue;
+      if (add(t)) {
+        if (!nodes.has(id)) add(id);
+        const kind = n.links.find((l) => l.to === t)?.kind ?? "line";
+        edge(id, t, kind);
+        if (!v.memberPos(group, id)) homes(id);
+        else edge(group, id, "member");
+        homes(t);
+      }
+    }
   }
-  return { nodes, edges };
+  if (selected && v.exists(selected) && add(selected)) {
+    homes(selected);
+    quoters(selected);
+    if (v.memberPos(group, selected)) edge(group, selected, "member");
+  }
+  return { nodes: [...nodes.values()], edges: [...edges.values()] };
 }
 
 /** 構造が同じなら同じ値。保存した配置を使い回すかどうかの判定に使う */
@@ -113,7 +151,7 @@ export function layoutGraph(g: Graph): Layout {
   const edges = g.edges
     .filter((e) => ids.has(e.from) && ids.has(e.to) && e.from !== e.to)
     .sort((a, b) => (a.from + a.to + a.kind < b.from + b.to + b.kind ? -1 : 1));
-  // 段を決めるのは所属の線。所属の線があるとき(グループ表示)は、リンクは配置に使わず、後から直線で描く
+  // 段を決めるのは所属の線。所属の線があるときは、引用とリンクは配置に使わず、後から直線で描く
   const hasMember = edges.some((e) => e.kind === "member");
   edges.forEach((e, i) => {
     if (hasMember && e.kind !== "member") return;
