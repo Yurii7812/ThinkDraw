@@ -15,6 +15,8 @@ sh install/linux.sh   # ランチャー(アプリの検索)から「thinkdraw」
 
 `install/linux.sh` は `~/.local/bin/thinkdraw`(この作業フォルダの `install/thinkdraw.sh` へのリンク)と `thinkdraw.desktop` を入れる。起動のたびに作業フォルダをまとめ直すので、変更はすぐ効く。
 
+更新するには `thinkdraw --update`(作業フォルダで `git pull --ff-only` と `npm install` をしてから起動する)。
+
 ## 試験
 
 ```sh

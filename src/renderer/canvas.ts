@@ -786,7 +786,10 @@ export class Canvas {
     }
   }
 
-  /** 1 回目 = 選ぶ、選んであるものをもう一度 = 開く(2026-11-22 利用者の希望) */
+  /**
+   * 文字: 1 回クリックですぐ書き直す(選ぶだけなら Ctrl+クリックか範囲選択)。
+   * グループ・ノート・カード: 1 回目 = 選ぶ、選んであるものをもう一度 = 開く。
+   */
   private clickNode(id: string, ctrl: boolean, target: Element, wasSelected: boolean): void {
     if (ctrl) {
       const s = new Set(this.selection);
@@ -795,10 +798,15 @@ export class Canvas {
       this.setSelection(s, this.strokeSel);
       return;
     }
-    if (!this.v.get(id)) return;
+    const node = this.v.get(id);
+    if (!node) return;
     if (target.closest("[data-act=body]")) {
       this.setSelection([id]);
       return this.host.openBody(id);
+    }
+    if (node.type === "text") {
+      this.setSelection([id]);
+      return this.open(id, target);
     }
     if (!wasSelected) {
       this.setSelection([id]);

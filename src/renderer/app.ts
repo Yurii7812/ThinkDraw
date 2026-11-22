@@ -13,7 +13,7 @@ import { api, closeMenu, h, menuOpen, toast } from "./ui";
 type Theme = "system" | "light" | "dark";
 interface AppState {
   views: Record<string, View>;
-  graphOpen: boolean; // 右の欄が開いているか(名前は前の版のまま)
+  graphOpen: boolean; // 右の欄を手で開いているか(名前は前の版のまま)。カードを選んで自動で開いた分は含めない
   graphMode: GraphMode;
   sideTab: SideTab;
   lastGroup: string;
@@ -30,6 +30,7 @@ class App {
   canvas!: Canvas;
   side!: SidePanel;
   popup: BodyPopup | null = null;
+  private sideAuto = false; // カードを選んで自動で開いている間だけ true(保存しない)
   state: AppState = { views: {}, graphOpen: false, graphMode: "local", sideTab: "detail", lastGroup: ROOT_ID };
   config: Config = {};
   draw: DrawConfig = { ...DEFAULT_CONFIG };
@@ -191,8 +192,7 @@ class App {
     );
     this.side.graph.mode = this.state.graphMode;
     this.side.setTab(this.state.sideTab, false);
-    this.main.classList.toggle("side-open", this.state.graphOpen);
-    if (this.state.graphOpen) requestAnimationFrame(() => this.side.render());
+    this.applySide();
     this.canvas.setPen({ ...this.config.pen, on: false });
     this.renderPenBar();
     this.bindKeys();
@@ -200,18 +200,25 @@ class App {
 
   // ---------- 選択と右の欄 ----------
   private onSelection(ids: string[]): void {
-    // カードと文字を選ぶと、右の欄の「詳細」を開く(2026-11-22 利用者の希望)
-    if (ids.length === 1) {
-      const t = this.vault.get(ids[0])?.type;
-      if (t === "card" || t === "text") {
-        if (!this.state.graphOpen) this.toggleSide(true);
-        if (this.side.tab !== "detail" && t === "card") this.side.setTab("detail");
+    // カードを 1 つ選んだときだけ、右の欄の「詳細」を自動で開く(文字では開かない)。
+    // 自動で開いた分は、選択を外すか別の種類を選ぶと閉じる(手で開いたものは閉じない・保存もしない)
+    const t = ids.length === 1 ? this.vault.get(ids[0])?.type : undefined;
+    if (t === "card") {
+      if (!this.sideVisible()) {
+        this.sideAuto = true;
+        this.applySide();
       }
+      if (this.side.tab !== "detail") this.side.setTab("detail");
+    } else if (this.sideAuto && t !== "text") {
+      // 空きをクリックして選択が外れたとき、複数選択、グループ・ノートを選んだときに閉じる。
+      // 文字は閉じない(欄の語を押して置いた文字や、読みながら書き直す文字で、欄が消えないように)
+      this.sideAuto = false;
+      this.applySide();
     }
     this.renderSideSoon();
   }
   private renderSideSoon(): void {
-    if (!this.state.graphOpen) return;
+    if (!this.sideVisible()) return;
     clearTimeout(this.sideTimer);
     this.sideTimer = setTimeout(() => this.side.render(), 60);
   }
@@ -368,11 +375,20 @@ class App {
     this.canvas.ensureVisible(ids);
   }
 
+  /** 右の欄が見えているか(手で開いた分 + カードを選んで自動で開いた分) */
+  private sideVisible(): boolean {
+    return this.state.graphOpen || this.sideAuto;
+  }
+  private applySide(): void {
+    this.main.classList.toggle("side-open", this.sideVisible());
+    if (this.sideVisible()) requestAnimationFrame(() => this.side.render());
+  }
+  /** 手での開閉。自動で開いているときに押すと閉じる */
   toggleSide(open?: boolean): void {
-    this.state.graphOpen = open ?? !this.state.graphOpen;
-    this.main.classList.toggle("side-open", this.state.graphOpen);
+    this.state.graphOpen = open ?? !this.sideVisible();
+    this.sideAuto = false;
+    this.applySide();
     this.saveState();
-    if (this.state.graphOpen) requestAnimationFrame(() => this.side.render());
   }
 
   // ---------- ペン ----------

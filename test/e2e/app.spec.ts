@@ -70,12 +70,10 @@ test("書いて Enter・Tab・Esc で、ノードと線ができる(まわりに
       const [ax, ay, aw, ah] = boxes[i], [bx, by, bw, bh] = boxes[j];
       expect(ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah).toBe(false);
     }
-  // 1 回目のクリックは選ぶだけ、2 回目で書き直し。空にすると消える
-  await page.locator(".node", { hasText: "子3" }).click();
-  await expect(page.locator(".node.selected", { hasText: "子3" })).toHaveCount(1);
-  await expect(page.locator("textarea.draft")).toHaveCount(0);
+  // 文字は 1 回クリックですぐ書き直せる。右の欄は開かない。空にすると消える
   await page.locator(".node", { hasText: "子3" }).click();
   await expect(page.locator("textarea.draft")).toHaveCount(1);
+  await expect(page.locator(".main.side-open")).toHaveCount(0);
   await page.keyboard.press("Control+a");
   await page.keyboard.press("Backspace");
   await page.keyboard.press("Escape");
@@ -208,12 +206,12 @@ test("ペン: 描く・選んで消す・元に戻す", async () => {
 
 test("引用: Ctrl+L でほかのグループの物を引用して線でつなぐ(点線の枠)", async () => {
   await write(300, 200, "遠い話");
-  await page.locator(".node", { hasText: "遠い話" }).click();
+  await page.locator(".node", { hasText: "遠い話" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+g");
   await page.keyboard.type("別の箱");
   await page.keyboard.press("Escape");
   await write(300, 400, "こちら");
-  await page.locator(".node", { hasText: "こちら" }).click();
+  await page.locator(".node", { hasText: "こちら" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+l");
   await page.keyboard.type("遠い話");
   await page.keyboard.press("Enter");
@@ -222,7 +220,8 @@ test("引用: Ctrl+L でほかのグループの物を引用して線でつな�
   await settle();
   expect(mdFiles()["root.md"]).toContain(`refs:\n  - { id: ${idOf("遠い話")}`);
   // 所属先は元のグループのまま
-  await page.locator(".node.ref").click();
+  await page.keyboard.press("Control+e");
+  await page.locator(".node.ref").click({ modifiers: ["Control"] });
   await expect(page.locator(".side-panel .rel-row").first()).toContainText("別の箱");
   await expect(page.locator(".side-panel .rel-row").nth(1)).toContainText("ホーム");
   await shot("08-ref");
@@ -275,4 +274,26 @@ test("外部のエディタの変更を取り込む・ダーク・設定の画�
   await shot("09-dark");
   await page.keyboard.press("Control+/");
   await expect(page.locator(".shortcuts")).toBeVisible();
+});
+
+test("右の欄: 文字では開かない・カードを選ぶと自動で開く・空きをクリックで閉じる・手で開いた分は残る", async () => {
+  await write(300, 200, "ふつうの文字");
+  await page.locator(".node", { hasText: "ふつうの文字" }).click();
+  await expect(page.locator("textarea.draft")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".main.side-open")).toHaveCount(0);
+  await page.locator(".draw-caret").click();
+  await page.locator(".dm-tile", { hasText: "過去・現在・未来" }).click();
+  await page.locator(".node.t-card").first().click();
+  await expect(page.locator(".main.side-open")).toHaveCount(1);
+  await page.mouse.click(60, 700);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".main.side-open")).toHaveCount(0);
+  // 手で開いた分は、カードを選んでも外しても閉じない
+  await page.keyboard.press("Control+e");
+  await expect(page.locator(".main.side-open")).toHaveCount(1);
+  await page.locator(".node.t-card").first().click();
+  await page.mouse.click(60, 700);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".main.side-open")).toHaveCount(1);
 });
