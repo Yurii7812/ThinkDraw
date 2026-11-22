@@ -312,9 +312,11 @@ input, textarea { font: inherit; color: inherit; }
 .side-panel { display: none; width: 360px; flex: none; border-left: 1px solid var(--line); background: var(--panel); flex-direction: column; min-height: 0; }
 .main.side-open .side-panel { display: flex; }
 .side-head { display: flex; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-.side-panel .detail, .side-panel .graph-wrap { flex: 1; min-height: 0; }
-.side-panel[data-tab="detail"] .graph-wrap { display: none; }
-.side-panel[data-tab="graph"] .detail { display: none; }
+.side-panel .detail, .side-panel .graph-wrap, .side-panel .map, .side-panel .rel { flex: 1; min-height: 0; }
+.side-panel:not([data-tab="graph"]) .graph-wrap { display: none; }
+.side-panel:not([data-tab="detail"]) .detail { display: none; }
+.side-panel:not([data-tab="map"]) .map { display: none; }
+.side-panel:not([data-tab="rel"]) .rel { display: none; }
 .graph-wrap { display: flex; flex-direction: column; }
 .graph-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .graph-head { display: flex; align-items: center; justify-content: flex-end; padding: 6px 10px; }
@@ -451,3 +453,32 @@ input, textarea { font: inherit; color: inherit; }
 
 .welcome { margin: auto; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px; }
 .welcome h1 { margin: 0 0 8px; font-weight: 600; }
+
+/* ---------- 右の欄: 地図(入れ子の一覧)と関係(押すと移る一覧) ---------- */
+.map { display: flex; flex-direction: column; font-size: 13px; }
+.map-head { padding: 8px 10px 6px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); }
+.map-filter { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: var(--bg); font-size: 12.5px; }
+.map-all { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.map-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 12px; }
+.tr, .rel-item { display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 6px; cursor: pointer; line-height: 1.7; }
+.tr:hover, .rel-item:hover { background: var(--accent-soft); }
+.tr.cur { background: var(--accent-soft); font-weight: 600; }
+.tr.sel { outline: 1.5px solid var(--accent); outline-offset: -1.5px; }
+.tr.ref .tr-name { font-style: italic; }
+.tr.ref { border-left: 2px dashed var(--muted); }
+.tr-chev { width: 14px; flex: none; border: 0; background: none; padding: 0; color: var(--muted); cursor: pointer; font-size: 11px; }
+.tr-chev.none { visibility: hidden; cursor: default; }
+.tr-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-sub { flex: none; font-size: 11px; color: var(--muted); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr .ico, .rel-item .ico { width: 14px; height: 14px; flex: none; background: currentColor; opacity: .75; }
+.rel { overflow: auto; padding: 8px 0 14px; font-size: 13px; }
+.rel-head { padding: 2px 12px 8px; border-bottom: 1px solid var(--line); }
+.rel-title { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; }
+.rel-title .ico { width: 15px; height: 15px; background: currentColor; }
+.rel-sec { padding: 8px 0 0; }
+.rel-sec .d-h { padding: 0 12px 2px; }
+.rel-sec .rel-item { padding-left: 14px; }
+.rel-none { padding: 0 14px; }
+.rel-hint { padding: 12px 12px 0; font-size: 11.5px; }
+.group-up { background: none; border: 0; cursor: pointer; color: var(--muted); font-size: 12px; padding: 4px 6px; border-radius: 6px; }
+.group-up:hover { background: var(--accent-soft); }

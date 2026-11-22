@@ -8,7 +8,7 @@ import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
 import { SHORTCUTS, T } from "./strings";
 import { cardTip, closeDrawMenu, DEFAULT_CONFIG, drawLabel, drawMenuOpen, openDrawMenu, runDraw, type DrawConfig, type DrawKind } from "./tarot";
-import { api, closeMenu, h, menuOpen, toast } from "./ui";
+import { api, closeMenu, h, menuOpen, showMenu, toast, type MenuItem } from "./ui";
 
 type Theme = "system" | "light" | "dark";
 interface AppState {
@@ -31,7 +31,8 @@ class App {
   side!: SidePanel;
   popup: BodyPopup | null = null;
   private sideAuto = false; // カードを選んで自動で開いている間だけ true(保存しない)
-  state: AppState = { views: {}, graphOpen: false, graphMode: "local", sideTab: "detail", lastGroup: ROOT_ID };
+  private sidePrevTab: SideTab | null = null; // 自動で開く前の欄(自動で閉じるとき、これに戻す)
+  state: AppState = { views: {}, graphOpen: false, graphMode: "local", sideTab: "map", lastGroup: ROOT_ID };
   config: Config = {};
   draw: DrawConfig = { ...DEFAULT_CONFIG };
   dir = "";
@@ -41,6 +42,7 @@ class App {
   private stateTimer: ReturnType<typeof setTimeout> | undefined;
   private sideTimer: ReturnType<typeof setTimeout> | undefined;
   private titleEl!: HTMLElement;
+  private upBtn!: HTMLButtonElement;
   private btnBack!: HTMLButtonElement;
   private btnFwd!: HTMLButtonElement;
   private btnDraw!: HTMLButtonElement;
@@ -121,6 +123,8 @@ class App {
     this.btnFwd = btn("i-fwd", T.forward + " (Ctrl+])", () => this.forward());
     this.titleEl = h("button", { class: "group-title" });
     this.titleEl.addEventListener("click", () => this.openBody(this.canvas.group));
+    this.upBtn = h("button", { class: "group-up", title: T.upMenu, "aria-label": T.upMenu, text: "▾" });
+    this.upBtn.addEventListener("click", () => this.openUpMenu());
     const search = h("button", { class: "searchbox", text: T.searchPlaceholder });
     search.addEventListener("click", () => this.search());
     this.btnDraw = btn("draw", "", () => this.drawAgain(), T.draw);
@@ -130,7 +134,7 @@ class App {
       "header",
       { class: "topbar" },
       h("div", { class: "tb-left" }, this.btnBack, this.btnFwd, btn("i-home", T.goHome + " (Ctrl+Home)", () => this.openGroup(ROOT_ID))),
-      h("div", { class: "tb-center" }, this.titleEl),
+      h("div", { class: "tb-center" }, this.titleEl, this.upBtn),
       h(
         "div",
         { class: "tb-right" },
@@ -206,13 +210,19 @@ class App {
     if (t === "card") {
       if (!this.sideVisible()) {
         this.sideAuto = true;
+        this.sidePrevTab = this.side.tab;
         this.applySide();
       }
-      if (this.side.tab !== "detail") this.side.setTab("detail");
+      // 手で開いている欄でも、カードを選んだら「詳細」へ(保存はしない)
+      if (this.side.tab !== "detail") {
+        this.sidePrevTab ??= this.side.tab;
+        this.side.setTab("detail", false);
+      }
     } else if (this.sideAuto && t !== "text") {
       // 空きをクリックして選択が外れたとき、複数選択、グループ・ノートを選んだときに閉じる。
       // 文字は閉じない(欄の語を押して置いた文字や、読みながら書き直す文字で、欄が消えないように)
       this.sideAuto = false;
+      this.restoreSideTab();
       this.applySide();
     }
     this.renderSideSoon();
@@ -261,6 +271,18 @@ class App {
     this.btnBack.disabled = !this.backStack.length;
     this.btnFwd.disabled = !this.fwdStack.length;
     document.title = `${this.titleEl.textContent} — ${T.appName}`;
+    this.upBtn.style.display = this.canvas.group === ROOT_ID ? "none" : "";
+    this.renderSideSoon();
+  }
+  /** 題の横の▾: 所属先とホームへ移る */
+  private openUpMenu(): void {
+    const g = this.canvas.group;
+    const name = (id: string) => (id === ROOT_ID ? T.home : this.vault.get(id)?.title || T.untitledGroup);
+    const parents = this.vault.parentsOf(g).filter((p) => this.vault.get(p)?.type === "group" || p === ROOT_ID);
+    const items: MenuItem[] = parents.map((p) => ({ label: name(p), action: () => this.openGroup(p) }));
+    if (!parents.includes(ROOT_ID)) items.push({ separator: true } as MenuItem, { label: T.home, action: () => this.openGroup(ROOT_ID) });
+    const r = this.upBtn.getBoundingClientRect();
+    showMenu(r.left, r.bottom + 2, items);
   }
   openGroup(id: string, focusNode?: string): void {
     if (this.vault.get(id)?.type !== "group") return;
@@ -375,6 +397,10 @@ class App {
     this.canvas.ensureVisible(ids);
   }
 
+  private restoreSideTab(): void {
+    if (this.sidePrevTab && this.side.tab === "detail") this.side.setTab(this.sidePrevTab, false);
+    this.sidePrevTab = null;
+  }
   /** 右の欄が見えているか(手で開いた分 + カードを選んで自動で開いた分) */
   private sideVisible(): boolean {
     return this.state.graphOpen || this.sideAuto;
@@ -387,6 +413,7 @@ class App {
   toggleSide(open?: boolean): void {
     this.state.graphOpen = open ?? !this.sideVisible();
     this.sideAuto = false;
+    this.sidePrevTab = null;
     this.applySide();
     this.saveState();
   }

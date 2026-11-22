@@ -221,9 +221,26 @@ test("引用: Ctrl+L でほかのグループの物を引用して線でつな�
   expect(mdFiles()["root.md"]).toContain(`refs:\n  - { id: ${idOf("遠い話")}`);
   // 所属先は元のグループのまま
   await page.keyboard.press("Control+e");
+  await page.mouse.click(900, 650);
   await page.locator(".node.ref").click({ modifiers: ["Control"] });
-  await expect(page.locator(".side-panel .rel-row").first()).toContainText("別の箱");
-  await expect(page.locator(".side-panel .rel-row").nth(1)).toContainText("ホーム");
+  await page.locator(".side-tabs .seg-b[data-tab=rel]").click();
+  await expect(page.locator(".side-panel .rel-item").first()).toContainText("別の箱");
+  await expect(page.locator(".side-panel .rel-item").nth(1)).toContainText("ホーム");
+  await shot("08b-rel");
+  // 所属先を押すと、そのグループへ上がれる
+  await page.locator(".side-panel .rel-item").first().click();
+  await expect(page.locator(".group-title")).toHaveText("別の箱");
+  // 関係の欄も、上がった先のグループに切り替わる(続けて上がれる)
+  await expect(page.locator(".side-panel .rel-head")).toContainText("別の箱");
+  await expect(page.locator(".side-panel .rel-item").first()).toContainText("ホーム");
+  // 上へ ▾ メニューからホームへ
+  await page.locator(".group-up").click();
+  await shot("08c-up");
+  await page.locator(".ctxmenu .item", { hasText: "ホーム" }).first().click();
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+  // 地図タブ: 木に「別の箱」が出る
+  await page.locator(".side-tabs .seg-b[data-tab=map]").click();
+  await expect(page.locator(".side-panel .tr", { hasText: "別の箱" }).first()).toBeVisible();
   await shot("08-ref");
 });
 
