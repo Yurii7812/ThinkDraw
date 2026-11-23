@@ -334,3 +334,36 @@ test("書き出し: Markdown・画像・HTML(試験では指定の場所へ書�
   const png = readFileSync(path.join(exportDir, "ホーム.png"));
   expect(png.subarray(1, 4).toString()).toBe("PNG");
 });
+
+test("横に開く: 別のグループを見ながら、右から左へドラッグで引用する", async () => {
+  await write(300, 200, "向こうの考え");
+  await page.locator(".node", { hasText: "向こうの考え" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("別のブレスト");
+  await page.keyboard.press("Escape");
+  await write(200, 500, "こちら");
+  await page.keyboard.press("Control+\\");
+  await page.keyboard.type("別のブレスト");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".peek .peek-title")).toContainText("別のブレスト");
+  const src = page.locator(".peek .node", { hasText: "向こうの考え" });
+  await expect(src).toHaveCount(1);
+  await shot("10-beside");
+  // 左ドラッグで、左の「こちら」の上に落とすと、引用して線でつなぐ
+  const sb = (await src.boundingBox())!;
+  const tb = (await page.locator(".canvas:not(.peek-canvas) .node", { hasText: "こちら" }).boundingBox())!;
+  await page.mouse.move(sb.x + 5, sb.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(sb.x - 100, sb.y + 20, { steps: 5 });
+  await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator(".canvas:not(.peek-canvas) .node.ref", { hasText: "向こうの考え" })).toHaveCount(1);
+  await expect(page.locator(".canvas:not(.peek-canvas) .edge")).toHaveCount(1);
+  await settle();
+  expect(mdFiles()["root.md"]).toContain(`refs:\n  - { id: ${idOf("向こうの考え")}`);
+  // 元のグループからは動いていない
+  await expect(page.locator(".peek .node", { hasText: "向こうの考え" })).toHaveCount(1);
+  // × で閉じる
+  await page.locator(".peek-close").click();
+  await expect(page.locator(".peek")).toHaveCount(0);
+});

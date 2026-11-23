@@ -18,6 +18,7 @@ interface AppState {
   graphMode: GraphMode;
   sideTab: SideTab;
   lastGroup: string;
+  peekGroup?: string | null; // 横に開いているグループ
 }
 interface Config {
   theme?: Theme;
@@ -29,6 +30,10 @@ const STATE_FILE = "state.json";
 class App {
   vault!: Vault;
   canvas!: Canvas;
+  /** 横に開いている、もう 1 枚のキャンバス(見ながら書く・右から左へドラッグで引用) */
+  peek: Canvas | null = null;
+  private peekWrap: HTMLElement | null = null;
+  private peekTitle: HTMLElement | null = null;
   side!: SidePanel;
   popup: BodyPopup | null = null;
   private sideAuto = false; // カードを選んで自動で開いている間だけ true(保存しない)
@@ -110,6 +115,8 @@ class App {
     await api().watch();
     const g = this.vault.get(this.state.lastGroup)?.type === "group" ? this.state.lastGroup : ROOT_ID;
     this.canvas.show(g, this.state.views[g] ?? null);
+    const pg = this.state.peekGroup;
+    if (pg && this.vault.get(pg)?.type === "group") this.openPeek(pg);
     this.updateBar();
     this.scheduleFlush(); // 根を作ったとき・迷子を根に入れたときに書く
   }
@@ -141,6 +148,7 @@ class App {
         { class: "tb-right" },
         search,
         this.btnPen,
+        btn("beside", T.besideTip, () => this.toggleBeside(), T.besideBtn),
         btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn),
         h("div", { class: "split" }, this.btnDraw, caret),
         btn("i-theme", T.theme, () => this.setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")),
@@ -168,6 +176,8 @@ class App {
           this.saveState();
         },
         onSelectionChange: (ids) => this.onSelection(ids),
+        dropOutside: (ids, cx, cy, link) => (this.peek ? this.dropInto(this.canvas, this.peek, ids, cx, cy, link) : false),
+        openBeside: (id) => this.openBeside(id),
       },
       this.main,
     );
@@ -238,6 +248,12 @@ class App {
   // ---------- 保存 ----------
   private onVaultChange(ids: Set<string>): void {
     this.canvas.requestRender();
+    if (this.peek) {
+      if (this.vault.exists(this.peek.group)) {
+        this.peek.requestRender();
+        this.updatePeekTitle();
+      } else this.closePeek();
+    }
     this.scheduleFlush();
     this.renderSideSoon();
     if (!this.vault.exists(this.canvas.group)) {
@@ -420,6 +436,106 @@ class App {
     this.saveState();
   }
 
+  // ---------- 横の画面 ----------
+  private openPeek(group: string, focus?: string): void {
+    if (!this.peek) {
+      this.peekTitle = h("button", { class: "peek-title", title: T.besidePick });
+      this.peekTitle.addEventListener("click", () => this.pickBeside());
+      const close = h("button", { class: "tbtn peek-close", title: T.besideClose, "aria-label": T.besideClose, text: "×" });
+      close.addEventListener("click", () => this.closePeek());
+      const head = h("div", { class: "peek-head" }, this.peekTitle, h("span", { class: "peek-hint", text: T.besideHint }), close);
+      this.peekWrap = h("div", { class: "peek" }, head);
+      this.canvas.el.after(this.peekWrap);
+      this.peek = new Canvas(
+        {
+          vault: this.vault,
+          openGroup: (id) => this.openPeek(id),
+          openBody: (id) => this.openBody(id),
+          goToNode: (id) => this.openBeside(id),
+          pickGroup: async (title) => {
+            const r = await openPicker(this.vault, { title, mode: "group" });
+            return r && "id" in r ? r.id : null;
+          },
+          cardHover: (id, e) => cardTip(this.vault, id, e),
+          onViewChange: (g, v) => {
+            this.state.views[g] = v;
+            this.saveState();
+          },
+          onSelectionChange: () => {},
+          dropOutside: (ids, cx, cy, link) => this.dropInto(this.peek!, this.canvas, ids, cx, cy, link),
+          openBeside: (id) => this.openBeside(id),
+        },
+        this.peekWrap,
+      );
+      this.peek.el.classList.add("peek-canvas");
+    }
+    if (this.peek.group !== group || !this.peek.el.isConnected) this.peek.show(group, this.state.views[group] ?? null);
+    else this.peek.requestRender();
+    if (focus) {
+      this.peek.renderNow();
+      this.peek.centerOn(focus);
+      this.peek.setSelection([focus]);
+    }
+    this.state.peekGroup = group;
+    this.saveState();
+    this.updatePeekTitle();
+  }
+  private updatePeekTitle(): void {
+    if (!this.peek || !this.peekTitle) return;
+    const g = this.vault.get(this.peek.group);
+    this.peekTitle.textContent = (this.peek.group === ROOT_ID ? T.home : g?.title || T.untitledGroup) + " ▾";
+  }
+  closePeek(): void {
+    this.peek?.commitDraft("esc");
+    this.peekWrap?.remove();
+    this.peek = null;
+    this.peekWrap = null;
+    this.peekTitle = null;
+    this.state.peekGroup = null;
+    this.saveState();
+    this.canvas.el.focus({ preventScroll: true });
+  }
+  private async pickBeside(): Promise<void> {
+    const r = await openPicker(this.vault, { title: T.besidePick, mode: "group" });
+    if (r && "id" in r) this.openPeek(r.id);
+  }
+  toggleBeside(): void {
+    if (this.peek) this.closePeek();
+    else void this.pickBeside();
+  }
+  /** 横に開く: グループならその中を、ほかは所属先(なければ引用している所)を開いて、そのノードを見せる */
+  openBeside(id: string): void {
+    const n = this.vault.get(id);
+    if (!n) return;
+    if (n.type === "group") return this.openPeek(id);
+    const g = this.vault.parentsOf(id)[0] ?? this.vault.quotedBy(id)[0];
+    if (g) this.openPeek(g, id);
+  }
+  /** from の画面から to の画面へ落とした: to のグループに引用として置く(すでにあれば置かない)。ノードの上なら線でつなぐ */
+  private dropInto(from: Canvas, to: Canvas, ids: string[], cx: number, cy: number, link: boolean): boolean {
+    const r = to.el.getBoundingClientRect();
+    if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return false;
+    const over = to.nodeAtPoint(cx, cy);
+    const p = to.toWorld(cx, cy);
+    const base = from.rectOf(ids[0]);
+    const placed: string[] = [];
+    this.vault.tx(() => {
+      for (const id of ids) {
+        if (id === to.group || !this.vault.exists(id)) continue;
+        const b = from.rectOf(id);
+        const x = Math.round(p.x + (b && base ? b.x - base.x : 0));
+        const y = Math.round(p.y + (b && base ? b.y - base.y : 0));
+        if (!this.vault.itemPos(to.group, id)) this.vault.addRef(to.group, id, x, y);
+        placed.push(id);
+        if (link && over && over !== id) this.vault.addLink(over, id);
+      }
+    });
+    to.renderNow();
+    to.setSelection(placed);
+    to.el.focus({ preventScroll: true });
+    return true;
+  }
+
   // ---------- 書き出し ----------
   private openExport(): void {
     const el = document.querySelector(".tbtn.export") as HTMLElement | null;
@@ -593,7 +709,17 @@ class App {
         this.vault.redo();
         return;
       }
-      if (this.canvas.handleKey(e)) {
+      if (e.ctrlKey && e.key === "\\") {
+        e.preventDefault();
+        this.toggleBeside();
+        return;
+      }
+      const active = this.peek && this.peek.el.contains(document.activeElement) ? this.peek : this.canvas;
+      if (e.key === "Escape" && active === this.peek && !this.peek.selection.size) {
+        this.closePeek();
+        return;
+      }
+      if (active.handleKey(e)) {
         e.preventDefault();
         closeMenu();
       }

@@ -32,6 +32,10 @@ export interface CanvasHost {
   cardHover(id: string | null, e?: MouseEvent): void;
   onViewChange(group: string, v: View): void;
   onSelectionChange(ids: string[]): void;
+  /** この画面の外(横の画面)へ落としたとき。受け取ったら true */
+  dropOutside?(ids: string[], cx: number, cy: number, link: boolean): boolean;
+  /** 横の画面に開く(グループはその中、ほかは所属先で、そのノードを見せる) */
+  openBeside?(id: string): void;
 }
 
 interface Draft {
@@ -542,7 +546,7 @@ export class Canvas {
     const el = (target as Element | null)?.closest?.("[data-sid]");
     return el?.getAttribute("data-sid") ?? null;
   }
-  private nodeAtPoint(cx: number, cy: number, exclude: Set<string> = new Set()): string | null {
+  nodeAtPoint(cx: number, cy: number, exclude: Set<string> = new Set()): string | null {
     for (const el of document.elementsFromPoint(cx, cy)) {
       const id = el.closest(".node")?.getAttribute("data-id");
       if (id && !exclude.has(id) && this.el.contains(el)) return id;
@@ -800,6 +804,7 @@ export class Canvas {
       }
       case "link": {
         d.line.remove();
+        if (!this.inside(e) && this.host.dropOutside?.([d.from], e.clientX, e.clientY, true)) return;
         const over = this.nodeAtPoint(e.clientX, e.clientY, new Set([d.from]));
         if (over) this.v.toggleLink(d.from, over);
         else {
@@ -861,7 +866,16 @@ export class Canvas {
     this.host.openBody(id);
   }
 
+  private inside(e: { clientX: number; clientY: number }): boolean {
+    const r = this.el.getBoundingClientRect();
+    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+  }
+
   private endMove(d: Extract<Drag, { kind: "move" }>, e: PointerEvent): void {
+    if (!this.inside(e) && d.ids.length && this.host.dropOutside?.(d.ids, e.clientX, e.clientY, false)) {
+      this.renderNow(); // こちらの位置は元のまま
+      return;
+    }
     const over = d.ids.length ? this.nodeAtPoint(e.clientX, e.clientY, new Set(d.ids)) : null;
     const positions = d.ids.map((i) => ({ id: i, x: Math.round(this.rects.get(i)!.x), y: Math.round(this.rects.get(i)!.y) }));
     if (!over) {
@@ -1044,6 +1058,7 @@ export class Canvas {
         toast(T.quotedInto(this.v.get(g)?.title || T.untitledGroup));
       },
     });
+    if (this.host.openBeside) items.push({ label: T.openBeside, action: () => this.host.openBeside!(id) });
     if (isRef) {
       items.push({ label: T.goOrigin, action: () => this.host.goToNode(id) });
       items.push({ label: T.removeRef, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
