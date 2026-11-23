@@ -287,7 +287,7 @@ export class Canvas {
   }
 
   private signature(n: TDNode, ref: boolean): string {
-    return JSON.stringify([n.type, n.title, n.color, n.fill, ref, n.type === "group" ? this.groupPeek(n.id) : null, n.type === "note" ? excerpt(n.body) : !!n.body.trim(), n.card, n.spread]);
+    return JSON.stringify([n.type, n.title, n.color, n.fill, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? excerpt(n.body) : !!n.body.trim(), n.card, n.spread]);
   }
 
   /** グループのノードに見せる中身: 上から 3 件の名前・残りの数・下のグループの数 */
@@ -317,7 +317,7 @@ export class Canvas {
         h("div", { class: "excerpt", text: excerpt(n.body) }),
       );
     } else if (n.type === "group") {
-      // 中身を少しだけ見せる(束ねても中が分かるように)。下にグループがあれば ▸ で木を出して飛べる
+      // 下にグループがあれば ▸ で木を出して飛べる(中身の文字は出さない。2026-11-23 利用者)
       const peek = this.groupPeek(n.id);
       el.append(
         h(
@@ -328,7 +328,7 @@ export class Canvas {
           peek.subs ? h("button", { class: "gtree-btn", "data-act": "tree", title: T.treeTip, "aria-label": T.treeTip, text: "▸" }) : null,
         ),
       );
-      if (peek.lines.length) el.append(h("div", { class: "g-peek" }, ...peek.lines.map((t) => h("div", { class: "g-line", text: t })), peek.more ? h("div", { class: "g-more", text: T.groupMore(peek.more) }) : null));
+
     } else if (n.type === "card" && n.card) {
       el.style.width = CARD_W + "px";
       el.classList.add("deck-" + n.card.deck);

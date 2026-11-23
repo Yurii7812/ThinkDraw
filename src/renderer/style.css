@@ -156,8 +156,8 @@ input, textarea { font: inherit; color: inherit; }
 .note-head { display: flex; align-items: center; gap: 6px; font-weight: 600; }
 .excerpt { font-size: 12px; color: var(--muted); margin-top: 4px; max-height: 4.5em; overflow: hidden; }
 .node.t-group {
-  min-width: 120px; max-width: 260px; padding: 10px 14px; background: var(--group); border: 1px solid var(--line); border-radius: 10px;
-  display: flex; flex-direction: column; align-items: stretch; gap: 6px; font-weight: 600;
+  min-width: 120px; padding: 10px 14px; background: var(--group); border: 1px solid var(--line); border-radius: 10px;
+  display: flex; align-items: center; gap: 8px; font-weight: 600;
   box-shadow: 0 1px 0 var(--line), 0 3px 0 -1px var(--group), 0 3px 0 0 var(--line);
 }
 .node.t-card { text-align: center; white-space: normal; }
@@ -581,9 +581,6 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .g-head .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .gtree-btn { border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 6px; width: 22px; height: 22px; font-size: 11px; cursor: pointer; flex: none; padding: 0; }
 .gtree-btn:hover { border-color: var(--accent); color: var(--accent); }
-.g-peek { font-weight: 400; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 5px; display: flex; flex-direction: column; gap: 1px; }
-.g-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.g-more { font-size: 11px; opacity: 0.8; }
 .gtree { position: fixed; z-index: 60; min-width: 220px; max-width: 340px; max-height: 70vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
 .gt-head, .gt-name { display: flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--fg); padding: 6px 8px; border-radius: 6px; cursor: pointer; text-align: left; font-size: 13px; width: 100%; min-width: 0; }
 .gt-head { font-weight: 700; border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0; margin-bottom: 2px; }
