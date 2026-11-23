@@ -199,6 +199,13 @@ test("ペン: 描く・選んで消す・元に戻す", async () => {
   for (let i = 1; i <= 10; i++) await page.mouse.move(300 + i * 20, 300 + (i % 2) * 15);
   await page.mouse.up();
   await expect(page.locator("path.stroke")).toHaveCount(1);
+  // 選んだ色(色 1)で描かれている(前は墨の色になっていた)
+  const [strokeColor, c1] = await page.evaluate(() => [
+    getComputedStyle(document.querySelector("path.stroke")!).stroke,
+    getComputedStyle(document.documentElement).getPropertyValue("--c1").trim(),
+  ]);
+  const hex = (rgb: string) => "#" + (rgb.match(/\d+/g) ?? []).slice(0, 3).map((n) => (+n).toString(16).padStart(2, "0")).join("");
+  expect(hex(strokeColor)).toBe(c1.toLowerCase());
   await page.keyboard.press("Escape");
   await expect(page.locator(".penbar")).toBeHidden();
   await settle();
@@ -519,4 +526,29 @@ test("書き出し: 選んでいるときは選んだ物だけ", async () => {
   const md = readFileSync(path.join(exportDir, "ホーム-選択.md"), "utf8");
   expect(md).toContain("選ぶ文字");
   expect(md).not.toContain("選ばない文字");
+});
+
+test("ノートで Markdown のように打つ: # で見出し・- で箇条書き・> で引用", async () => {
+  await page.mouse.click(300, 400, { button: "right" });
+  await page.getByText("ノートを作る").click();
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await page.keyboard.type("書き方");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("## 見出し");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("- 項目1");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("項目2");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("> 引用文");
+  await expect(page.locator(".ProseMirror h2")).toHaveText("見出し");
+  await expect(page.locator(".ProseMirror li")).toHaveCount(2);
+  await expect(page.locator(".ProseMirror blockquote")).toHaveText("引用文");
+  await page.keyboard.press("Escape");
+  await settle();
+  const note = Object.values(mdFiles()).find((t) => t.includes("title: 書き方\n"))!;
+  expect(note).toContain("## 見出し");
+  expect(note).toMatch(/[*-] 項目1\n+[*-] 項目2/);
+  expect(note).toContain("> 引用文");
 });

@@ -1,6 +1,7 @@
 // 本文のポップアップ(SPEC 4.3)。見た目で編集し(ProseMirror)、Markdown で保存する。
 import { baseKeymap, setBlockType, toggleMark } from "prosemirror-commands";
 import { history, redo, undo } from "prosemirror-history";
+import { InputRule, inputRules, textblockTypeInputRule, undoInputRule, wrappingInputRule } from "prosemirror-inputrules";
 import { keymap } from "prosemirror-keymap";
 import { defaultMarkdownParser, defaultMarkdownSerializer, schema } from "prosemirror-markdown";
 import type { Node as PMNode } from "prosemirror-model";
@@ -171,7 +172,9 @@ export class BodyPopup {
       doc: parseMarkdown(n.body),
       plugins: [
         history(),
+        markdownInputRules(),
         keymap({
+          Backspace: undoInputRule, // 「# 」で見出しになった直後の Backspace で元の文字に戻す
           "Mod-z": undo,
           "Mod-y": redo,
           "Mod-Shift-z": redo,
@@ -384,4 +387,24 @@ export class BodyPopup {
     this.el.remove();
     this.host.closedEditor();
   }
+}
+
+/** Markdown のように打つと、その形になる(2026-11-23 利用者「# とかが使えない」)。
+ * 「# 」〜「###### 」= 見出し、「- 」「* 」= 箇条書き、「1. 」= 番号付き、「> 」= 引用、「```」= コード、「---」= 区切り線 */
+function markdownInputRules() {
+  const s = schema;
+  return inputRules({
+    rules: [
+      textblockTypeInputRule(/^(#{1,6})\s$/, s.nodes.heading, (m) => ({ level: m[1].length })),
+      wrappingInputRule(/^\s*([-*])\s$/, s.nodes.bullet_list),
+      wrappingInputRule(/^(\d+)\.\s$/, s.nodes.ordered_list, (m) => ({ order: +m[1] }), (m, node) => node.childCount + node.attrs.order === +m[1]),
+      wrappingInputRule(/^\s*>\s$/, s.nodes.blockquote),
+      textblockTypeInputRule(/^```$/, s.nodes.code_block),
+      new InputRule(/^---$/, (state, _m, start, end) => {
+        const $s = state.doc.resolve(start);
+        if ($s.parent.type !== s.nodes.paragraph) return null;
+        return state.tr.replaceRangeWith($s.before(), $s.after(), s.nodes.horizontal_rule.create()).insert($s.before() + 1, s.nodes.paragraph.create());
+      }),
+    ],
+  });
 }

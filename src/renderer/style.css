@@ -113,8 +113,15 @@ input, textarea { font: inherit; color: inherit; }
 .strokes path.stroke.selected { filter: drop-shadow(0 0 3px var(--accent)); }
 .strokes path.stroke-hit { fill: none; stroke: transparent; stroke-linecap: round; cursor: pointer; }
 .canvas.pen-mode .strokes path.stroke-hit { pointer-events: none; }
-.strokes .col1 { stroke: var(--c1); } .strokes .col2 { stroke: var(--c2); } .strokes .col3 { stroke: var(--c3); } .strokes .col4 { stroke: var(--c4); }
-.strokes .col5 { stroke: var(--c5); } .strokes .col6 { stroke: var(--c6); } .strokes .col7 { stroke: var(--c7); } .strokes .col8 { stroke: var(--c8); }
+/* 色は path.stroke の基本の色より強く(前は負けていて、色を選んでも墨になった) */
+.strokes path.stroke.col1 { stroke: var(--c1); }
+.strokes path.stroke.col2 { stroke: var(--c2); }
+.strokes path.stroke.col3 { stroke: var(--c3); }
+.strokes path.stroke.col4 { stroke: var(--c4); }
+.strokes path.stroke.col5 { stroke: var(--c5); }
+.strokes path.stroke.col6 { stroke: var(--c6); }
+.strokes path.stroke.col7 { stroke: var(--c7); }
+.strokes path.stroke.col8 { stroke: var(--c8); }
 .nodes { position: absolute; left: 0; top: 0; }
 
 .edge .vis { stroke: var(--edge); stroke-width: 1.5; fill: none; }
