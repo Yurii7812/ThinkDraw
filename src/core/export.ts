@@ -1,0 +1,49 @@
+// 書き出し(Markdown): いまのグループを、リンクの木+ノート+中のグループの順に文章にする
+import { cardName } from "../decks";
+import type { TDNode } from "./types";
+import { ROOT_ID } from "./types";
+import type { Vault } from "./vault";
+
+export function labelOf(n: TDNode): string {
+  const t = n.card ? cardName(n.card) : n.title || "(無題)";
+  return t.replace(/\s*\n\s*/g, " ").trim();
+}
+
+export function groupToMarkdown(v: Vault, group: string, depth = 1, seen: Set<string> = new Set()): string {
+  const g = v.get(group);
+  if (!g || seen.has(group)) return "";
+  seen.add(group);
+  const h = "#".repeat(Math.min(depth, 6));
+  const out: string[] = [`${h} ${group === ROOT_ID ? g.title || "ホーム" : labelOf(g)}`, ""];
+  if (g.body.trim()) out.push(g.body.trim(), "");
+  const items = v.itemsOf(group).filter((i) => v.exists(i.id));
+  const ids = new Set(items.map((i) => i.id));
+  const refSet = new Set(items.filter((i) => i.ref).map((i) => i.id));
+  const pos = new Map(items.map((i) => [i.id, i]));
+  const byPos = (a: string, b: string) => pos.get(a)!.y - pos.get(b)!.y || pos.get(a)!.x - pos.get(b)!.x;
+  const targets = new Set<string>();
+  for (const id of ids) for (const l of v.get(id)!.links) if (ids.has(l.to)) targets.add(l.to);
+  const shown = new Set<string>();
+  const lines: string[] = [];
+  const walk = (id: string, level: number): void => {
+    const n = v.get(id)!;
+    const mark = refSet.has(id) ? "(引用)" : "";
+    const kind = n.type === "note" ? "📄 " : n.type === "group" ? "📁 " : "";
+    const again = shown.has(id);
+    lines.push(`${"  ".repeat(level)}- ${kind}${labelOf(n)}${mark}${again ? " ↩" : ""}`);
+    if (again) return;
+    shown.add(id);
+    for (const l of [...n.links].filter((l) => ids.has(l.to)).sort((a, b) => byPos(a.to, b.to))) walk(l.to, level + 1);
+  };
+  const roots = [...ids].filter((i) => !targets.has(i)).sort(byPos);
+  for (const r of roots) walk(r, 0);
+  for (const i of [...ids].sort(byPos)) if (!shown.has(i)) walk(i, 0); // 輪になっているもの
+  if (lines.length) out.push(...lines, "");
+  for (const id of [...ids].filter((i) => !refSet.has(i)).sort(byPos)) {
+    const n = v.get(id)!;
+    if (n.type === "note") out.push(`${"#".repeat(Math.min(depth + 1, 6))} ${labelOf(n)}`, "", n.body.trim(), "");
+    else if (n.type === "group") out.push(groupToMarkdown(v, id, depth + 1, seen));
+    else if (n.body.trim()) out.push(`${"#".repeat(Math.min(depth + 1, 6))} ${labelOf(n)}`, "", n.body.trim(), "");
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+}

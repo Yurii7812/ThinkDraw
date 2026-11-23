@@ -71,7 +71,7 @@ function excerpt(body: string, n = 90): string {
   return [...t].length > n ? [...t].slice(0, n).join("") + "…" : t;
 }
 
-function strokeD(p: number[]): string {
+export function strokeD(p: number[]): string {
   if (p.length < 2) return "";
   let d = `M${p[0]},${p[1]}`;
   if (p.length === 2) d += ` L${p[0] + 0.1},${p[1]}`;

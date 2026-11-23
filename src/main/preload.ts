@@ -14,6 +14,8 @@ const api = {
   writeApp: (name: string, content: string) => ipcRenderer.invoke("vault:writeApp", name, content),
   saveAsset: (ext: string, data: Uint8Array): Promise<string> => ipcRenderer.invoke("vault:saveAsset", ext, data),
   urlTitle: (url: string): Promise<string | null> => ipcRenderer.invoke("url:title", url),
+  exportSave: (name: string, label: string, exts: string[], data: string | Uint8Array): Promise<string | null> =>
+    ipcRenderer.invoke("export:save", name, label, exts, data),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open", url),
   onChanged: (fn: (e: { name: string; content: string | null }) => void) =>
     ipcRenderer.on("vault:changed", (_e, arg) => fn(arg)),

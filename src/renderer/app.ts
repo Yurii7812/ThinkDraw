@@ -4,6 +4,7 @@ import { Vault } from "../core/vault";
 import { Canvas, PRESET_COLORS, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
+import { exportGroup, type ExportKind } from "./exporter";
 import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
 import { SHORTCUTS, T } from "./strings";
@@ -140,6 +141,7 @@ class App {
         { class: "tb-right" },
         search,
         this.btnPen,
+        btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn),
         h("div", { class: "split" }, this.btnDraw, caret),
         btn("i-theme", T.theme, () => this.setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")),
         btn("i-graph", T.sidePanel + " (Ctrl+E)", () => this.toggleSide()),
@@ -416,6 +418,20 @@ class App {
     this.sidePrevTab = null;
     this.applySide();
     this.saveState();
+  }
+
+  // ---------- 書き出し ----------
+  private openExport(): void {
+    const el = document.querySelector(".tbtn.export") as HTMLElement | null;
+    const r = el?.getBoundingClientRect();
+    const go = (k: ExportKind) => () => void exportGroup(this.vault, this.canvas.group, this.canvas, k);
+    showMenu(r?.left ?? 200, (r?.bottom ?? 40) + 2, [
+      { label: T.exportMd, action: go("md") },
+      { label: T.exportPng, action: go("png") },
+      { label: T.exportHtml, action: go("html") },
+      { separator: true, label: "" },
+      { label: T.exportCopy, action: go("copy") },
+    ]);
   }
 
   // ---------- ペン ----------

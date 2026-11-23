@@ -8,6 +8,7 @@ let app: ElectronApplication;
 let page: Page;
 let vault = "";
 let userData = "";
+let exportDir = "";
 const shots = process.env.THINKDRAW_SHOTS;
 
 function mdFiles(): Record<string, string> {
@@ -27,7 +28,8 @@ test.beforeEach(async () => {
   const base = process.env.TMPDIR || tmpdir();
   vault = mkdtempSync(path.join(base, "td-vault-"));
   userData = mkdtempSync(path.join(base, "td-user-"));
-  app = await electron.launch({ args: ["."], env: { ...process.env, THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1" } });
+  exportDir = mkdtempSync(path.join(base, "td-export-"));
+  app = await electron.launch({ args: ["."], env: { ...process.env, THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1", THINKDRAW_EXPORT_DIR: exportDir } });
   page = await app.firstWindow();
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.waitForSelector(".canvas");
@@ -36,6 +38,7 @@ test.afterEach(async () => {
   await app.close();
   rmSync(vault, { recursive: true, force: true });
   rmSync(userData, { recursive: true, force: true });
+  rmSync(exportDir, { recursive: true, force: true });
 });
 
 async function write(x: number, y: number, t: string) {
@@ -315,4 +318,19 @@ test("右の欄: 文字では開かない・カードを選ぶと自動で開く
   await page.mouse.click(60, 700);
   await page.keyboard.press("Escape");
   await expect(page.locator(".main.side-open")).toHaveCount(1);
+});
+
+test("書き出し: Markdown・画像・HTML(試験では指定の場所へ書く)", async () => {
+  await write(300, 200, "書き出す文字");
+  await page.locator(".tbtn.export").click();
+  await page.getByText("Markdown(.md)").click();
+  await page.locator(".tbtn.export").click();
+  await page.getByText("画像(.png)").click();
+  await page.locator(".tbtn.export").click();
+  await page.getByText("HTML(.html)").click();
+  await expect.poll(() => readdirSync(exportDir).sort()).toEqual(["ホーム.html", "ホーム.md", "ホーム.png"]);
+  expect(readFileSync(path.join(exportDir, "ホーム.md"), "utf8")).toContain("- 書き出す文字");
+  expect(readFileSync(path.join(exportDir, "ホーム.html"), "utf8")).toContain("書き出す文字");
+  const png = readFileSync(path.join(exportDir, "ホーム.png"));
+  expect(png.subarray(1, 4).toString()).toBe("PNG");
 });

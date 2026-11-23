@@ -135,6 +135,18 @@ function registerIpc(): void {
   ipcMain.handle("vault:readApp", (_e, name: string) => needIO().readAppFile(name));
   ipcMain.handle("vault:writeApp", (_e, name: string, content: string) => needIO().writeAppFile(name, content));
   ipcMain.handle("vault:saveAsset", (_e, ext: string, data: Uint8Array) => needIO().saveAsset(ext, data));
+  ipcMain.handle("export:save", async (_e, name: string, label: string, exts: string[], data: string | Uint8Array) => {
+    const forced = process.env.THINKDRAW_EXPORT_DIR; // 試験: 窓を出さず、この場所へ書く
+    let file: string;
+    if (forced) file = path.join(forced, path.basename(name));
+    else {
+      const r = await dialog.showSaveDialog(win!, { title: "書き出す", defaultPath: path.join(app.getPath("documents"), name), filters: [{ name: label, extensions: exts }] });
+      if (r.canceled || !r.filePath) return null;
+      file = r.filePath;
+    }
+    await fs.writeFile(file, typeof data === "string" ? data : Buffer.from(data));
+    return file;
+  });
   ipcMain.handle("url:title", (_e, url: string) => urlTitle(url));
   ipcMain.handle("shell:open", (_e, url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);
