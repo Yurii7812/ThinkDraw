@@ -493,10 +493,56 @@ input, textarea { font: inherit; color: inherit; }
 .side-head { display: none; }
 .group-up:hover { background: var(--accent-soft); }
 
-/* 横の画面(別のグループを見ながら書く) */
-.peek { flex: 1; display: flex; flex-direction: column; min-width: 0; border-left: 1px solid var(--line); }
-.peek-head { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 10px; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; }
-.peek-title { border: 0; background: none; color: var(--fg); font-weight: 600; font-size: 13px; cursor: pointer; padding: 2px 6px; border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.peek-title:hover { background: var(--accent-soft); }
-.peek-hint { flex: 1; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 画面の分割(左右で同時に編集) */
+.pane { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+.pane > .canvas { flex: 1; }
+.pane-head { display: none; align-items: center; gap: 4px; height: 34px; padding: 0 4px 0 6px; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; box-shadow: inset 0 2px 0 transparent; }
+.main.split .pane-head { display: flex; }
+.main.split[data-active="left"] .left-pane .pane-head, .main.split[data-active="right"] .peek .pane-head, .main.split:not([data-active]) .left-pane .pane-head { box-shadow: inset 0 2px 0 var(--accent); }
+.pane-title { border: 0; background: none; color: var(--fg); font-weight: 600; font-size: 13px; cursor: pointer; padding: 3px 8px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 70%; }
+.pane-title:hover { background: var(--accent-soft); }
+.pane-space { flex: 1; }
+.tbtn.pane-up { font-size: 14px; }
+.peek { border-left: 0; }
+.split-bar { flex: none; width: 6px; cursor: col-resize; background: var(--line); position: relative; z-index: 5; }
+.split-bar::after { content: ""; position: absolute; left: 1px; right: 1px; top: 50%; height: 36px; margin-top: -18px; border-radius: 2px; background: var(--muted); opacity: 0.5; }
+.split-bar:hover, .split-bar.dragging { background: var(--accent); }
 .tbtn.beside { white-space: nowrap; font-size: 13px; color: var(--fg); border: 1px solid var(--line); padding: 0 10px; }
+
+/* 記録一覧(キャンバスの上に重ねる、右の欄とは別の画面) */
+.records { position: absolute; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; outline: none; }
+.rec-head { display: flex; align-items: center; gap: 12px; padding: 14px 24px 8px; flex-wrap: wrap; }
+.rec-title { font-size: 18px; font-weight: 700; margin-right: 8px; }
+.rec-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.rec-chip { border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.rec-chip:hover { border-color: var(--accent); }
+.rec-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rec-n { font-size: 11px; opacity: 0.7; }
+.rec-actions { display: flex; align-items: center; gap: 12px; padding: 0 24px 10px; border-bottom: 1px solid var(--line); }
+.rec-body { flex: 1; overflow: auto; padding: 4px 24px 40px; }
+.rec-month { font-size: 13px; font-weight: 700; color: var(--muted); margin: 18px 0 6px; position: sticky; top: 0; background: var(--bg); padding: 4px 0; }
+.rec-row { display: grid; grid-template-columns: 56px 110px 1fr; gap: 12px; align-items: baseline; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--line); background: none; color: var(--fg); padding: 10px 8px; cursor: pointer; font-size: 14px; }
+.rec-row.same-day { border-top-style: dashed; }
+.rec-row:hover { background: var(--accent-soft); }
+.rec-date { display: flex; gap: 6px; align-items: baseline; }
+.rec-d { font-size: 18px; font-weight: 700; min-width: 1.6em; text-align: right; font-variant-numeric: tabular-nums; }
+.rec-wd { font-size: 12px; color: var(--muted); }
+.rec-wd.sun { color: var(--c1); } .rec-wd.sat { color: var(--c6); }
+.rec-kind { font-size: 12px; font-weight: 600; border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; justify-self: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.rec-prev { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-empty { color: var(--muted); padding: 40px 0; text-align: center; }
+.tbtn.records-btn { white-space: nowrap; font-size: 13px; color: var(--fg); border: 1px solid var(--line); padding: 0 10px; }
+
+/* ショートカット一覧(カード+キーの形) */
+.modal.settings.wide { width: min(980px, 94vw); max-height: 88vh; overflow: auto; }
+.sc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+.sc-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--bg); display: flex; flex-direction: column; gap: 6px; }
+.sc-title { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+.sc-icon { width: 22px; height: 22px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
+.sc-row { display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: 10px; align-items: center; font-size: 12.5px; }
+.sc-keys { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.sc-desc { color: var(--muted); line-height: 1.4; }
+.combo { display: inline-flex; align-items: center; gap: 2px; }
+.combo .plus, .sc-keys .or { color: var(--muted); font-size: 11px; padding: 0 1px; }
+kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: inherit; font-size: 11.5px; padding: 2px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--panel); color: var(--fg); }
+.combo .act { font-size: 11.5px; padding: 2px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--fg); white-space: nowrap; }

@@ -5,6 +5,7 @@ import { Canvas, PRESET_COLORS, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
 import { exportGroup, type ExportKind } from "./exporter";
+import { RecordsView, type RecordEntry } from "./records";
 import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
 import { SHORTCUTS, T } from "./strings";
@@ -19,6 +20,8 @@ interface AppState {
   sideTab: SideTab;
   lastGroup: string;
   peekGroup?: string | null; // 横に開いているグループ
+  recordKind?: string | null; // 記録一覧の絞り込み
+  splitRatio?: number; // 画面を分けたときの左の幅の割合
 }
 interface Config {
   theme?: Theme;
@@ -33,6 +36,10 @@ class App {
   /** 横に開いている、もう 1 枚のキャンバス(見ながら書く・右から左へドラッグで引用) */
   peek: Canvas | null = null;
   private peekWrap: HTMLElement | null = null;
+  records: RecordsView | null = null;
+  private leftPane!: HTMLElement;
+  private leftTitle!: HTMLElement;
+  private splitBar: HTMLElement | null = null;
   private peekTitle: HTMLElement | null = null;
   side!: SidePanel;
   popup: BodyPopup | null = null;
@@ -161,6 +168,7 @@ class App {
         "div",
         { class: "tb-right" },
         search,
+        btn("records-btn", T.recordsTip, () => this.toggleRecords(), T.recordsBtn),
         this.btnPen,
         btn("beside", T.besideTip, () => this.toggleBeside(), T.besideBtn),
         btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn),
@@ -172,6 +180,16 @@ class App {
     this.updateDrawTitle();
     this.main = h("main", { class: "main" });
     this.penBar = h("div", { class: "penbar" });
+    // 左の画面(分けていないときは、これ 1 枚)。分けたときだけ見出しを出す
+    this.leftTitle = h("button", { class: "pane-title", title: T.panePick });
+    this.leftTitle.addEventListener("click", async () => {
+      const r = await openPicker(this.vault, { title: T.panePick, mode: "group" });
+      if (r && "id" in r) this.openGroup(r.id);
+    });
+    const leftUp = h("button", { class: "tbtn pane-up", title: T.upMenu, "aria-label": T.upMenu, text: "↑" });
+    leftUp.addEventListener("click", () => this.goUp());
+    this.leftPane = h("div", { class: "pane left-pane" }, h("div", { class: "pane-head" }, leftUp, this.leftTitle));
+    this.main.append(this.leftPane);
     document.body.replaceChildren(bar, this.main);
     this.canvas = new Canvas(
       {
@@ -192,8 +210,10 @@ class App {
         dropOutside: (ids, cx, cy, link) => (this.peek ? this.dropInto(this.canvas, this.peek, ids, cx, cy, link) : false),
         openBeside: (id) => this.openBeside(id),
       },
-      this.main,
+      this.leftPane,
     );
+    this.canvas.el.addEventListener("focusin", () => this.setActivePane("left"));
+    this.canvas.el.addEventListener("pointerdown", () => this.setActivePane("left"));
     this.main.append(this.penBar);
     this.side = new SidePanel(
       {
@@ -264,6 +284,7 @@ class App {
   // ---------- 保存 ----------
   private onVaultChange(ids: Set<string>): void {
     this.canvas.requestRender();
+    this.records?.render();
     if (this.peek) {
       if (this.vault.exists(this.peek.group)) {
         this.peek.requestRender();
@@ -306,6 +327,7 @@ class App {
     this.btnFwd.disabled = !this.fwdStack.length;
     document.title = `${this.titleEl.textContent} — ${T.appName}`;
     this.upBtn.disabled = this.canvas.group === ROOT_ID;
+    this.leftTitle.textContent = this.titleEl.textContent + " ▾";
     this.renderSideSoon();
   }
   /** 題の横の▾: 所属先とホームへ移る */
@@ -317,17 +339,75 @@ class App {
     this.openUpMenu();
   }
 
-  // ---------- 日記(Ctrl+D): ホーム › 2026 › 2026-11 › 2026-11-23 のグループと、その中の「日記」ノート ----------
-  openToday(): void {
+  // ---------- 日記(Ctrl+D): ホーム › 記録 › 2026 › 2026-11 › 2026-11-23 のグループと、その中の「日記」ノート ----------
+  /** 今日の日のグループ(なければ作る)。前の版でホームに直接作った年のグループは「記録」の中へ移す */
+  todayGroup(): string {
     const d = new Date();
     const p2 = (n: number) => String(n).padStart(2, "0");
     const y = String(d.getFullYear()), ym = `${y}-${p2(d.getMonth() + 1)}`, ymd = `${ym}-${p2(d.getDate())}`;
-    let note = "";
     let day = "";
     this.vault.tx(() => {
-      const year = this.childGroup(ROOT_ID, y);
+      const rec = this.childGroup(ROOT_ID, T.recordsGroup);
+      for (const it of this.vault.itemsOf(ROOT_ID)) {
+        const n = this.vault.get(it.id);
+        if (!it.ref && n?.type === "group" && /^\d{4}$/.test(n.title) && !this.vault.itemPos(rec, it.id)) {
+          const others = this.vault.itemsOf(rec).filter((i) => !i.ref);
+          this.vault.moveToGroup(ROOT_ID, rec, it.id, 0, others.length ? Math.max(...others.map((i) => i.y)) + 80 : 0);
+        }
+      }
+      const year = this.childGroup(rec, y);
       const month = this.childGroup(year, ym);
       day = this.childGroup(month, ymd);
+    });
+    return day;
+  }
+  // ---------- 記録一覧(Ctrl+J) ----------
+  toggleRecords(): void {
+    if (this.records) return this.closeRecords();
+    this.closePopup();
+    this.canvas.commitDraft("esc");
+    this.records = new RecordsView({
+      vault: this.vault,
+      kind: this.state.recordKind ?? null,
+      onKind: (k) => {
+        this.state.recordKind = k;
+        this.saveState();
+      },
+      open: (e) => this.openRecord(e),
+      writeToday: (k) => this.writeToday(k),
+      close: () => this.closeRecords(),
+    });
+    this.main.append(this.records.el);
+    this.records.el.focus();
+  }
+  closeRecords(): void {
+    this.records?.el.remove();
+    this.records = null;
+    this.canvas.el.focus({ preventScroll: true });
+  }
+  private openRecord(e: RecordEntry): void {
+    this.closeRecords();
+    if (e.type === "note") {
+      this.openGroup(e.day);
+      this.canvas.renderNow();
+      this.canvas.setSelection([e.id]);
+      this.openBody(e.id);
+    } else this.openGroup(e.type === "group" ? e.id : e.day);
+  }
+  /** 今日の◯を書く: 日記はノート(Ctrl+D と同じ)、ほかは今日の日のグループの中に、その名前のグループ */
+  private writeToday(kind: string): void {
+    this.closeRecords();
+    if (kind === T.diaryNote) return this.openToday();
+    const day = this.todayGroup();
+    const g = this.vault.tx(() => this.childGroup(day, kind));
+    this.openGroup(g);
+  }
+
+  openToday(): void {
+    if (this.records) this.closeRecords();
+    let note = "";
+    const day = this.todayGroup();
+    this.vault.tx(() => {
       const found = this.vault.itemsOf(day).find((i) => !i.ref && this.vault.get(i.id)?.type === "note" && this.vault.get(i.id)?.title === T.diaryNote);
       note = found ? found.id : this.vault.create({ type: "note", title: T.diaryNote, group: day, x: 0, y: 0 }).id;
     });
@@ -535,13 +615,20 @@ class App {
   // ---------- 横の画面 ----------
   private openPeek(group: string, focus?: string): void {
     if (!this.peek) {
-      this.peekTitle = h("button", { class: "peek-title", title: T.besidePick });
+      this.peekTitle = h("button", { class: "pane-title peek-title", title: T.panePick });
       this.peekTitle.addEventListener("click", () => this.pickBeside());
+      const up = h("button", { class: "tbtn pane-up", title: T.upMenu, "aria-label": T.upMenu, text: "↑" });
+      up.addEventListener("click", () => this.peekUp(up));
       const close = h("button", { class: "tbtn peek-close", title: T.besideClose, "aria-label": T.besideClose, text: "×" });
       close.addEventListener("click", () => this.closePeek());
-      const head = h("div", { class: "peek-head" }, this.peekTitle, h("span", { class: "peek-hint", text: T.besideHint }), close);
-      this.peekWrap = h("div", { class: "peek" }, head);
-      this.canvas.el.after(this.peekWrap);
+      const head = h("div", { class: "pane-head", title: T.besideHint }, up, this.peekTitle, h("span", { class: "pane-space" }), close);
+      this.peekWrap = h("div", { class: "pane peek" }, head);
+      this.splitBar = h("div", { class: "split-bar", title: T.splitBarTip });
+      this.splitBar.addEventListener("pointerdown", (e) => this.dragSplit(e));
+      this.splitBar.addEventListener("dblclick", () => this.setSplit(0.5));
+      this.leftPane.after(this.splitBar, this.peekWrap);
+      this.main.classList.add("split");
+      this.setSplit(this.state.splitRatio ?? 0.5);
       this.peek = new Canvas(
         {
           vault: this.vault,
@@ -564,6 +651,8 @@ class App {
         this.peekWrap,
       );
       this.peek.el.classList.add("peek-canvas");
+      this.peek.el.addEventListener("focusin", () => this.setActivePane("right"));
+      this.peek.el.addEventListener("pointerdown", () => this.setActivePane("right"));
     }
     if (this.peek.group !== group || !this.peek.el.isConnected) this.peek.show(group, this.state.views[group] ?? null);
     else this.peek.requestRender();
@@ -580,16 +669,60 @@ class App {
     if (!this.peek || !this.peekTitle) return;
     const g = this.vault.get(this.peek.group);
     this.peekTitle.textContent = (this.peek.group === ROOT_ID ? T.home : g?.title || T.untitledGroup) + " ▾";
+    this.peekWrap?.querySelector<HTMLButtonElement>(".pane-up")?.toggleAttribute("disabled", this.peek.group === ROOT_ID);
   }
   closePeek(): void {
     this.peek?.commitDraft("esc");
     this.peekWrap?.remove();
+    this.splitBar?.remove();
+    this.splitBar = null;
+    this.main.classList.remove("split");
+    this.leftPane.style.flex = "";
+    this.setActivePane("left");
     this.peek = null;
     this.peekWrap = null;
     this.peekTitle = null;
     this.state.peekGroup = null;
     this.saveState();
     this.canvas.el.focus({ preventScroll: true });
+  }
+  /** 左右どちらを今使っているか(見出しに色を付けるだけ) */
+  private setActivePane(p: "left" | "right"): void {
+    this.main.dataset.active = p;
+  }
+  /** 左の画面の幅の割合(0.2〜0.8) */
+  private setSplit(r: number): void {
+    const v = Math.min(0.8, Math.max(0.2, r));
+    this.leftPane.style.flex = `0 0 ${(v * 100).toFixed(2)}%`;
+    this.state.splitRatio = v;
+  }
+  private dragSplit(e: PointerEvent): void {
+    e.preventDefault();
+    const bar = this.splitBar!;
+    bar.setPointerCapture(e.pointerId);
+    bar.classList.add("dragging");
+    const side = this.main.querySelector<HTMLElement>(".side-panel");
+    const move = (ev: PointerEvent) => {
+      const r = this.main.getBoundingClientRect();
+      const sideW = side && getComputedStyle(side).display !== "none" ? side.getBoundingClientRect().width : 0;
+      this.setSplit((ev.clientX - r.left) / Math.max(1, r.width - sideW));
+    };
+    const up = () => {
+      bar.classList.remove("dragging");
+      bar.removeEventListener("pointermove", move);
+      bar.removeEventListener("pointerup", up);
+      this.saveState();
+    };
+    bar.addEventListener("pointermove", move);
+    bar.addEventListener("pointerup", up);
+  }
+  /** 右の画面の ↑: 右の画面のまま上のグループへ(所属先が複数なら選ぶ) */
+  private peekUp(anchor: HTMLElement): void {
+    if (!this.peek || this.peek.group === ROOT_ID) return;
+    const parents = this.vault.parentsOf(this.peek.group).filter((p) => this.vault.get(p)?.type === "group" || p === ROOT_ID);
+    if (parents.length === 1) return this.openPeek(parents[0]);
+    const r = anchor.getBoundingClientRect();
+    showMenu(r.left, r.bottom + 2, parents.map((p) => ({ label: this.groupName(p), action: () => this.openPeek(p) })));
   }
   private async pickBeside(): Promise<void> {
     const r = await openPicker(this.vault, { title: T.besidePick, mode: "group" });
@@ -707,11 +840,27 @@ class App {
         location.reload();
       }
     });
-    const table = h("table", { class: "shortcuts" }, ...SHORTCUTS.map(([k, d]) => h("tr", {}, h("th", { text: k }), h("td", { text: d }))));
+    // ショートカットは見出しごとのカードに、キーはキーの形で(2026-11-23 利用者「羅列で見づらい」)
+    const isKey = (k: string) => [...k].length <= 6 && !/クリック|ドラッグ|ホイール|ペン/.test(k);
+    const keyRow = (combo: string[]) => h("span", { class: "combo" }, ...combo.flatMap((k, i) => [i ? h("span", { class: "plus", text: "+" }) : null, h(isKey(k) ? "kbd" : "span", { class: isKey(k) ? "" : "act", text: k })]).filter(Boolean) as HTMLElement[]);
+    const table = h(
+      "div",
+      { class: "sc-grid" },
+      ...SHORTCUTS.map((sec) =>
+        h(
+          "section",
+          { class: "sc-card" },
+          h("div", { class: "sc-title" }, h("span", { class: "sc-icon", text: sec.icon }), sec.title),
+          ...sec.items.map((it) =>
+            h("div", { class: "sc-row" }, h("div", { class: "sc-keys" }, ...it.keys.flatMap((c, i) => [i ? h("span", { class: "or", text: "/" }) : null, keyRow(c)]).filter(Boolean) as HTMLElement[]), h("div", { class: "sc-desc", text: it.desc })),
+          ),
+        ),
+      ),
+    );
     const close = h("button", { class: "btn primary", text: "OK" });
     const box = h(
       "div",
-      { class: "modal settings" },
+      { class: "modal settings wide" },
       h("div", { class: "modal-title", text: T.settingsTitle }),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.theme }), ...radios),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.draw }), drawSet),
@@ -770,6 +919,16 @@ class App {
       if (e.ctrlKey && e.key === "Home") {
         e.preventDefault();
         this.openGroup(ROOT_ID);
+        return;
+      }
+      if (e.ctrlKey && k === "j") {
+        e.preventDefault();
+        this.toggleRecords();
+        return;
+      }
+      if (e.key === "Escape" && this.records && !this.popup) {
+        e.preventDefault();
+        this.closeRecords();
         return;
       }
       if (e.ctrlKey && k === "d") {

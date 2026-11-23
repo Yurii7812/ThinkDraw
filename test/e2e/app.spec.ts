@@ -289,7 +289,7 @@ test("外部のエディタの変更を取り込む・ダーク・設定の画�
   await page.locator(".node.t-card").first().click();
   await shot("09-dark");
   await page.keyboard.press("Control+/");
-  await expect(page.locator(".shortcuts")).toBeVisible();
+  await expect(page.locator(".sc-grid")).toBeVisible();
 });
 
 test("右の欄: 文字では開かない・カードを選ぶと自動で開く・空きをクリックで閉じる", async () => {
@@ -374,6 +374,15 @@ test("横に開く: 別のグループを見ながら、右から左へドラッ
   expect(mdFiles()["root.md"]).toContain(`refs:\n  - { id: ${idOf("向こうの考え")}`);
   // 元のグループからは動いていない
   await expect(page.locator(".peek .node", { hasText: "向こうの考え" })).toHaveCount(1);
+  // 真ん中のバーで幅を変えられる
+  const bar = (await page.locator(".split-bar").boundingBox())!;
+  await page.mouse.move(bar.x + 3, bar.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(bar.x - 200, bar.y + 200, { steps: 5 });
+  await page.mouse.up();
+  const lw = (await page.locator(".left-pane").boundingBox())!.width;
+  expect(lw).toBeLessThan(bar.x - 100);
+  await shot("10b-split");
   // × で閉じる
   await page.locator(".peek-close").click();
   await expect(page.locator(".peek")).toHaveCount(0);
@@ -385,9 +394,10 @@ test("右クリックで一覧: ↑ は上のグループ、← は戻れる先"
   const ymd = (await page.locator(".group-title").textContent())!;
   await page.locator(".tbtn.group-up").click({ button: "right" });
   const items = page.locator(".ctxmenu .item");
-  await expect(items).toHaveCount(3);
+  await expect(items).toHaveCount(4); // 月・年・記録・ホーム
   await expect(items.nth(0)).toContainText(ymd.slice(0, 7));
-  await expect(items.nth(2)).toContainText("ホーム");
+  await expect(items.nth(2)).toContainText("記録");
+  await expect(items.nth(3)).toContainText("ホーム");
   await items.nth(1).click();
   await expect(page.locator(".group-title")).toHaveText(ymd.slice(0, 4));
   await page.locator(".i-back").click({ button: "right" });
@@ -419,4 +429,54 @@ test("引用を Delete で消しても、元のノードは消えない(引用�
   expect(mdFiles()["root.md"]).not.toContain("refs:");
   await page.locator(".node.t-group", { hasText: "元の箱" }).dblclick();
   await expect(page.locator(".node", { hasText: "元の話" })).toHaveCount(1);
+});
+
+test("空きの右クリックでグループを作る", async () => {
+  await page.mouse.click(400, 300, { button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "グループを作る" }).click();
+  await page.keyboard.type("新しい箱");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".node.t-group", { hasText: "新しい箱" })).toHaveCount(1);
+});
+
+test("記録一覧: 日記は 記録 › 年 › 月 › 日。一覧から開く・種類で絞る・今日の夢を作る", async () => {
+  await page.keyboard.press("Control+d");
+  await page.keyboard.type("今日あったこと");
+  await page.keyboard.press("Escape");
+  await settle();
+  expect(titles()).toContain("記録");
+  await page.keyboard.press("Control+j");
+  await expect(page.locator(".records")).toBeVisible();
+  await expect(page.locator(".rec-row")).toHaveCount(1);
+  await expect(page.locator(".rec-row")).toContainText("今日あったこと");
+  // 今日の夢を作る(種類の名前を変えて書く)
+  await page.locator(".rec-chip", { hasText: "日記" }).click();
+  await page.locator(".rec-actions .btn").click(); // 今日の日記を書く
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.mouse.click(500, 400, { button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "グループを作る" }).click();
+  await page.keyboard.type("夢");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+j");
+  await page.locator(".rec-chip", { hasText: "すべて" }).click(); // 絞り込みは覚えているので戻す
+  await expect(page.locator(".rec-row")).toHaveCount(2);
+  await page.locator(".rec-chip", { hasText: "夢" }).click();
+  await expect(page.locator(".rec-row")).toHaveCount(1);
+  await shot("11-records");
+  await page.locator(".rec-row").click();
+  await expect(page.locator(".records")).toHaveCount(0);
+  await expect(page.locator(".group-title")).toHaveText("夢");
+  // Esc で閉じる
+  await page.keyboard.press("Control+j");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".records")).toHaveCount(0);
+});
+
+test("ショートカット一覧はカードの形", async () => {
+  await page.keyboard.press("Control+/");
+  await expect(page.locator(".sc-card")).toHaveCount(6);
+  await expect(page.locator(".sc-card kbd").first()).toBeVisible();
+  await shot("12-help");
 });

@@ -1103,6 +1103,16 @@ export class Canvas {
     showMenu(x, y, [
       { label: T.newText, action: () => this.startEdit(null, Math.round(p.x), Math.round(p.y), null) },
       {
+        // 空のグループを作って、その場で名前を書く(2026-11-23 利用者の希望)
+        label: T.newGroup,
+        action: () => {
+          const n = this.v.create({ type: "group", title: "", group: this.group, x: Math.round(p.x), y: Math.round(p.y) });
+          this.renderNow();
+          this.setSelection([n.id]);
+          this.renameGroup(n.id);
+        },
+      },
+      {
         label: T.newNote,
         action: () => {
           const n = this.v.create({ type: "note", title: "", group: this.group, x: Math.round(p.x), y: Math.round(p.y) });
