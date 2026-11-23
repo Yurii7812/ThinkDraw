@@ -35,3 +35,38 @@ describe("画像の保存", () => {
     expect([...readFileSync(path.join(t.dir, rel))]).toEqual([1, 2, 3]);
   });
 });
+
+describe("チェックリストと表(mdschema)", () => {
+  it("チェックリストの往復", async () => {
+    const { parseMarkdown, serializeMarkdown } = await import("../src/renderer/mdschema");
+    const md = "* [ ] まだ\n\n* [x] できた\n\n* ふつう\n";
+    const doc = parseMarkdown(md);
+    const items: (boolean | null)[] = [];
+    doc.descendants((n) => void (n.type.name === "list_item" && items.push(n.attrs.checked)));
+    expect(items).toEqual([false, true, null]);
+    const back = serializeMarkdown(doc);
+    expect(back).toContain("[ ] まだ");
+    expect(back).toContain("[x] できた");
+    expect(serializeMarkdown(parseMarkdown(back))).toBe(back);
+  });
+  it("表の往復(| は逃がす)", async () => {
+    const { parseMarkdown, serializeMarkdown } = await import("../src/renderer/mdschema");
+    const md = "| 名前 | 値 |\n| --- | --- |\n| a\\|b | 2 |\n";
+    const doc = parseMarkdown(md);
+    expect(doc.firstChild!.type.name).toBe("table");
+    expect(doc.firstChild!.childCount).toBe(2);
+    expect(doc.firstChild!.firstChild!.firstChild!.type.name).toBe("table_header");
+    const back = serializeMarkdown(doc);
+    expect(back.trimEnd()).toBe(md.trimEnd());
+    expect(serializeMarkdown(parseMarkdown(back))).toBe(back);
+  });
+  it("チェックリストの直後の表も、往復で壊れない", async () => {
+    const { parseMarkdown, serializeMarkdown } = await import("../src/renderer/mdschema");
+    const md = "* [x] 牛乳\n\n* [ ] パン\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+    const back = serializeMarkdown(parseMarkdown(md));
+    expect(back).toContain("\n\n| a | b |");
+    const doc = parseMarkdown(back);
+    expect(doc.childCount).toBe(2);
+    expect(doc.lastChild!.type.name).toBe("table");
+  });
+});

@@ -314,25 +314,98 @@ test("右の欄: 文字では開かない・カードを選ぶと自動で開く
   await expect(page.locator(".main.side-open")).toHaveCount(0);
 });
 
-test("Ctrl+D: 今日の日記(年 › 月 › 日 のグループの「日記」ノート)を大画面で開く。2 回目は同じものを開く", async () => {
+test("Ctrl+D: 今日のグループ(記録 › 年 › 月 › 日)を開く。日記のノートは開かない。2 回目も同じグループ", async () => {
   const d = new Date();
   const p2 = (n: number) => String(n).padStart(2, "0");
   const ymd = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
   await page.keyboard.press("Control+d");
-  await expect(page.locator(".popup.expanded")).toBeVisible();
   await expect(page.locator(".group-title")).toHaveText(ymd);
-  await page.keyboard.type("今日のこと");
-  await page.keyboard.press("Escape");
+  await expect(page.locator(".popup")).toHaveCount(0);
   await page.locator(".tbtn.group-up").click();
   await expect(page.locator(".group-title")).toHaveText(ymd.slice(0, 7));
   await page.keyboard.press("Control+d");
-  await expect(page.locator(".popup.expanded")).toBeVisible();
-  await page.keyboard.press("Escape");
+  await expect(page.locator(".group-title")).toHaveText(ymd);
   await settle();
-  const diaries = Object.values(mdFiles()).filter((t) => t.includes(`title: ${ymd}-日記\n`));
-  expect(diaries).toHaveLength(1);
-  expect(diaries[0]).toContain("今日のこと");
+  expect(Object.values(mdFiles()).filter((t) => t.includes(`title: ${ymd}\n`))).toHaveLength(1);
+  expect(titles().join("\n")).not.toContain("日記");
   expect(titles().map((t) => (t ?? "").replace(/"/g, ""))).toEqual(expect.arrayContaining([String(d.getFullYear()), ymd.slice(0, 7), ymd]));
+});
+
+test("Esc で選択が外れる/R で名前を変える/Ctrl+C → 別のグループで Ctrl+V は引用", async () => {
+  await write(300, 200, "りんご");
+  await write(300, 300, "みかん");
+  // クリックで選ぶ → Esc で外れる
+  await page.locator(".node", { hasText: "りんご" }).click({ modifiers: ["Control"] });
+  await expect(page.locator(".node.selected")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".node.selected")).toHaveCount(0);
+  // 右クリック → R で書き直し(名前を変える)
+  await page.locator(".node", { hasText: "みかん" }).click({ button: "right" });
+  await expect(page.locator(".ctxmenu")).toBeVisible();
+  await page.keyboard.press("r");
+  await expect(page.locator("textarea.draft")).toHaveCount(1);
+  await page.keyboard.press("Control+a");
+  await page.keyboard.type("オレンジ");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".node", { hasText: "オレンジ" })).toHaveCount(1);
+  // 2 つ選んでコピー → 空きに「入れ物」を作って開き、貼る
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+c");
+  await page.keyboard.press("Escape");
+  await page.mouse.click(700, 500, { button: "right" });
+  await page.getByText("ここにグループを作る").click();
+  await page.keyboard.type("別の場所");
+  await page.keyboard.press("Escape");
+  await page.locator(".node.t-group", { hasText: "別の場所" }).click();
+  await page.keyboard.press("Enter"); // 選んで Enter で開く
+  await expect(page.locator(".group-title")).toHaveText("別の場所");
+  await page.keyboard.press("Control+v");
+  await expect(page.locator(".node.ref")).toHaveCount(2);
+  await settle();
+  const g = mdFiles()[idOf("別の場所") + ".md"];
+  expect(g).toContain("refs:");
+  expect(g).toContain(idOf("りんご"));
+  expect(g).toContain(idOf("オレンジ"));
+});
+
+test("ノートはタイトルだけ見せる(中身はクリックして開いたとき)。添付メニューから チェックリスト・表", async () => {
+  await page.mouse.click(600, 400, { button: "right" });
+  await page.getByText("ノートを作る").click();
+  await expect(page.locator(".popup")).toBeVisible();
+  await page.locator(".pop-title").fill("買い物");
+  await page.locator(".b-attach").click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "チェック" }).click();
+  await page.keyboard.type("牛乳");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("パン");
+  await expect(page.locator(".ProseMirror li.task")).toHaveCount(2);
+  await page.locator(".ProseMirror li.task .task-box").first().click();
+  await expect(page.locator(".ProseMirror li.task.done")).toHaveCount(1);
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter"); // 空の項目で Enter → 箇条書きから出る
+  await page.locator(".b-attach").click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "表" }).click();
+  await expect(page.locator(".ProseMirror table")).toHaveCount(1);
+  await page.keyboard.type("名前");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("値");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("x");
+  await page.locator(".b-attach").click();
+  await page.getByText("右に列を足す").click();
+  await expect(page.locator(".ProseMirror tr").first().locator("th")).toHaveCount(4);
+  await settle();
+  const md = Object.values(mdFiles()).find((t) => t.includes("title: 買い物"))!;
+  expect(md).toContain("[x] 牛乳");
+  expect(md).toContain("[ ] パン");
+  expect(md).toContain("| 名前 |");
+  expect(md).toContain("| --- |");
+  await page.keyboard.press("Escape");
+  await page.locator(".popup").waitFor({ state: "detached" }).catch(() => {});
+  await expect(page.locator(".node.t-note .excerpt")).toHaveCount(0);
+  await expect(page.locator(".node.t-note")).toContainText("買い物");
+  await expect(page.locator(".node.t-note")).not.toContainText("牛乳");
 });
 
 test("書き出し: Markdown・画像・HTML(試験では指定の場所へ書く)", async () => {
@@ -447,7 +520,7 @@ test("記録一覧: 左に種類・右に記録。新しい種類を足す・上
   const d = new Date();
   const p2 = (n: number) => String(n).padStart(2, "0");
   const ymd = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
-  await page.keyboard.press("Control+d");
+  await page.evaluate(() => (window as unknown as { __app: { writeRecord(k: string): void } }).__app.writeRecord("日記"));
   await page.keyboard.type("今日あったこと");
   await page.keyboard.press("Escape");
   await settle();
@@ -633,6 +706,7 @@ test("ノートに添付: 画像以外(HTML など)も添付でき、リンク�
   await page.keyboard.press("Enter");
   const chooser = page.waitForEvent("filechooser");
   await page.locator(".tb.b-attach").click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "ファイル" }).click();
   await (await chooser).setFiles({ name: "見本.html", mimeType: "text/html", buffer: Buffer.from("<p>hi</p>") });
   await expect(page.locator(".ProseMirror a", { hasText: "見本.html" })).toHaveCount(1);
   await page.keyboard.press("Escape");

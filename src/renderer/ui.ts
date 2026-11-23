@@ -58,9 +58,11 @@ export interface MenuItem {
   /** 赤い字(消すなど) */
   danger?: boolean;
   /** 一番上に横に並べる、絵と名前の大きなボタン(右クリックの「よく使う操作」) */
-  bar?: { icon: string; label: string; title?: string; action: () => void; danger?: boolean; keepOpen?: boolean }[];
+  bar?: { icon: string; label: string; title?: string; action: () => void; danger?: boolean; keepOpen?: boolean; key?: string }[];
   /** 見出し(押せない小さな字) */
   heading?: boolean;
+  /** メニューが開いている間、このキー 1 つで選べる(例: "r")。右に小さく出す */
+  key?: string;
 }
 
 /** 右クリックのボタンの絵(線だけの小さな SVG) */
@@ -75,13 +77,16 @@ export const MENU_ICONS: Record<string, string> = {
 };
 
 let openMenu: HTMLElement | null = null;
+let menuKeys = new Map<string, () => void>();
 export function closeMenu(): void {
   openMenu?.remove();
   openMenu = null;
+  menuKeys = new Map();
 }
 
 export function showMenu(x: number, y: number, items: MenuItem[]): void {
   closeMenu();
+  menuKeys = new Map();
   const el = h("div", { class: "ctxmenu", role: "menu" });
   const build = (parent: HTMLElement, list: MenuItem[]) => {
     for (const it of list) {
@@ -112,6 +117,10 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
             if (!x.keepOpen) closeMenu();
             x.action();
           });
+          if (x.key) {
+            menuKeys.set(x.key.toLowerCase(), () => bb.click());
+            bb.append(h("kbd", { class: "mb-key", text: x.key.toUpperCase() }));
+          }
           row.append(bb);
         }
         parent.append(row);
@@ -121,7 +130,8 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
         parent.append(h("div", { class: "menuhead", text: it.label }));
         continue;
       }
-      const b = h("button", { class: "item" + (it.checked ? " checked" : "") + (it.danger ? " danger" : ""), role: "menuitem", disabled: it.disabled }, h("span", { class: "mi-label", text: it.label }), it.hint ? h("span", { class: "mi-hint", text: it.hint }) : null);
+      const b = h("button", { class: "item" + (it.checked ? " checked" : "") + (it.danger ? " danger" : ""), role: "menuitem", disabled: it.disabled }, h("span", { class: "mi-label", text: it.label }), it.hint || it.key ? h("span", { class: "mi-hint", text: it.hint ?? it.key!.toUpperCase() }) : null);
+      if (it.key && !it.disabled) menuKeys.set(it.key.toLowerCase(), () => b.click());
       if (it.sub) {
         b.classList.add("hassub");
         const sub = h("div", { class: "submenu" });
@@ -178,6 +188,16 @@ addEventListener("keydown", (e) => {
   if (e.key === "Escape" && openMenu) {
     closeMenu();
     e.stopPropagation();
+    return;
+  }
+  // メニューが開いている間は、決めたキー 1 つで選べる(右クリックして R で名前を変える、など)
+  if (openMenu && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+    const run = menuKeys.get(e.key.toLowerCase());
+    if (run) {
+      e.preventDefault();
+      e.stopPropagation();
+      run();
+    }
   }
 }, true);
 export const menuOpen = () => !!openMenu;

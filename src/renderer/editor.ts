@@ -3,7 +3,6 @@ import { baseKeymap, setBlockType, toggleMark } from "prosemirror-commands";
 import { history, redo, undo } from "prosemirror-history";
 import { InputRule, inputRules, textblockTypeInputRule, undoInputRule, wrappingInputRule } from "prosemirror-inputrules";
 import { keymap } from "prosemirror-keymap";
-import { defaultMarkdownParser, defaultMarkdownSerializer, schema } from "prosemirror-markdown";
 import type { Node as PMNode } from "prosemirror-model";
 import { liftListItem, sinkListItem, splitListItem, wrapInList } from "prosemirror-schema-list";
 import { EditorState, Plugin, PluginKey, TextSelection } from "prosemirror-state";
@@ -14,7 +13,8 @@ import type { Vault } from "../core/vault";
 import { cardName } from "../decks";
 import { openPicker } from "./picker";
 import { T } from "./strings";
-import { api, h } from "./ui";
+import { addColRight, addRowBelow, cellAt, cellBelow, deleteTable, makeChecklist, makeTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
+import { api, h, showMenu, svg } from "./ui";
 
 export interface EditorHost {
   vault: Vault;
@@ -24,13 +24,7 @@ export interface EditorHost {
   openSearch(): void;
 }
 
-export function parseMarkdown(md: string): PMNode {
-  return defaultMarkdownParser.parse(md) ?? schema.node("doc", null, [schema.node("paragraph")]);
-}
-export function serializeMarkdown(doc: PMNode): string {
-  const s = defaultMarkdownSerializer.serialize(doc);
-  return s ? s + "\n" : "";
-}
+export { parseMarkdown, serializeMarkdown };
 
 /** 本文の画像の src(vault の中の相対パス)を、画面で読める URL にする */
 export function resolveSrc(src: string): string {
@@ -106,6 +100,22 @@ function placeholderPlugin(text: string): Plugin {
   });
 }
 
+/** 右上のボタンの絵(線だけの小さな SVG。2026-11-23 利用者「分かりづらいのでアイコンを」) */
+const TOOL_ICONS: Record<string, string> = {
+  bold: '<path d="M7 5h6a3.5 3.5 0 0 1 0 7H7zM7 12h7a3.5 3.5 0 0 1 0 7H7z"/>',
+  italic: '<path d="M10 5h7M7 19h7M14 5l-4 14"/>',
+  heading: '<path d="M6 5v14M18 5v14M6 12h12"/>',
+  list: '<circle cx="5" cy="7" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="5" cy="17" r="1"/><path d="M10 7h10M10 12h10M10 17h10"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  attach: '<path d="M20 11.5 12.5 19a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7L10.2 16.7a1.7 1.7 0 0 1-2.4-2.4L14.5 7.6"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  shrink: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  check: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/>',
+  table: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M9 5v14M15 5v14"/>',
+  file: '<path d="M6 3h8l4 4v14H6zM14 3v4h4"/>',
+};
+
 export class BodyPopup {
   readonly id: string;
   private el: HTMLElement;
@@ -125,8 +135,10 @@ export class BodyPopup {
     this.lastSaved = n.body;
     this.lastTitle = n.title;
 
-    const btn = (label: string, cls: string, fn: () => void) => {
-      const b = h("button", { class: "tb " + cls, title: label, "aria-label": label });
+    const btn = (label: string, cls: string, fn: () => void, icon = "") => {
+      const ico = svg("svg", { viewBox: "0 0 24 24", width: 18, height: 18, "aria-hidden": "true", class: "tb-ico" });
+      ico.innerHTML = TOOL_ICONS[icon || cls.replace(/^b-/, "")] ?? "";
+      const b = h("button", { class: "tb " + cls, title: label, "aria-label": label }, ico);
       b.addEventListener("mousedown", (e) => e.preventDefault());
       b.addEventListener("click", fn);
       return b;
@@ -157,7 +169,7 @@ export class BodyPopup {
       btn(T.heading, "b-heading", () => this.cmd(setBlockType(schema.nodes.heading, { level: 2 }))),
       btn(T.bulletList, "b-list", () => this.cmd(wrapInList(schema.nodes.bullet_list))),
       btn(T.makeLink, "b-link", () => this.makeLink()),
-      btn(T.attach, "b-attach", () => this.pickFiles()),
+      btn(T.attach, "b-attach", () => this.attachMenu()),
       h("span", { class: "spacer" }),
       btn(T.expand, "b-expand", () => this.toggleExpand()),
       btn(T.close, "b-close", () => this.close()),
@@ -189,9 +201,14 @@ export class BodyPopup {
             this.host.openSearch();
             return true;
           },
-          Enter: splitListItem(schema.nodes.list_item),
-          Tab: sinkListItem(schema.nodes.list_item),
-          "Shift-Tab": liftListItem(schema.nodes.list_item),
+          Enter: (st, d, v) => {
+            if (cellBelow(st, d, v)) return true;
+            const li = st.selection.$from.node(-1);
+            const task = li?.type === schema.nodes.list_item && li.attrs.checked != null; // チェックリストの次の項目もチェック付きに
+            return (task ? splitListItem(schema.nodes.list_item, { checked: false }) : splitListItem(schema.nodes.list_item))(st, d, v);
+          },
+          Tab: (st, d, v) => nextCell(st, d, v) || sinkListItem(schema.nodes.list_item)(st, d, v),
+          "Shift-Tab": (st, d, v) => prevCell(st, d, v) || liftListItem(schema.nodes.list_item)(st, d, v),
           "Shift-Enter": (st, dispatch) => {
             dispatch?.(st.tr.replaceSelectionWith(schema.nodes.hard_break.create()).scrollIntoView());
             return true;
@@ -205,6 +222,25 @@ export class BodyPopup {
     this.view = new EditorView(editorEl, {
       state,
       nodeViews: {
+        // チェックリストの項目: 左の □ を押すと、できた/まだ を切り替える
+        list_item: (node, view, getPos) => {
+          if (node.attrs.checked == null) {
+            const plain = h("li"); // ふつうの項目はふつうの描画
+            return { dom: plain, contentDOM: plain };
+          }
+          const box = h("input", { type: "checkbox", class: "task-box", contenteditable: "false" }) as HTMLInputElement;
+          box.checked = !!node.attrs.checked;
+          const content = h("div", { class: "task-body" });
+          const li = h("li", { class: "task" + (node.attrs.checked ? " done" : "") }, box, content);
+          box.addEventListener("mousedown", (e) => e.preventDefault());
+          box.addEventListener("click", (e) => {
+            e.preventDefault();
+            const pos = getPos();
+            if (pos === undefined) return;
+            view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, checked: !node.attrs.checked }));
+          });
+          return { dom: li, contentDOM: content };
+        },
         image: (node) => {
           const img = h("img", { src: resolveSrc(node.attrs.src), alt: node.attrs.alt ?? "", title: node.attrs.title ?? undefined });
           return { dom: img };
@@ -252,6 +288,7 @@ export class BodyPopup {
     this.el.classList.toggle("expanded");
     const b = this.el.querySelector(".b-expand") as HTMLElement;
     b.title = this.expanded ? T.shrink : T.expand;
+    b.querySelector("svg")!.innerHTML = TOOL_ICONS[this.expanded ? "shrink" : "expand"];
   }
 
   private scheduleSave(): void {
@@ -339,7 +376,56 @@ export class BodyPopup {
     this.view.dispatch(tr.setSelection(TextSelection.create(tr.doc, to)));
   }
 
-  /** 添付ボタン: ファイルを選んで添付する(画像・HTML・PDF など何でも) */
+  /** 添付ボタン: ファイル・チェックリスト・表を入れる(表の中では、行・列の操作も出る) */
+  private attachMenu(): void {
+    const btn = this.el.querySelector(".b-attach") as HTMLElement;
+    const r = btn.getBoundingClientRect();
+    const run = (c: (st: import("prosemirror-state").EditorState, d?: (tr: import("prosemirror-state").Transaction) => void) => boolean) => () => {
+      this.view.focus();
+      c(this.view.state, this.view.dispatch);
+    };
+    const items: import("./ui").MenuItem[] = [
+      { label: "", bar: [
+        { icon: "file", label: T.attachFile, title: T.attach, action: () => this.pickFiles() },
+        { icon: "check", label: T.attachChecklist, title: T.attachChecklistTip, action: () => this.insertBlock(makeChecklist()) },
+        { icon: "table", label: T.attachTable, title: T.attachTableTip, action: () => this.insertBlock(makeTable(3, 3)) },
+      ] },
+    ];
+    if (cellAt(this.view.state)) {
+      items.push(
+        { separator: true, label: "" },
+        { label: T.tableHead, heading: true },
+        { label: T.tableAddRow, action: run(addRowBelow) },
+        { label: T.tableAddCol, action: run(addColRight) },
+        { label: T.tableDelete, danger: true, action: run(deleteTable) },
+      );
+    }
+    showMenu(r.left, r.bottom + 4, items);
+  }
+
+  /** カーソルの所(空の段落なら、その段落と入れ替えて)にブロックを入れ、最初の中へカーソルを置く */
+  private insertBlock(node: import("prosemirror-model").Node): void {
+    const st = this.view.state;
+    const { $from } = st.selection;
+    const para = $from.parent;
+    let tr = st.tr;
+    let at: number;
+    if (para.type === schema.nodes.paragraph && para.content.size === 0) {
+      at = $from.before();
+      tr = tr.replaceWith(at, $from.after(), node);
+    } else {
+      at = $from.after($from.depth);
+      tr = tr.insert(at, node);
+    }
+    // 後ろに書く場所が無いと抜けられないので、段落を 1 つ足しておく
+    const end = at + node.nodeSize;
+    if (!tr.doc.nodeAt(end)) tr = tr.insert(end, schema.nodes.paragraph.create());
+    tr = tr.setSelection(TextSelection.near(tr.doc.resolve(at + 1)));
+    this.view.dispatch(tr.scrollIntoView());
+    this.view.focus();
+  }
+
+  /** ファイルを選んで添付する(画像・HTML・PDF など何でも) */
   private pickFiles(): void {
     const input = h("input", { type: "file", multiple: "" }) as HTMLInputElement;
     input.addEventListener("change", () => {

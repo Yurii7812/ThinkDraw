@@ -165,6 +165,7 @@ function createWindow(): void {
     width: 1280,
     height: 820,
     title: "ThinkDraw",
+    icon: path.join(__dirname, "../../assets/icon.png"),
     backgroundColor: "#1e1e1e",
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: false },
   });

@@ -1,7 +1,7 @@
 // 画面全体: 上部バー・キャンバス・右の欄(詳細|グラフ)・ペン・履歴・状態の保存・自動保存
 import { ROOT_ID } from "../core/types";
 import { Vault } from "../core/vault";
-import { Canvas, PRESET_COLORS, type PenState, type View } from "./canvas";
+import { Canvas, PRESET_COLORS, refClipboard, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
 import { exportGroup, type ExportKind } from "./exporter";
@@ -508,8 +508,10 @@ class App {
     return id;
   }
 
+  /** Ctrl+D: 今日のグループ(ホーム › 記録 › 年 › 月 › 日)を開く。日記のノートは開かない(2026-11-23 利用者) */
   openToday(): void {
-    this.writeRecord(T.diaryNote);
+    if (this.records) this.closeRecords();
+    this.openGroup(this.todayGroup());
   }
   /** parent の中の、名前が title のグループ(なければ作る。並びは日付順になるよう、下へ足す) */
   private childGroup(parent: string, title: string): string {
@@ -1127,9 +1129,16 @@ class App {
     addEventListener("paste", (e) => {
       const files = e.clipboardData?.files;
       const inField = (e.target as Element)?.closest?.("input, textarea, .ProseMirror");
-      if (!files?.length || inField || this.popup || this.records) return;
-      e.preventDefault();
+      if (inField || this.popup || this.records) return;
       const c = this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas;
+      // Ctrl+C でコピーした物(目印の文字が入っている)は、引用として貼る
+      if (!files?.length && refClipboard.size && e.clipboardData?.getData("text/plain") === refClipboard.mark) {
+        e.preventDefault();
+        c.pasteRefs();
+        return;
+      }
+      if (!files?.length) return;
+      e.preventDefault();
       const p = c.visibleCenter();
       void c.attachFilesAt(files, p.x, p.y);
     });

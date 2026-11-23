@@ -78,18 +78,12 @@ type Drag =
 
 const DRAG_START = 4;
 export const PRESET_COLORS = 8;
-const CARD_FACE_H = CARD_H;
 
-function excerpt(body: string, n = 90): string {
-  const t = body
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "🖼")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/^#+\s*/gm, "")
-    .replace(/[*_`>]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return [...t].length > n ? [...t].slice(0, n).join("") + "…" : t;
-}
+/** Ctrl+C でコピーした物(どの画面のキャンバスからでも貼れる)と、システムのコピーに入れた目印の文字 */
+let refClip: { id: string; x: number; y: number }[] = [];
+let refClipMark = "";
+export const refClipboard = { get mark() { return refClipMark; }, get size() { return refClip.length; } };
+const CARD_FACE_H = CARD_H;
 
 export function strokeD(p: number[]): string {
   if (p.length < 2) return "";
@@ -478,7 +472,7 @@ export class Canvas {
   }
 
   private signature(n: TDNode, ref: boolean): string {
-    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? excerpt(n.body) : !!n.body.trim(), n.card, n.spread]);
+    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? null : !!n.body.trim(), n.card, n.spread]);
   }
 
   /** グループのノードに見せる中身: 上から 3 件の名前・残りの数・下のグループの数 */
@@ -508,10 +502,8 @@ export class Canvas {
       el.append(h("span", { class: "label", text: n.title || T.untitled }));
       if (n.body.trim()) el.append(h("span", { class: "bodymark", title: T.hasBody, "data-act": "body" }, "¶"));
     } else if (n.type === "note") {
-      el.append(
-        h("div", { class: "note-head" }, h("span", { class: "ico ico-note" }), h("span", { class: "label", text: n.title || T.untitled })),
-        h("div", { class: "excerpt", text: excerpt(n.body) }),
-      );
+      // ノートはタイトルだけ。中身はクリックして開いたときにだけ見せる(2026-11-23 利用者)
+      el.append(h("div", { class: "note-head" }, h("span", { class: "ico ico-note" }), h("span", { class: "label", text: n.title || T.untitled })));
     } else if (n.type === "group") {
       // 下にグループがあれば ▸ で木を出して飛べる(中身の文字は出さない。2026-11-23 利用者)
       const peek = this.groupPeek(n.id);
@@ -1277,6 +1269,14 @@ export class Canvas {
     const ids = [...this.selection];
     const k = e.key.toLowerCase();
     if (e.key === "Escape" && this.pen.on) return false; // ペンモードを抜けるのは app
+    if (e.key === "Escape" && (ids.length || this.strokeSel.size)) {
+      this.setSelection([]); // 選択を外す
+      return true;
+    }
+    if (e.ctrlKey && !e.shiftKey && k === "c" && ids.length) {
+      this.copySelection(ids);
+      return true;
+    }
     if (e.key === "Delete" || e.key === "Backspace") {
       if (!ids.length && !this.strokeSel.size) return false;
       this.v.tx(() => {
@@ -1306,6 +1306,37 @@ export class Canvas {
       return true;
     }
     return false;
+  }
+
+  /** Ctrl+C: 選んだ物を覚える。貼る(Ctrl+V)と、別のグループに引用として入る。システムのコピーにも目印の文字を入れる */
+  copySelection(ids: string[]): void {
+    refClip = ids.map((id) => ({ id, ...(this.v.itemPos(this.group, id) ?? { x: 0, y: 0 }) }));
+    refClipMark = T.copiedMark(ids.length);
+    void navigator.clipboard?.writeText(refClipMark).catch(() => {});
+    toast(T.copiedToast(ids.length));
+  }
+
+  /** Ctrl+V(app の paste から): コピーした物を、このグループに引用として貼る。見えている真ん中に、元の並びのまま */
+  pasteRefs(): boolean {
+    if (!refClip.length || this.readOnly) return false;
+    const c = this.visibleCenter();
+    const x0 = Math.min(...refClip.map((r) => r.x)), y0 = Math.min(...refClip.map((r) => r.y));
+    const x1 = Math.max(...refClip.map((r) => r.x)), y1 = Math.max(...refClip.map((r) => r.y));
+    const dx = c.x - (x0 + x1) / 2, dy = c.y - (y0 + y1) / 2;
+    const made: string[] = [];
+    let already = 0;
+    this.v.tx(() => {
+      for (const r of refClip) {
+        if (!this.v.exists(r.id)) continue;
+        if (!this.v.canContain(this.group, r.id) && this.v.get(r.id)?.type === "group") continue; // 自分の上のグループは引用できない
+        if (this.v.addRef(this.group, r.id, Math.round(r.x + dx), Math.round(r.y + dy))) made.push(r.id);
+        else already++;
+      }
+    });
+    this.renderNow();
+    this.setSelection(made);
+    toast(made.length ? T.pastedRefs(made.length) + (already ? T.pastedAlready(already) : "") : T.pastedNone);
+    return true;
   }
 
   bundleSelection(): void {
@@ -1376,7 +1407,7 @@ export class Canvas {
     if (!many) {
       if (n.type === "group") bar.push({ icon: "open", label: T.mOpen, title: T.openGroup, action: () => this.host.openGroup(id) });
       else if (n.type === "text" && n.file) bar.push({ icon: "open", label: T.mOpen, title: T.openFile, action: () => this.host.openFile?.(n.file!) });
-      else if (n.type === "text") bar.push({ icon: "edit", label: T.mEdit, title: T.editText, action: () => this.editText(id) });
+      else if (n.type === "text") bar.push({ icon: "edit", label: T.mEdit, title: T.editText + " (R)", key: "r", action: () => this.editText(id) });
       else if (n.type === "note") bar.push({ icon: "open", label: T.mOpen, title: T.openNote, action: () => this.host.openBody(id) });
       else bar.push({ icon: "open", label: T.mOpen, action: () => this.open(id) });
     }
@@ -1392,8 +1423,17 @@ export class Canvas {
     if (ids.every((i) => this.v.get(i)?.type === "text" && !this.v.get(i)?.file)) items.push(this.fillItem(ids));
     // このノードだけのこと
     const own: MenuItem[] = [];
-    if (!many && n.type === "group") own.push({ label: T.rename, action: () => this.renameGroup(id) }, { label: T.unbundle, action: () => this.v.unbundle(id) });
-    if (!many && n.type === "text" && n.file) own.push({ label: T.rename, action: () => this.editText(id) });
+    if (!many && n.type === "group") own.push({ label: T.rename, key: "r", action: () => this.renameGroup(id) }, { label: T.unbundle, action: () => this.v.unbundle(id) });
+    if (!many && n.type === "text" && n.file) own.push({ label: T.rename, key: "r", action: () => this.editText(id) });
+    if (!many && n.type === "note")
+      own.push({
+        label: T.rename,
+        key: "r",
+        action: async () => {
+          const t = await askText(T.rename, n.title);
+          if (t !== null) this.v.update(id, { title: t.trim() });
+        },
+      });
     if (!many && n.type === "card" && n.card?.deck === "tarot") own.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
     if (own.length) items.push({ separator: true, label: "" }, ...own);
     // グループ(入れる・引用する・外す)
