@@ -7,6 +7,7 @@ import type { GraphMode } from "./graph";
 import { exportGroup, type ExportKind } from "./exporter";
 import { cleanKind, DATE } from "../core/records";
 import { findRecordNote, KINDS_FILE, parseKinds, parseRecordTitle, RecordsView, type RecordEntry, type RecordKind } from "./records";
+import { showGroupTree } from "./grouptree";
 import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
 import { SHORTCUTS, T } from "./strings";
@@ -222,6 +223,7 @@ class App {
         dropOutside: (ids, cx, cy, link) => (this.peek ? this.dropInto(this.canvas, this.peek, ids, cx, cy, link) : false),
         openBeside: (id) => this.openBeside(id),
         extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
+        groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openGroup(g)),
       },
       this.leftPane,
     );
@@ -730,6 +732,7 @@ class App {
           dropOutside: (ids, cx, cy, link) => this.dropInto(this.peek!, this.canvas, ids, cx, cy, link),
           openBeside: (id) => this.openBeside(id),
           extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
+          groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openPeek(g)),
         },
         this.peekWrap,
       );

@@ -24,6 +24,11 @@ export const T = {
   // 右クリックのメニュー
   openBody: "ノートを書く",
   openNote: "ノートを開く",
+  treeTip: "下のグループの一覧(押すとそこへ)",
+  treeToggle: "開く/閉じる",
+  treeEmpty: "(下のグループはありません)",
+  treeEnter: "中へ",
+  groupMore: (n: number) => `ほか ${n} 件`,
   dayMenuHead: (d: string) => `${d} の記録`,
   dayMenuNew: (k: string) => `${k}を作る`,
   dayMenuOpen: (k: string) => `${k}を開く(この日にあります)`,

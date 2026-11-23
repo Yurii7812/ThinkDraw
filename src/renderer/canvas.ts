@@ -34,6 +34,8 @@ export interface CanvasHost {
   onSelectionChange(ids: string[]): void;
   /** この画面の外(横の画面)へ落としたとき。受け取ったら true */
   dropOutside?(ids: string[], cx: number, cy: number, link: boolean): boolean;
+  /** グループの ▸: 下のグループの木を出す */
+  groupTree?(id: string, anchor: Element): void;
   /** 空きの右クリックに足す項目(日のグループでの記録の作成など)。x, y は置く位置 */
   extraEmptyMenu?(group: string, x: number, y: number): MenuItem[];
   /** 横の画面に開く(グループはその中、ほかは所属先で、そのノードを見せる) */
@@ -285,7 +287,22 @@ export class Canvas {
   }
 
   private signature(n: TDNode, ref: boolean): string {
-    return JSON.stringify([n.type, n.title, n.color, n.fill, ref, n.type === "note" ? excerpt(n.body) : !!n.body.trim(), n.card, n.spread]);
+    return JSON.stringify([n.type, n.title, n.color, n.fill, ref, n.type === "group" ? this.groupPeek(n.id) : null, n.type === "note" ? excerpt(n.body) : !!n.body.trim(), n.card, n.spread]);
+  }
+
+  /** グループのノードに見せる中身: 上から 3 件の名前・残りの数・下のグループの数 */
+  private groupPeek(id: string): { lines: string[]; more: number; subs: number } {
+    const items = this.v
+      .itemsOf(id)
+      .filter((i) => this.v.exists(i.id))
+      .sort((a, b) => a.y - b.y || a.x - b.x);
+    const nameOf = (i: string) => {
+      const n = this.v.get(i)!;
+      const t = (n.card ? cardName(n.card) : n.title || T.untitled).replace(/\s+/g, " ");
+      return (n.type === "group" ? "▸ " : "") + ([...t].length > 24 ? [...t].slice(0, 24).join("") + "…" : t);
+    };
+    const lines = items.slice(0, 3).map((i) => nameOf(i.id));
+    return { lines, more: Math.max(0, items.length - 3), subs: items.filter((i) => !i.ref && this.v.get(i.id)?.type === "group").length };
   }
 
   private nodeEl(n: TDNode, ref: boolean): HTMLElement {
@@ -300,7 +317,18 @@ export class Canvas {
         h("div", { class: "excerpt", text: excerpt(n.body) }),
       );
     } else if (n.type === "group") {
-      el.append(h("span", { class: "ico ico-folder" }), h("span", { class: "label", text: n.title || T.untitledGroup }));
+      // 中身を少しだけ見せる(束ねても中が分かるように)。下にグループがあれば ▸ で木を出して飛べる
+      const peek = this.groupPeek(n.id);
+      el.append(
+        h(
+          "div",
+          { class: "g-head" },
+          h("span", { class: "ico ico-folder" }),
+          h("span", { class: "label", text: n.title || T.untitledGroup }),
+          peek.subs ? h("button", { class: "gtree-btn", "data-act": "tree", title: T.treeTip, "aria-label": T.treeTip, text: "▸" }) : null,
+        ),
+      );
+      if (peek.lines.length) el.append(h("div", { class: "g-peek" }, ...peek.lines.map((t) => h("div", { class: "g-line", text: t })), peek.more ? h("div", { class: "g-more", text: T.groupMore(peek.more) }) : null));
     } else if (n.type === "card" && n.card) {
       el.style.width = CARD_W + "px";
       el.classList.add("deck-" + n.card.deck);
@@ -840,6 +868,10 @@ export class Canvas {
     }
     const node = this.v.get(id);
     if (!node) return;
+    if (target.closest("[data-act=tree]")) {
+      this.setSelection([id]);
+      return this.host.groupTree?.(id, target.closest("[data-act=tree]")!);
+    }
     if (target.closest("[data-act=body]")) {
       this.setSelection([id]);
       return this.host.openBody(id);

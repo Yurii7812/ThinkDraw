@@ -552,3 +552,24 @@ test("ノートで Markdown のように打つ: # で見出し・- で箇条書�
   expect(note).toMatch(/[*-] 項目1\n+[*-] 項目2/);
   expect(note).toContain("> 引用文");
 });
+
+test("グループのノード: 中身を少し見せる・▸ で下のグループの木を出して飛ぶ", async () => {
+  await write(300, 200, "奥の文字");
+  await page.locator(".node", { hasText: "奥の文字" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("下の箱");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".node.t-group.selected", { hasText: "下の箱" })).toHaveCount(1); // 束ねたグループは選ばれている
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("上の箱");
+  await page.keyboard.press("Escape");
+  const top = page.locator(".node.t-group", { hasText: "上の箱" });
+  await expect(top.locator(".g-peek")).toContainText("下の箱");
+  await top.locator(".gtree-btn").click();
+  await expect(page.locator(".gtree")).toBeVisible();
+  await shot("13-gtree");
+  await page.locator(".gtree .gt-name", { hasText: "下の箱" }).click();
+  await expect(page.locator(".gtree")).toHaveCount(0);
+  await expect(page.locator(".group-title")).toHaveText("下の箱");
+  await expect(page.locator(".node", { hasText: "奥の文字" })).toHaveCount(1);
+});
