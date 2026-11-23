@@ -373,7 +373,7 @@ input, textarea { font: inherit; color: inherit; }
 .split { display: inline-flex; }
 .tbtn.draw { border-radius: 6px 0 0 6px; }
 .tbtn.draw-caret { border: 1px solid var(--line); border-left: 0; border-radius: 0 6px 6px 0; font-size: 11px; min-width: 22px; padding: 0 4px; color: var(--fg); }
-.tbtn.i-pen { white-space: nowrap; font-size: 13px; color: var(--fg); border: 1px solid var(--line); padding: 0 10px; }
+.tbtn.i-pen, .tbtn.export { white-space: nowrap; font-size: 13px; color: var(--fg); border: 1px solid var(--line); padding: 0 10px; }
 .tbtn.i-pen.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .drawmenu { position: fixed; z-index: 45; width: 470px; max-height: calc(100vh - 70px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
 .dm-tabs { display: flex; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }

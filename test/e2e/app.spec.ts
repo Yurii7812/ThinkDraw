@@ -147,7 +147,7 @@ test("タロット: 引くメニューから置き、右の欄に解説、押す
   await page.locator(".dm-tile", { hasText: "ケルト十字" }).click();
   await expect(page.locator(".node.t-card")).toHaveCount(10);
   await expect(page.locator(".node.t-text", { hasText: "仕事はどうなる?" })).toHaveCount(1);
-  await expect(page.locator(".spreadframe")).toHaveCount(1);
+  await expect(page.locator(".spreadframe")).toHaveCount(0);
   await expect.poll(() => page.locator(".node.t-card img").first().evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth > 0)).toBe(true);
   await page.locator(".node.t-card").first().click();
   await expect(page.locator(".side-panel .d-reading")).toBeVisible();

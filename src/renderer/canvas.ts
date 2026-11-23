@@ -328,20 +328,7 @@ export class Canvas {
   private renderEdges(): void {
     const defs = this.edgesSvg.querySelector("defs")!;
     this.edgesSvg.replaceChildren(defs);
-    // スプレッドの囲み枠(同じ 1 回の「引く」で置いたカード)
-    const runs = new Map<string, { x0: number; y0: number; x1: number; y1: number }>();
-    for (const [id, b] of this.rects) {
-      const run = this.v.get(id)?.spread?.run;
-      if (!run) continue;
-      const r = runs.get(run) ?? { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-      r.x0 = Math.min(r.x0, b.x); r.y0 = Math.min(r.y0, b.y);
-      r.x1 = Math.max(r.x1, b.x + b.w); r.y1 = Math.max(r.y1, b.y + b.h);
-      runs.set(run, r);
-    }
-    for (const r of runs.values()) {
-      const p = 18;
-      this.edgesSvg.append(svg("rect", { class: "spreadframe", x: r.x0 - p, y: r.y0 - p, width: r.x1 - r.x0 + p * 2, height: r.y1 - r.y0 + p * 2, rx: 14 }));
-    }
+    // スプレッドの囲み枠は出さない(2026-11-23 利用者「枠やっぱりいらない」)
     for (const [id, a] of this.rects) {
       const n = this.v.get(id)!;
       for (const l of n.links) {
@@ -485,7 +472,7 @@ export class Canvas {
     const r = this.rects.get(id);
     const a = this.rects.get(parent);
     if (!r || !a) return;
-    const others = this.obstacles(new Set([id, parent]));
+    const others = [...this.obstacles(new Set([id, parent])), ...this.edgeBoxes(id)];
     if (gap(r, a) >= 30 && others.every((o) => gap(r, o) >= 16)) return;
     const p = placeAround(a, others, { size: { w: r.w, h: r.h } });
     this.v.move(this.group, [{ id, x: Math.round(p.x), y: Math.round(p.y) }]);
@@ -496,8 +483,24 @@ export class Canvas {
   spot(anchor: string): { x: number; y: number } {
     const a = this.rects.get(anchor)!;
     const others = [...this.rects.entries()].filter(([i]) => i !== anchor).map(([, r]) => r);
-    others.push(...this.v.strokesOf(this.group).map(strokeBox));
+    others.push(...this.v.strokesOf(this.group).map(strokeBox), ...this.edgeBoxes());
     return placeAround(a, others, { size: { w: 90, h: Math.min(40, a.h) } });
+  }
+
+  /** つなぎの線を、小さな箱の並びとして表す(Tab で置く文字が線にかぶらないように)。except につながる線は除く */
+  private edgeBoxes(except?: string): Rect[] {
+    const out: Rect[] = [];
+    for (const [id, a] of this.rects) {
+      for (const l of this.v.get(id)!.links) {
+        const b = this.rects.get(l.to);
+        if (!b || id === except || l.to === except) continue;
+        const p1 = this.clip(a, b.x + b.w / 2, b.y + b.h / 2);
+        const p2 = this.clip(b, a.x + a.w / 2, a.y + a.h / 2);
+        const n = Math.max(1, Math.ceil(Math.hypot(p2.x - p1.x, p2.y - p1.y) / 20));
+        for (let k = 0; k <= n; k++) out.push({ x: p1.x + ((p2.x - p1.x) * k) / n - 3, y: p1.y + ((p2.y - p1.y) * k) / n - 3, w: 6, h: 6 });
+      }
+    }
+    return out;
   }
 
   /** いま置いてあるもの(ノードとペンの線)の箱 */
