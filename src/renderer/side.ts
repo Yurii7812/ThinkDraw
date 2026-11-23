@@ -272,10 +272,8 @@ export class SidePanel {
   // ---------- 文字・ノート・グループ ----------
   private nodeDetail(n: TDNode): HTMLElement[] {
     const kind = n.type === "group" ? T.kindGroup : n.type === "note" ? T.kindNote : T.kindText;
-    const open = h("button", { class: "btn small", text: n.type === "group" ? T.openGroup : n.type === "text" ? T.editText : T.openBody });
+    const open = h("button", { class: "btn small", text: n.type === "group" ? T.openGroup : n.type === "text" ? T.editText : T.openNote });
     open.addEventListener("click", () => this.host.openNode(n.id));
-    const body = h("button", { class: "btn small", text: T.openBody });
-    body.addEventListener("click", () => this.host.openBody(n.id));
     const plus = h("button", { class: "btn small", text: T.plusIdea });
     plus.addEventListener("click", () => this.host.addConnected(n.id, "", true));
     const excerpt = n.body.replace(/\s+/g, " ").trim();
@@ -283,7 +281,7 @@ export class SidePanel {
       h("div", { class: "d-kind", text: kind }),
       h("div", { class: "d-title", text: this.nameOf(n.id) }),
       excerpt ? h("div", { class: "d-excerpt", text: excerpt.slice(0, 280) }) : null,
-      h("div", { class: "d-btns" }, open, n.type !== "note" ? body : null, n.type !== "group" ? plus : null),
+      h("div", { class: "d-btns" }, open, n.type !== "group" ? plus : null),
       ...this.relations(n),
     ].filter((x): x is HTMLElement => !!x);
   }

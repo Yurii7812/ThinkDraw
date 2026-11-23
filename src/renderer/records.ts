@@ -6,7 +6,7 @@
 //   種類には上位を複数付けられる。その日の上位のノートから、下位のノートへ線を引く。
 import type { Vault } from "../core/vault";
 import { T } from "./strings";
-import { h } from "./ui";
+import { h, toast } from "./ui";
 
 export { cleanKind, DEFAULT_KINDS, KINDS_FILE, parseKinds, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
 import { cleanKind, DATE, DEFAULT_KINDS, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
@@ -106,22 +106,28 @@ const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
 
 export class RecordsView {
   readonly el: HTMLElement;
+  private side: HTMLElement;
+  private head: HTMLElement;
   private body: HTMLElement;
-  private chips: HTMLElement;
-  private actions: HTMLElement;
+  private adding = false;
   constructor(private host: RecordsHost) {
     const close = h("button", { class: "tbtn rec-close", title: T.recordsClose + " (Esc)", "aria-label": T.recordsClose, text: "×" });
     close.addEventListener("click", () => host.close());
-    this.chips = h("div", { class: "rec-chips" });
-    this.actions = h("div", { class: "rec-actions" });
+    this.side = h("nav", { class: "rec-side" });
+    this.head = h("div", { class: "rec-head" });
     this.body = h("div", { class: "rec-body" });
     this.el = h(
       "section",
       { class: "records", tabindex: "-1" },
-      h("div", { class: "rec-head" }, h("div", { class: "rec-title", text: T.recordsTitle }), this.chips, close),
-      this.actions,
-      this.body,
+      h("div", { class: "rec-top" }, h("div", { class: "rec-title", text: T.recordsTitle }), h("span", { class: "rec-gap" }), close),
+      h("div", { class: "rec-cols" }, this.side, h("div", { class: "rec-main-col" }, this.head, this.body)),
     );
+    this.render();
+  }
+
+  private select(k: string | null): void {
+    this.host.onKind(k);
+    this.host.kind = k;
     this.render();
   }
 
@@ -135,36 +141,47 @@ export class RecordsView {
     if (kind && !counts.has(kind) && !kinds.some((k) => k.name === kind)) kind = null;
     const shown = kind ? withDescendants(kinds, kind) : null;
     const count = (k: string) => [...withDescendants(kinds, k)].reduce((s, n) => s + (counts.get(n) ?? 0), 0);
-    const chip = (label: string, k: string | null, n: number, depth = 0) => {
-      const b = h("button", { class: "rec-chip" + (k === kind ? " active" : ""), "data-kind": k ?? "" }, depth ? h("span", { class: "rec-sub", text: "›" }) : null, label, h("span", { class: "rec-n", text: String(n) }));
-      b.addEventListener("click", () => {
-        this.host.onKind(k);
-        this.host.kind = k;
-        this.render();
-      });
+
+    // ---- 左: 種類の一覧(木)。いちばん下で新しい種類を足す
+    const item = (label: string, k: string | null, n: number, depth = 0, extra = "") => {
+      const b = h("button", { class: "rec-k" + (k === kind ? " active" : "") + extra, "data-kind": k ?? "", style: `padding-left:${10 + depth * 16}px` }, depth ? h("span", { class: "rec-sub", text: "└" }) : null, h("span", { class: "rec-kname", text: label }), h("span", { class: "rec-n", text: String(n) }));
+      b.addEventListener("click", () => this.select(k));
       return b;
     };
     const registered = new Set(kinds.map((k) => k.name));
     const others = [...counts.keys()].filter((k) => !registered.has(k)).sort((a, b) => a.localeCompare(b, "ja"));
-    this.chips.replaceChildren(
-      chip(T.recordsAll, null, all.length),
-      ...treeOrder(kinds).map(({ k, depth }) => chip(k.name, k.name, count(k.name), depth)),
-      ...others.map((k) => chip(k, k, counts.get(k)!)),
+    const add = this.adding ? this.addBox() : h("button", { class: "rec-add", text: T.recordsKindAdd });
+    if (!this.adding) add.addEventListener("click", () => ((this.adding = true), this.render()));
+    this.side.replaceChildren(
+      item(T.recordsAll, null, all.length),
+      h("div", { class: "rec-side-label", text: T.recordsKindsLabel }),
+      ...treeOrder(kinds).map(({ k, depth }) => item(k.name, k.name, count(k.name), depth)),
+      ...(others.length ? [h("div", { class: "rec-side-label", text: T.recordsOthersLabel }), ...others.map((k) => item(k, k, counts.get(k)!, 0, " other"))] : []),
+      add,
     );
+    if (this.adding) this.side.querySelector<HTMLInputElement>("input")?.focus();
 
-    // 今日を書く: 登録した種類ごと
-    const writes = treeOrder(kinds).map(({ k }) => {
-      const b = h("button", { class: "btn small rec-write" + (k.name === kind ? " primary" : ""), "data-kind": k.name, text: k.name });
-      b.addEventListener("click", () => this.host.writeToday(k.name));
-      return b;
-    });
-    const edit = h("button", { class: "btn small", text: T.recordsEditKinds });
-    edit.addEventListener("click", () => this.editKinds());
-    this.actions.replaceChildren(h("span", { class: "rec-label", text: T.recordsWriteToday }), ...writes, h("span", { class: "rec-gap" }), edit);
+    // ---- 右の上: いま見ている種類と、今日を書くボタン・設定
+    const def = kind ? kinds.find((k) => k.name === kind) : undefined;
+    const writeKind = def ? def.name : !kind ? (kinds[0]?.name ?? null) : null;
+    const btns: HTMLElement[] = [];
+    if (writeKind) {
+      const w = h("button", { class: "btn primary rec-write", "data-kind": writeKind, text: T.recordsWriteTodayKind(writeKind) });
+      w.addEventListener("click", () => this.host.writeToday(writeKind));
+      btns.push(w);
+    }
+    if (def) {
+      const set = h("button", { class: "btn small rec-settings", text: T.recordsKindSettings });
+      set.addEventListener("click", () => this.editKind(def.name));
+      btns.push(set);
+    }
+    const parentsNote = def?.parents.length ? h("div", { class: "muted small", text: T.recordsParentsNote(def.parents) }) : null;
+    this.head.replaceChildren(h("div", { class: "rec-head-row" }, h("div", { class: "rec-h", text: kind ?? T.recordsAll }), h("span", { class: "rec-gap" }), ...btns), parentsNote ?? "");
 
+    // ---- 右: 記録の一覧
     const list = all.filter((e) => !shown || shown.has(e.kind));
     if (!list.length) {
-      this.body.replaceChildren(h("div", { class: "rec-empty", text: T.recordsEmpty }));
+      this.body.replaceChildren(h("div", { class: "rec-empty", text: kind ? T.recordsEmptyKind(kind) : T.recordsEmpty }));
       return;
     }
     const rows: HTMLElement[] = [];
@@ -192,87 +209,81 @@ export class RecordsView {
     this.body.replaceChildren(...rows);
   }
 
-  /** 種類の登録・名前・上位(複数)・削除 */
-  private editKinds(): void {
-    const work = this.host.kinds.map((k) => ({ name: k.name, parents: [...k.parents], orig: k.name }));
-    const list = h("div", { class: "kind-list" });
-    const draw = () => {
-      list.replaceChildren(
-        ...work.map((k, i) => {
-          const name = h("input", { type: "text", class: "kind-name", value: k.name, placeholder: T.recordsKindName }) as HTMLInputElement;
-          name.addEventListener("input", () => {
-            const old = k.name;
-            k.name = cleanKind(name.value);
-            for (const o of work) o.parents = o.parents.map((p) => (p === old ? k.name : p));
-          });
-          name.addEventListener("change", () => draw());
-          const parents = h(
-            "div",
-            { class: "kind-parents" },
-            h("span", { class: "muted small", text: T.recordsParents }),
-            ...work
-              .filter((o) => o !== k && o.name)
-              .map((o) => {
-                const c = h("input", { type: "checkbox" }) as HTMLInputElement;
-                c.checked = k.parents.includes(o.name);
-                c.addEventListener("change", () => {
-                  k.parents = c.checked ? [...new Set([...k.parents, o.name])] : k.parents.filter((p) => p !== o.name);
-                });
-                return h("label", { class: "check small" }, c, o.name);
-              }),
-          );
-          const del = h("button", { class: "tbtn", title: T.recordsKindDelete, "aria-label": T.recordsKindDelete, text: "×" });
-          del.addEventListener("click", () => {
-            const gone = work.splice(i, 1)[0];
-            for (const o of work) o.parents = o.parents.filter((p) => p !== gone.name);
-            draw();
-          });
-          return h("div", { class: "kind-row" }, h("div", { class: "kind-top" }, name, del), parents);
-        }),
-      );
+  /** 左の一覧のいちばん下で、新しい種類の名前を書く(Enter で足す・Esc でやめる) */
+  private addBox(): HTMLElement {
+    const input = h("input", { type: "text", class: "rec-add-input", placeholder: T.recordsKindName }) as HTMLInputElement;
+    const done = (ok: boolean) => {
+      const name = cleanKind(input.value);
+      this.adding = false;
+      if (ok && name && !this.host.kinds.some((k) => k.name === name)) {
+        this.host.saveKinds([...this.host.kinds, { name, parents: [] }]);
+        return this.select(name);
+      }
+      this.render();
     };
-    draw();
-    const add = h("button", { class: "btn small", text: T.recordsKindAdd });
-    add.addEventListener("click", () => {
-      work.push({ name: "", parents: [], orig: "" });
-      draw();
-      (list.lastElementChild?.querySelector("input.kind-name") as HTMLInputElement | null)?.focus();
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === "Enter") done(true);
+      else if (e.key === "Escape") done(false);
     });
+    input.addEventListener("blur", () => this.adding && done(true));
+    return h("div", { class: "rec-add-box" }, input, h("div", { class: "muted small", text: T.recordsAddHint }));
+  }
+
+  /** 1 つの種類の設定: 名前・上位(複数)・消す */
+  private editKind(name: string): void {
+    const kinds = this.host.kinds;
+    const k = kinds.find((x) => x.name === name);
+    if (!k) return;
+    const input = h("input", { type: "text", class: "kind-name", value: k.name }) as HTMLInputElement;
+    const below = withDescendants(kinds, k.name); // 自分の下位は上位にできない(輪になる)
+    const boxes = kinds
+      .filter((o) => !below.has(o.name))
+      .map((o) => {
+        const c = h("input", { type: "checkbox", value: o.name }) as HTMLInputElement;
+        c.checked = k.parents.includes(o.name);
+        return { c, el: h("label", { class: "check" }, c, o.name) };
+      });
+    const del = h("button", { class: "btn danger", text: T.recordsKindDelete });
     const ok = h("button", { class: "btn primary", text: "OK" });
     const cancel = h("button", { class: "btn", text: T.cancel });
     const box = h(
       "div",
       { class: "modal kinds" },
-      h("div", { class: "modal-title", text: T.recordsEditKinds }),
+      h("div", { class: "modal-title", text: T.recordsKindSettingsTitle(k.name) }),
+      h("label", { class: "kind-field" }, h("span", { class: "set-label", text: T.recordsKindNameLabel }), input),
+      h("div", { class: "kind-field" }, h("span", { class: "set-label", text: T.recordsParents }), boxes.length ? h("div", { class: "kind-parents" }, ...boxes.map((b) => b.el)) : h("span", { class: "muted small", text: T.recordsNoParents })),
       h("p", { class: "muted small", text: T.recordsKindsHelp }),
-      list,
-      h("div", {}, add),
-      h("div", { class: "row-end" }, cancel, ok),
+      h("div", { class: "row-end" }, del, h("span", { class: "rec-gap" }), cancel, ok),
     );
     const back = h("div", { class: "backdrop" }, box);
-    const done = () => {
+    const close = () => {
       back.remove();
       removeEventListener("keydown", onKey, true);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        done();
+        close();
       }
     };
     addEventListener("keydown", onKey, true);
-    cancel.addEventListener("click", done);
+    cancel.addEventListener("click", close);
+    del.addEventListener("click", () => {
+      close();
+      this.host.saveKinds(kinds.filter((x) => x.name !== k.name).map((x) => ({ ...x, parents: x.parents.filter((p) => p !== k.name) })));
+      this.select(null);
+    });
     ok.addEventListener("click", () => {
-      const seen = new Set<string>();
-      const kinds = work
-        .map((k) => ({ name: cleanKind(k.name), parents: k.parents }))
-        .filter((k) => k.name && !seen.has(k.name) && (seen.add(k.name), true));
-      const names = new Set(kinds.map((k) => k.name));
-      for (const k of kinds) k.parents = [...new Set(k.parents.filter((p) => p !== k.name && names.has(p)))];
-      done();
-      this.host.saveKinds(kinds.length ? kinds : DEFAULT_KINDS.map((k) => ({ ...k })));
-      this.render();
+      const nn = cleanKind(input.value) || k.name;
+      if (nn !== k.name && kinds.some((x) => x.name === nn)) return toast(T.recordsKindExists);
+      const parents = boxes.filter((b) => b.c.checked).map((b) => b.c.value);
+      close();
+      this.host.saveKinds(kinds.map((x) => (x.name === k.name ? { name: nn, parents } : { ...x, parents: x.parents.map((p) => (p === k.name ? nn : p)) })));
+      this.select(nn);
     });
     document.body.append(back);
+    input.focus();
   }
 }

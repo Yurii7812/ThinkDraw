@@ -5,12 +5,13 @@ import { Canvas, PRESET_COLORS, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
 import { exportGroup, type ExportKind } from "./exporter";
+import { cleanKind, DATE } from "../core/records";
 import { findRecordNote, KINDS_FILE, parseKinds, parseRecordTitle, RecordsView, type RecordEntry, type RecordKind } from "./records";
 import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
 import { SHORTCUTS, T } from "./strings";
 import { cardTip, closeDrawMenu, DEFAULT_CONFIG, drawLabel, drawMenuOpen, openDrawMenu, runDraw, type DrawConfig, type DrawKind } from "./tarot";
-import { api, closeMenu, h, menuOpen, showMenu, toast, type MenuItem } from "./ui";
+import { api, askText, closeMenu, h, menuOpen, showMenu, toast, type MenuItem } from "./ui";
 
 type Theme = "system" | "light" | "dark";
 interface AppState {
@@ -156,7 +157,8 @@ class App {
       this.historyMenu(this.btnFwd, "fwd");
     });
     this.titleEl = h("button", { class: "group-title" });
-    this.titleEl.addEventListener("click", () => this.openBody(this.canvas.group));
+    // 題を押すと上のグループの一覧(本文はノートだけなので、グループの本文は開かない)
+    this.titleEl.addEventListener("click", () => this.ancestorMenu(this.titleEl));
     // 上のグループへ(← → の右隣。2026-11-23 利用者の希望)。所属先が 1 つならすぐ上がり、複数なら選ぶ
     this.upBtn = h("button", { class: "tbtn group-up", title: T.upMenu + " (Ctrl+↑)", "aria-label": T.upMenu, text: "↑" });
     this.upBtn.addEventListener("click", () => this.goUp());
@@ -219,6 +221,7 @@ class App {
         onSelectionChange: (ids) => this.onSelection(ids),
         dropOutside: (ids, cx, cy, link) => (this.peek ? this.dropInto(this.canvas, this.peek, ids, cx, cy, link) : false),
         openBeside: (id) => this.openBeside(id),
+        extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
       },
       this.leftPane,
     );
@@ -394,10 +397,7 @@ class App {
       },
       open: (e) => this.openRecord(e),
       writeToday: (k) => this.writeRecord(k),
-      saveKinds: (ks) => {
-        this.kinds = ks;
-        void api().writeApp(KINDS_FILE, JSON.stringify({ kinds: ks }, null, 2));
-      },
+      saveKinds: (ks) => this.saveKinds(ks),
       close: () => this.closeRecords(),
     });
     this.main.append(this.records.el);
@@ -431,7 +431,38 @@ class App {
     this.canvas.setSelection([note]);
     this.openBody(note);
   }
-  private ensureRecordNote(day: string, ymd: string, kind: string): string {
+  /** 日のグループ(2026-11-23)の空きの右クリック: 種類ごとに、その日の記録を作る/開く。新しい種類でも作れる */
+  private dayMenu(group: string, x: number, y: number): MenuItem[] {
+    const date = this.vault.get(group)?.title ?? "";
+    if (!DATE.test(date)) return [];
+    const make = (kind: string) => () => {
+      let note = "";
+      this.vault.tx(() => (note = this.ensureRecordNote(group, date, kind, { x, y })));
+      this.openBody(note);
+    };
+    const items: MenuItem[] = [{ label: T.dayMenuHead(date), disabled: true }];
+    for (const k of this.kinds) {
+      const has = !!findRecordNote(this.vault, group, k.name);
+      items.push({ label: has ? T.dayMenuOpen(k.name) : T.dayMenuNew(k.name), action: make(k.name) });
+    }
+    items.push({
+      label: T.dayMenuNewKind,
+      action: async () => {
+        const name = cleanKind((await askText(T.dayMenuNewKindAsk)) ?? "");
+        if (!name) return;
+        if (!this.kinds.some((k) => k.name === name)) this.saveKinds([...this.kinds, { name, parents: [] }]);
+        make(name)();
+      },
+    });
+    return items;
+  }
+  saveKinds(ks: RecordKind[]): void {
+    this.kinds = ks;
+    void api().writeApp(KINDS_FILE, JSON.stringify({ kinds: ks }, null, 2));
+    this.records?.render();
+  }
+
+  private ensureRecordNote(day: string, ymd: string, kind: string, at?: { x: number; y: number }): string {
     const found = findRecordNote(this.vault, day, kind);
     if (found) {
       // 前の版の名前(「日記」だけ)は「2026-11-23-日記」に直す
@@ -453,6 +484,7 @@ class App {
       const c = posOf(childNotes[0]);
       (x = c.x - 300), (y = c.y);
     }
+    if (at && !parentNotes.length) ((x = at.x), (y = at.y));
     const id = this.vault.create({ type: "note", title: `${ymd}-${kind}`, group: day, x, y }).id;
     for (const p of parentNotes) this.vault.addLink(p, id);
     for (const c of childNotes) this.vault.addLink(id, c);
@@ -528,7 +560,7 @@ class App {
     showMenu(r.left, r.bottom + 2, items);
   }
   /** ↑ の右クリック: 上のグループの一覧(親、その親…ホームまで。近い順。字下げで段を示す) */
-  private ancestorMenu(): void {
+  private ancestorMenu(anchor: HTMLElement = this.upBtn): void {
     const items: MenuItem[] = [];
     const seen = new Set<string>([this.canvas.group]);
     let level = [this.canvas.group];
@@ -544,7 +576,7 @@ class App {
       level = next;
     }
     if (!items.length) items.push({ label: T.historyEmpty, disabled: true } as MenuItem);
-    const r = this.upBtn.getBoundingClientRect();
+    const r = anchor.getBoundingClientRect();
     showMenu(r.left, r.bottom + 2, items);
   }
   private groupName(id: string): string {
@@ -697,6 +729,7 @@ class App {
           onSelectionChange: () => {},
           dropOutside: (ids, cx, cy, link) => this.dropInto(this.peek!, this.canvas, ids, cx, cy, link),
           openBeside: (id) => this.openBeside(id),
+          extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
         },
         this.peekWrap,
       );

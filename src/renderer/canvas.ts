@@ -34,6 +34,8 @@ export interface CanvasHost {
   onSelectionChange(ids: string[]): void;
   /** この画面の外(横の画面)へ落としたとき。受け取ったら true */
   dropOutside?(ids: string[], cx: number, cy: number, link: boolean): boolean;
+  /** 空きの右クリックに足す項目(日のグループでの記録の作成など)。x, y は置く位置 */
+  extraEmptyMenu?(group: string, x: number, y: number): MenuItem[];
   /** 横の画面に開く(グループはその中、ほかは所属先で、そのノードを見せる) */
   openBeside?(id: string): void;
 }
@@ -863,7 +865,9 @@ export class Canvas {
       if (r) this.startEdit(id, r.x, r.y, null, n.title);
       return;
     }
-    this.host.openBody(id);
+    // 本文はノートだけ(2026-11-23 利用者)。カードは選ぶと右の欄に詳細が出る
+    if (n.type === "note" || n.body.trim()) this.host.openBody(id);
+    else this.setSelection([id]);
   }
 
   private inside(e: { clientX: number; clientY: number }): boolean {
@@ -1037,7 +1041,7 @@ export class Canvas {
     const items: MenuItem[] = [];
     if (n.type === "group") items.push({ label: T.openGroup, action: () => this.host.openGroup(id) }, { label: T.rename, action: () => this.renameGroup(id) });
     if (n.type === "text") items.push({ label: T.editText, action: () => this.open(id) });
-    items.push({ label: T.openBody, action: () => this.host.openBody(id) });
+    if (n.type === "note") items.push({ label: T.openNote, action: () => this.host.openBody(id) });
     if (n.type === "card" && n.card?.deck === "tarot")
       items.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
     items.push(this.colorItem(ids));
@@ -1128,6 +1132,10 @@ export class Canvas {
           this.linkBySearch();
         },
       },
+      ...((): MenuItem[] => {
+        const extra = this.host.extraEmptyMenu?.(this.group, Math.round(p.x), Math.round(p.y)) ?? [];
+        return extra.length ? [{ separator: true, label: "" }, ...extra] : [];
+      })(),
       { separator: true, label: "" },
       { label: T.selectAll, action: () => this.setSelection(this.rects.keys(), this.v.strokesOf(this.group).map((s) => s.id)) },
       { label: T.fitAll, action: () => this.fitAll() },

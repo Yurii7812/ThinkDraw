@@ -509,16 +509,31 @@ input, textarea { font: inherit; color: inherit; }
 .split-bar:hover, .split-bar.dragging { background: var(--accent); }
 .tbtn.beside { white-space: nowrap; font-size: 13px; color: var(--fg); border: 1px solid var(--line); padding: 0 10px; }
 
-/* 記録一覧(キャンバスの上に重ねる、右の欄とは別の画面) */
+/* 記録一覧(キャンバスの上に重ねる、右の欄とは別の画面)。左 = 種類、右 = 記録 */
 .records { position: absolute; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; outline: none; }
-.rec-head { display: flex; align-items: center; gap: 12px; padding: 14px 24px 8px; flex-wrap: wrap; }
-.rec-title { font-size: 18px; font-weight: 700; margin-right: 8px; }
-.rec-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
-.rec-chip { border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
-.rec-chip:hover { border-color: var(--accent); }
-.rec-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.rec-n { font-size: 11px; opacity: 0.7; }
-.rec-actions { display: flex; align-items: center; gap: 12px; padding: 0 24px 10px; border-bottom: 1px solid var(--line); }
+.rec-top { display: flex; align-items: center; gap: 12px; padding: 10px 16px 10px 24px; border-bottom: 1px solid var(--line); }
+.rec-title { font-size: 17px; font-weight: 700; }
+.rec-gap { flex: 1; }
+.rec-cols { flex: 1; display: flex; min-height: 0; }
+.rec-side { width: 220px; flex: none; border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.rec-side-label { font-size: 11px; color: var(--muted); margin: 12px 10px 4px; }
+.rec-k { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: 0; background: none; color: var(--fg); padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 14px; }
+.rec-k:hover { background: var(--accent-soft); }
+.rec-k.active { background: var(--accent); color: #fff; }
+.rec-k.other .rec-kname { color: var(--muted); }
+.rec-k.active.other .rec-kname { color: #fff; }
+.rec-kname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-sub { color: var(--muted); font-size: 11px; }
+.rec-k.active .rec-sub { color: #fff; }
+.rec-n { font-size: 11px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.rec-add { margin-top: 10px; border: 1px dashed var(--line); background: none; color: var(--accent); border-radius: 7px; padding: 7px 10px; cursor: pointer; text-align: left; font-size: 13px; }
+.rec-add:hover { border-color: var(--accent); }
+.rec-add-box { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; padding: 0 2px; }
+.rec-add-input { padding: 6px 8px; border: 1px solid var(--accent); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 13px; outline: none; }
+.rec-main-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.rec-head { padding: 14px 24px 10px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.rec-head-row { display: flex; align-items: center; gap: 10px; }
+.rec-h { font-size: 20px; font-weight: 700; }
 .rec-body { flex: 1; overflow: auto; padding: 4px 24px 40px; }
 .rec-month { font-size: 13px; font-weight: 700; color: var(--muted); margin: 18px 0 6px; position: sticky; top: 0; background: var(--bg); padding: 4px 0; }
 .rec-row { display: grid; grid-template-columns: 56px 110px minmax(0, 1fr); gap: 12px; align-items: baseline; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--line); background: none; color: var(--fg); padding: 10px 8px; cursor: pointer; font-size: 14px; }
@@ -529,8 +544,15 @@ input, textarea { font: inherit; color: inherit; }
 .rec-wd { font-size: 12px; color: var(--muted); }
 .rec-wd.sun { color: var(--c1); } .rec-wd.sat { color: var(--c6); }
 .rec-kind { font-size: 12px; font-weight: 600; border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; justify-self: start; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.rec-prev { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-main { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.rec-subt { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; flex: none; }
+.rec-prev { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .rec-empty { color: var(--muted); padding: 40px 0; text-align: center; }
+.modal.kinds { width: min(520px, 94vw); }
+.kind-field { display: flex; gap: 10px; align-items: baseline; }
+.kind-name { flex: 1; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 14px; }
+.kind-parents { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.btn.danger { color: var(--danger); border-color: var(--danger); background: none; }
 .tbtn.records-btn { white-space: nowrap; font-size: 13px; color: var(--fg); border: 1px solid var(--line); padding: 0 10px; }
 
 /* ショートカット一覧(カード+キーの形) */
@@ -546,17 +568,3 @@ input, textarea { font: inherit; color: inherit; }
 .combo .plus, .sc-keys .or { color: var(--muted); font-size: 11px; padding: 0 1px; }
 kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: inherit; font-size: 11.5px; padding: 2px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--panel); color: var(--fg); }
 .combo .act { font-size: 11.5px; padding: 2px 7px; border-radius: 999px; background: var(--accent-soft); color: var(--fg); white-space: nowrap; }
-.rec-main { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
-.rec-subt { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; flex: none; }
-.rec-main .rec-prev { flex: 1; min-width: 0; }
-.rec-sub { color: var(--muted); margin-right: 2px; }
-.rec-chip.active .rec-sub { color: #fff; }
-.rec-label { font-size: 12px; color: var(--muted); }
-.rec-gap { flex: 1; }
-.modal.kinds { width: min(620px, 94vw); max-height: 86vh; overflow: auto; }
-.kind-list { display: flex; flex-direction: column; gap: 8px; }
-.kind-row { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
-.kind-top { display: flex; gap: 6px; align-items: center; }
-.kind-name { flex: 1; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 14px; }
-.kind-parents { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
-.check.small { font-size: 12px; }

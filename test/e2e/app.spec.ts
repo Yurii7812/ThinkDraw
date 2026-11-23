@@ -145,9 +145,6 @@ test("ノートは大画面で開く・Ctrl+L で検索してリンク・バッ�
   const note = Object.values(mdFiles()).find((s) => s.includes("title: メモ\n"))!;
   expect(note).toContain("type: note");
   expect(note).toContain(`前置き [相手](${idOf("相手")}.md) を見る`);
-  await page.locator(".node.t-text", { hasText: "相手" }).click({ button: "right" });
-  await page.getByText("ノートを書く").click();
-  await expect(page.locator(".pop-foot")).toContainText("メモ");
 });
 
 test("タロット: 引くメニューから置き、右の欄に解説、押すとつながった文字", async () => {
@@ -439,7 +436,7 @@ test("空きの右クリックでグループを作る", async () => {
   await expect(page.locator(".node.t-group", { hasText: "新しい箱" })).toHaveCount(1);
 });
 
-test("記録一覧: 日記は 記録 › 年 › 月 › 日。種類を足す(上位は複数)・今日を書く・一覧から開く・絞る", async () => {
+test("記録一覧: 左に種類・右に記録。新しい種類を足す・上位を決める・今日を書く・日の右クリックで作る", async () => {
   const d = new Date();
   const p2 = (n: number) => String(n).padStart(2, "0");
   const ymd = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
@@ -450,41 +447,58 @@ test("記録一覧: 日記は 記録 › 年 › 月 › 日。種類を足す(�
   expect(titles()).toEqual(expect.arrayContaining(["記録", `${ymd}-日記`]));
   await page.keyboard.press("Control+j");
   await expect(page.locator(".records")).toBeVisible();
+  await page.locator(".rec-k[data-kind='']").click(); // すべて
   await expect(page.locator(".rec-row")).toHaveCount(1);
   await expect(page.locator(".rec-row")).toContainText("今日あったこと");
-  // 種類を足す: 夢日記(上位 = 日記)
-  await page.locator(".rec-actions .btn", { hasText: "種類を編集" }).click();
-  await page.locator(".modal.kinds .btn", { hasText: "種類を足す" }).click();
+  // 左の「＋ 新しい種類」で名前を書いて Enter
+  await page.locator(".rec-add").click();
   await page.keyboard.type("夢日記");
-  await page.locator(".modal.kinds input.kind-name").last().press("Tab");
-  await page.locator(".modal.kinds .kind-row").last().locator("label", { hasText: "日記" }).click();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".rec-k.active")).toContainText("夢日記");
+  // この種類の設定で、上位 = 日記
+  await page.locator(".rec-settings").click();
+  await page.locator(".modal.kinds label", { hasText: "日記" }).click();
   await page.locator(".modal.kinds .btn.primary").click();
-  await expect(page.locator(".rec-chip", { hasText: "夢日記" })).toHaveCount(1);
-  await page.locator(".rec-write", { hasText: "夢日記" }).click();
+  await expect(page.locator(".rec-head")).toContainText("上位: 日記");
+  await page.locator(".rec-write").click(); // ＋ 今日の夢日記を書く
   await expect(page.locator(".popup.expanded")).toBeVisible();
   await page.keyboard.press("Escape");
   await settle();
-  const files = mdFiles();
   expect(titles()).toContain(`${ymd}-夢日記`);
-  expect(files[idOf(`${ymd}-日記`) + ".md"]).toContain(`to: ${idOf(`${ymd}-夢日記`)}`); // 上位から線
-  await expect(page.locator(".node.t-note")).toHaveCount(2);
-  // 一覧: 日記で絞ると下位(夢日記)も出る
+  expect(mdFiles()[idOf(`${ymd}-日記`) + ".md"]).toContain(`to: ${idOf(`${ymd}-夢日記`)}`); // 上位から線
+  // 日のグループの空きを右クリック: 記録を作る/開く・新しい種類で作る
+  await page.mouse.click(900, 650, { button: "right" });
+  await expect(page.locator(".ctxmenu .item", { hasText: "日記を開く" }).first()).toBeVisible();
+  await page.locator(".ctxmenu .item", { hasText: "新しい種類で作る" }).click();
+  await page.keyboard.type("読書記録");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await settle();
+  expect(titles()).toContain(`${ymd}-読書記録`);
+  // 一覧: 日記を選ぶと下位(夢日記)も出る
   await page.keyboard.press("Control+j");
-  await page.locator(".rec-chip", { hasText: "すべて" }).click();
+  await page.locator(".rec-k[data-kind='日記']").click();
   await expect(page.locator(".rec-row")).toHaveCount(2);
-  await page.locator(".rec-chip[data-kind='日記']").click();
-  await expect(page.locator(".rec-row")).toHaveCount(2);
-  await page.locator(".rec-chip[data-kind='夢日記']").click();
+  await page.locator(".rec-k[data-kind='読書記録']").click();
   await expect(page.locator(".rec-row")).toHaveCount(1);
+  await page.locator(".rec-k[data-kind='夢日記']").click();
   await shot("11-records");
   await page.locator(".rec-row").click();
   await expect(page.locator(".records")).toHaveCount(0);
   await expect(page.locator(".popup.expanded")).toBeVisible();
   await page.keyboard.press("Escape");
-  // Esc で閉じる
   await page.keyboard.press("Control+j");
   await page.keyboard.press("Escape");
   await expect(page.locator(".records")).toHaveCount(0);
+});
+
+test("本文はノートだけ: 文字・グループのメニューに「ノートを書く」は無い", async () => {
+  await write(300, 200, "ただの文字");
+  await page.locator(".node", { hasText: "ただの文字" }).click({ button: "right" });
+  await expect(page.locator(".ctxmenu")).toBeVisible();
+  await expect(page.locator(".ctxmenu .item", { hasText: "ノートを書く" })).toHaveCount(0);
+  await expect(page.locator(".ctxmenu .item", { hasText: "本文" })).toHaveCount(0);
 });
 
 test("ショートカット一覧はカードの形", async () => {
