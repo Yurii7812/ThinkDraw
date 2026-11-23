@@ -232,6 +232,7 @@ class App {
         openBeside: (id) => this.openBeside(id),
         extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
         groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openGroup(g)),
+        openFile: (rel) => void api().openAsset(rel),
       },
       this.leftPane,
     );
@@ -746,6 +747,7 @@ class App {
           openBeside: (id) => this.openBeside(id),
           extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
           groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openPeek(g)),
+          openFile: (rel) => void api().openAsset(rel),
         },
         this.peekWrap,
       );
@@ -1073,6 +1075,16 @@ class App {
     addEventListener("mouseup", (e) => {
       if (e.button === 3) this.back();
       if (e.button === 4) this.forward();
+    });
+    // ファイルを貼り付けると、今使っている画面の真ん中に添付(ノートを書いている間はノートに入る)
+    addEventListener("paste", (e) => {
+      const files = e.clipboardData?.files;
+      const inField = (e.target as Element)?.closest?.("input, textarea, .ProseMirror");
+      if (!files?.length || inField || this.popup || this.records) return;
+      e.preventDefault();
+      const c = this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas;
+      const p = c.visibleCenter();
+      void c.attachFilesAt(files, p.x, p.y);
     });
     addEventListener("keydown", (e) => {
       if (document.querySelector(".backdrop") || menuOpen() || drawMenuOpen()) return; // 窓が開いている

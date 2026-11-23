@@ -89,6 +89,28 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
         const sub = h("div", { class: "submenu" });
         build(sub, it.sub);
         const wrap = h("div", { class: "subwrap" }, b, sub);
+        // 画面からはみ出すときは、左や上へ寄せて開く
+        const fit = () => {
+          sub.style.left = "";
+          sub.style.right = "";
+          sub.style.top = "";
+          requestAnimationFrame(() => {
+            const r = sub.getBoundingClientRect();
+            if (!r.width) return;
+            if (r.right > innerWidth - 4) {
+              sub.style.left = "auto";
+              sub.style.right = "100%";
+            }
+            if (r.bottom > innerHeight - 4) sub.style.top = `${Math.round(innerHeight - 4 - r.bottom)}px`;
+          });
+        };
+        wrap.addEventListener("mouseenter", fit);
+        // 押すと開いたままにする(斜めにマウスを動かしても閉じないように)
+        b.addEventListener("click", () => {
+          fit();
+          for (const w of parent.querySelectorAll(":scope > .subwrap.open")) if (w !== wrap) w.classList.remove("open");
+          wrap.classList.toggle("open");
+        });
         parent.append(wrap);
         continue;
       }

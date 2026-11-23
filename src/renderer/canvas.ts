@@ -7,7 +7,7 @@ import { cardName, spreadDef } from "../decks";
 import { cardFace, faceHeight } from "./cardface";
 import { openPicker } from "./picker";
 import { T } from "./strings";
-import { askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
+import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
 
 export interface View {
   x: number; // 画面 = 世界 * z + (x, y)
@@ -38,6 +38,8 @@ export interface CanvasHost {
   quoteToOther?(ids: string[]): void;
   /** この画面の外(横の画面)へ落としたとき。受け取ったら true */
   dropOutside?(ids: string[], cx: number, cy: number, link: boolean): boolean;
+  /** 添付のファイルを、その種類のふつうのアプリで開く */
+  openFile?(rel: string): void;
   /** グループの ▸: 下のグループの木を出す */
   groupTree?(id: string, anchor: Element): void;
   /** 空きの右クリックに足す項目(日のグループでの記録の作成など)。x, y は置く位置 */
@@ -232,6 +234,7 @@ export class Canvas {
     this.strokeSel = new Set(strokes);
     for (const [id, el] of this.els) el.classList.toggle("selected", this.selection.has(id));
     for (const p of this.strokesSvg.querySelectorAll<SVGPathElement>("path.stroke")) p.classList.toggle("selected", this.strokeSel.has(p.dataset.sid!));
+    this.updateSelBar();
     this.host.onSelectionChange([...this.selection]);
   }
 
@@ -240,6 +243,7 @@ export class Canvas {
     this.el.classList.toggle("pen-mode", this.pen.on);
     this.el.classList.toggle("eraser", this.pen.on && this.pen.tool === "eraser");
     if (this.pen.on) this.commitDraft("esc");
+    this.updateSelBar();
   }
 
   // ---------- 描画 ----------
@@ -291,7 +295,7 @@ export class Canvas {
   }
 
   private signature(n: TDNode, ref: boolean): string {
-    return JSON.stringify([n.type, n.title, n.color, n.fill, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? excerpt(n.body) : !!n.body.trim(), n.card, n.spread]);
+    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? excerpt(n.body) : !!n.body.trim(), n.card, n.spread]);
   }
 
   /** グループのノードに見せる中身: 上から 3 件の名前・残りの数・下のグループの数 */
@@ -312,7 +316,12 @@ export class Canvas {
   private nodeEl(n: TDNode, ref: boolean): HTMLElement {
     const el = h("div", { class: `node t-${n.type}${n.color ? " c" + n.color : ""}${n.fill ? " f" + n.fill : ""}${ref ? " ref" : ""}`, "data-id": n.id });
     if (ref) el.title = T.refMark;
-    if (n.type === "text") {
+    if (n.type === "text" && n.file) {
+      // 添付: 画像は小さな絵、ほかは 📎 と名前
+      el.classList.add("file");
+      if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(n.file)) el.append(h("img", { class: "file-img", src: "vault://local/" + n.file.split("/").map(encodeURIComponent).join("/"), alt: n.title, draggable: "false" }));
+      el.append(h("span", { class: "label" }, h("span", { class: "clip", text: "📎 " }), n.title || T.untitled));
+    } else if (n.type === "text") {
       el.append(h("span", { class: "label", text: n.title || T.untitled }));
       if (n.body.trim()) el.append(h("span", { class: "bodymark", title: T.hasBody, "data-act": "body" }, "¶"));
     } else if (n.type === "note") {
@@ -435,6 +444,7 @@ export class Canvas {
     ta.addEventListener("pointerdown", (e) => e.stopPropagation());
     this.draftLayer.append(ta);
     if (id) this.els.get(id)?.classList.add("editing");
+    this.updateSelBar();
     this.draftLine();
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
@@ -475,6 +485,7 @@ export class Canvas {
     if (!d) return;
     this.draft = null;
     d.ta.remove();
+    queueMicrotask(() => this.updateSelBar());
     this.edgesSvg.querySelector(".draftline")?.remove();
     const text = d.ta.value.replace(/\s+$/, "");
     let id = d.id;
@@ -630,6 +641,16 @@ export class Canvas {
       this.host.cardHover(id && this.v.get(id)?.type === "card" && !this.drag && !this.pen.on ? id : null, e);
     });
     el.addEventListener("mouseleave", () => this.host.cardHover(null));
+    // ファイルを落とすと、その場所に添付
+    el.addEventListener("dragover", (e) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    });
+    el.addEventListener("drop", (e) => {
+      if (!e.dataTransfer?.files.length) return;
+      e.preventDefault();
+      const p = this.toWorld(e.clientX, e.clientY);
+      void this.attachFilesAt(e.dataTransfer.files, p.x, p.y);
+    });
   }
 
   private onDown(e: PointerEvent): void {
@@ -895,7 +916,7 @@ export class Canvas {
       this.setSelection([id]);
       return this.host.openBody(id);
     }
-    if (node.type === "text") {
+    if (node.type === "text" && !node.file) {
       this.setSelection([id]);
       return this.open(id, target);
     }
@@ -911,6 +932,7 @@ export class Canvas {
     const n = this.v.get(id);
     if (!n) return;
     if (n.type === "group") return this.host.openGroup(id);
+    if (n.type === "text" && n.file) return this.host.openFile?.(n.file);
     if (n.type === "text") {
       const r = this.rects.get(id);
       if (r) this.startEdit(id, r.x, r.y, null, n.title);
@@ -1105,6 +1127,7 @@ export class Canvas {
     };
   }
 
+  /** ノードの右クリック: そのノードのことだけ(色・束ねる・つなぐ・移すは、選んだときに上に出るバーへ) */
   private nodeMenu(id: string, x: number, y: number): void {
     const n = this.v.get(id);
     if (!n) return;
@@ -1112,46 +1135,17 @@ export class Canvas {
     const isRef = this.v.isRefIn(this.group, id);
     const items: MenuItem[] = [];
     if (n.type === "group") items.push({ label: T.openGroup, action: () => this.host.openGroup(id) }, { label: T.rename, action: () => this.renameGroup(id) });
-    if (n.type === "text") items.push({ label: T.editText, action: () => this.open(id) });
+    if (n.type === "text" && n.file) items.push({ label: T.openFile, action: () => this.host.openFile?.(n.file!) });
+    if (n.type === "text") items.push({ label: T.editText, action: () => this.editText(id) });
     if (n.type === "note") items.push({ label: T.openNote, action: () => this.host.openBody(id) });
     if (n.type === "card" && n.card?.deck === "tarot")
       items.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
-    items.push(this.colorItem(ids));
-    if (ids.every((i) => this.v.get(i)?.type === "text")) items.push(this.fillItem(ids));
-    items.push({ separator: true, label: "" });
-    items.push({ label: T.bundle, action: () => this.bundleSelection() });
-    if (n.type === "group") items.push({ label: T.unbundle, action: () => this.v.unbundle(id) });
-    items.push({ label: T.linkSearch, action: () => this.linkBySearch() });
-    items.push({ separator: true, label: "" });
-    items.push({
-      label: T.addToGroup,
-      action: async () => {
-        const g = await this.host.pickGroup(T.pickGroupTitle);
-        if (!g) return;
-        try {
-          this.v.tx(() => ids.forEach((i, k) => this.v.addToGroup(g, i, (k % 5) * 160, 40 + Math.floor(k / 5) * 60)));
-          toast(T.addedInto(this.v.get(g)?.title || T.untitledGroup));
-        } catch (err) {
-          if (err instanceof CycleError) toast(T.cycleRefused);
-          else throw err;
-        }
-      },
-    });
-    items.push({
-      label: T.quoteInto,
-      action: async () => {
-        const g = await this.host.pickGroup(T.pickQuoteTitle);
-        if (!g) return;
-        this.v.tx(() => ids.forEach((i, k) => this.v.addRef(g, i, (k % 5) * 160, 40 + Math.floor(k / 5) * 60)));
-        toast(T.quotedInto(this.v.get(g)?.title || T.untitledGroup));
-      },
-    });
     if (this.host.openBeside) items.push({ label: T.openBeside, action: () => this.host.openBeside!(id) });
-    if (this.host.quoteToOther) items.push({ label: T.quoteToOther, action: () => this.host.quoteToOther!(ids) });
-    if (isRef) {
-      items.push({ label: T.goOrigin, action: () => this.host.goToNode(id) });
-      items.push({ label: T.removeRef, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
-    } else {
+    if (isRef) items.push({ label: T.goOrigin, action: () => this.host.goToNode(id) });
+    if (n.type === "group") items.push({ label: T.unbundle, action: () => this.v.unbundle(id) });
+    items.push({ separator: true, label: "" });
+    if (isRef) items.push({ label: T.removeRef, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
+    else
       items.push({
         label: T.removeFromGroup,
         action: () => {
@@ -1160,12 +1154,123 @@ export class Canvas {
           if (refused && this.group === ROOT_ID) toast(T.rootLastParent);
         },
       });
-    }
-    items.push({ separator: true, label: "" }, {
-      label: ids.every((i) => this.v.isRefIn(this.group, i)) ? T.deleteRef : T.delete,
-      action: () => this.deleteItems(ids, true),
-    });
+    items.push({ label: ids.every((i) => this.v.isRefIn(this.group, i)) ? T.deleteRef : T.delete, action: () => this.deleteItems(ids, true) });
     showMenu(x, y, items);
+  }
+
+  /** ほかのグループへ入れる・引用する(選んだときのバーの「グループへ」) */
+  private groupMenuItems(ids: string[]): MenuItem[] {
+    const items: MenuItem[] = [
+      {
+        label: T.addToGroup,
+        action: async () => {
+          const g = await this.host.pickGroup(T.pickGroupTitle);
+          if (!g) return;
+          try {
+            this.v.tx(() => ids.forEach((i, k) => this.v.addToGroup(g, i, (k % 5) * 160, 40 + Math.floor(k / 5) * 60)));
+            toast(T.addedInto(this.v.get(g)?.title || T.untitledGroup));
+          } catch (err) {
+            if (err instanceof CycleError) toast(T.cycleRefused);
+            else throw err;
+          }
+        },
+      },
+      {
+        label: T.quoteInto,
+        action: async () => {
+          const g = await this.host.pickGroup(T.pickQuoteTitle);
+          if (!g) return;
+          this.v.tx(() => ids.forEach((i, k) => this.v.addRef(g, i, (k % 5) * 160, 40 + Math.floor(k / 5) * 60)));
+          toast(T.quotedInto(this.v.get(g)?.title || T.untitledGroup));
+        },
+      },
+    ];
+    if (this.host.quoteToOther) items.push({ label: T.quoteToOther, action: () => this.host.quoteToOther!(ids) });
+    return items;
+  }
+
+  // ---------- 選んだときに上に出るバー(色・背景・束ねる・つなぐ・グループへ・消す) ----------
+  private selBar: HTMLElement | null = null;
+  private updateSelBar(): void {
+    const ids = [...this.selection].filter((i) => this.v.exists(i));
+    const strokes = [...this.strokeSel];
+    if ((!ids.length && !strokes.length) || this.pen.on || this.draft) {
+      this.selBar?.remove();
+      this.selBar = null;
+      return;
+    }
+    const b = (label: string, title: string, fn: (el: HTMLElement) => void, cls = "") => {
+      const e = h("button", { class: "sb-btn " + cls, title, "aria-label": title, text: label });
+      e.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+      e.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        fn(e);
+      });
+      return e;
+    };
+    const at = (el: HTMLElement) => el.getBoundingClientRect();
+    const parts: HTMLElement[] = [h("span", { class: "sb-count", text: T.selCount(ids.length + strokes.length) })];
+    if (ids.length) {
+      parts.push(
+        b(T.color + " ▾", T.color, (el) => {
+          const r = at(el);
+          const items: MenuItem[] = [this.colorItem(ids)];
+          if (ids.every((i) => this.v.get(i)?.type === "text")) items.push(this.fillItem(ids));
+          showMenu(r.left, r.bottom + 4, items);
+        }),
+      );
+      parts.push(b(T.linkShort, T.linkSearch + " (Ctrl+L)", () => this.linkBySearch()));
+    }
+    parts.push(b(T.bundleShort, T.bundle + " (Ctrl+G)", () => this.bundleSelection()));
+    if (ids.length)
+      parts.push(
+        b(T.toGroup + " ▾", T.toGroup, (el) => {
+          const r = at(el);
+          showMenu(r.left, r.bottom + 4, this.groupMenuItems(ids));
+        }),
+      );
+    parts.push(
+      b(T.deleteShort, T.delete + " (Delete)", () => {
+        this.v.tx(() => {
+          this.deleteItems(ids, true);
+          this.v.removeStrokes(this.group, strokes);
+        });
+      }, "danger"),
+    );
+    const bar = h("div", { class: "selbar" }, ...parts);
+    bar.addEventListener("pointerdown", (e) => e.stopPropagation());
+    if (this.selBar) this.selBar.replaceWith(bar);
+    else this.el.append(bar);
+    this.selBar = bar;
+  }
+
+  /** 文字を書き直す(添付の文字も、名前を書き直せる) */
+  private editText(id: string): void {
+    const r = this.rects.get(id);
+    const n = this.v.get(id);
+    if (r && n) this.startEdit(id, r.x, r.y, null, n.title);
+  }
+
+  // ---------- 添付(ボードにも。2026-11-23 利用者) ----------
+  /** ファイルを、その場所に添付の文字として置く(画像は小さな絵で見せる)。いくつかなら少しずつずらす */
+  async attachFilesAt(files: FileList | File[] | undefined, x: number, y: number): Promise<void> {
+    const list = [...(files ?? [])];
+    if (!list.length) return;
+    const made: string[] = [];
+    for (const [k, f] of list.entries()) {
+      const data = new Uint8Array(await f.arrayBuffer());
+      const rel = await api().saveAttachment(f.name || "file", data);
+      const id = this.v.create({ type: "text", title: f.name || "file", group: this.group, x: Math.round(x + k * 24), y: Math.round(y + k * 24), file: rel }).id;
+      made.push(id);
+    }
+    this.renderNow();
+    this.setSelection(made);
+    toast(T.attached(made.length));
+  }
+  pickFilesAt(x: number, y: number): void {
+    const input = h("input", { type: "file", multiple: "" }) as HTMLInputElement;
+    input.addEventListener("change", () => void this.attachFilesAt(input.files ?? undefined, x, y));
+    input.click();
   }
 
   private strokeMenu(x: number, y: number): void {
@@ -1175,15 +1280,18 @@ export class Canvas {
     ]);
   }
 
+  /** 空きの右クリック: 作るものだけ(全部選ぶ・全体を見るは Ctrl+A・Ctrl+0) */
   private emptyMenu(x: number, y: number): void {
     const p = this.toWorld(x, y);
+    const px = Math.round(p.x), py = Math.round(p.y);
+    const extra = this.host.extraEmptyMenu?.(this.group, px, py) ?? [];
     showMenu(x, y, [
-      { label: T.newText, action: () => this.startEdit(null, Math.round(p.x), Math.round(p.y), null) },
+      { label: T.newText, action: () => this.startEdit(null, px, py, null) },
       {
         // 空のグループを作って、その場で名前を書く(2026-11-23 利用者の希望)
         label: T.newGroup,
         action: () => {
-          const n = this.v.create({ type: "group", title: "", group: this.group, x: Math.round(p.x), y: Math.round(p.y) });
+          const n = this.v.create({ type: "group", title: "", group: this.group, x: px, y: py });
           this.renderNow();
           this.setSelection([n.id]);
           this.renameGroup(n.id);
@@ -1192,12 +1300,13 @@ export class Canvas {
       {
         label: T.newNote,
         action: () => {
-          const n = this.v.create({ type: "note", title: "", group: this.group, x: Math.round(p.x), y: Math.round(p.y) });
+          const n = this.v.create({ type: "note", title: "", group: this.group, x: px, y: py });
           this.renderNow();
           this.setSelection([n.id]);
           this.host.openBody(n.id);
         },
       },
+      { label: T.attachHere, action: () => this.pickFilesAt(px, py) },
       {
         label: T.quoteHere,
         action: () => {
@@ -1205,13 +1314,7 @@ export class Canvas {
           this.linkBySearch();
         },
       },
-      ...((): MenuItem[] => {
-        const extra = this.host.extraEmptyMenu?.(this.group, Math.round(p.x), Math.round(p.y)) ?? [];
-        return extra.length ? [{ separator: true, label: "" }, ...extra] : [];
-      })(),
-      { separator: true, label: "" },
-      { label: T.selectAll, action: () => this.setSelection(this.rects.keys(), this.v.strokesOf(this.group).map((s) => s.id)) },
-      { label: T.fitAll, action: () => this.fitAll() },
+      ...(extra.length ? [{ separator: true, label: "" }, { label: T.dayRecords, sub: extra.slice(1) }] : []),
     ]);
   }
 

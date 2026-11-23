@@ -38,6 +38,7 @@ export interface CreateOptions {
   x: number;
   y: number;
   color?: number;
+  file?: string;
   card?: CardRef;
   spread?: SpreadRef;
   id?: string;
@@ -314,6 +315,7 @@ export class Vault {
         members: [], refs: [], strokes: [], links: [], body: o.body ?? "", extra: {},
       };
       if (o.card) n.card = { ...o.card };
+      if (o.file) n.file = o.file;
       if (o.spread) n.spread = { ...o.spread };
       this.touch(id);
       this.nodes.set(id, n);

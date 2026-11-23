@@ -232,7 +232,7 @@ input, textarea { font: inherit; color: inherit; }
 .ctxmenu .sep { height: 1px; background: var(--line); margin: 4px 6px; }
 .subwrap { position: relative; }
 .submenu { display: none; position: absolute; left: 100%; top: 0; }
-.subwrap:hover .submenu { display: block; }
+.subwrap:hover .submenu, .subwrap.open .submenu { display: block; }
 .swatches { display: flex; align-items: center; gap: 4px; padding: 5px 10px; flex-wrap: wrap; }
 .swlabel { font-size: 13px; margin-right: 4px; }
 .sw { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); cursor: pointer; padding: 0; background: var(--panel); }
@@ -647,3 +647,14 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .dg-hint { font-size: 11px; color: var(--accent); }
 .pane.drop-zone > .canvas { box-shadow: inset 0 0 0 3px var(--accent); background-color: color-mix(in srgb, var(--accent) 6%, var(--canvas)); }
 .node.droptarget-out { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: 6px; }
+
+/* 選んだときに上に出るバー */
+.selbar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 2px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); white-space: nowrap; }
+.sb-count { font-size: 12px; color: var(--muted); padding: 0 8px; }
+.sb-btn { height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--fg); font-size: 13px; cursor: pointer; }
+.sb-btn:hover { background: var(--accent-soft); }
+.sb-btn.danger { color: var(--danger); }
+/* 添付の文字 */
+.node.t-text.file { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; border: 1px solid var(--line); background: var(--panel); padding: 6px 10px; border-radius: 8px; }
+.node.t-text.file .file-img { max-width: 220px; max-height: 160px; border-radius: 4px; display: block; pointer-events: none; }
+.node.t-text.file .clip { opacity: 0.7; }

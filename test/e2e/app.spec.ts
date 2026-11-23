@@ -475,8 +475,9 @@ test("記録一覧: 左に種類・右に記録。新しい種類を足す・上
   expect(mdFiles()[idOf(`${ymd}-日記`) + ".md"]).toContain(`to: ${idOf(`${ymd}-夢日記`)}`); // 上位から線
   // 日のグループの空きを右クリック: 記録を作る/開く・新しい種類で作る
   await page.mouse.click(900, 650, { button: "right" });
-  await expect(page.locator(".ctxmenu .item", { hasText: "日記を開く" }).first()).toBeVisible();
-  await page.locator(".ctxmenu .item", { hasText: "新しい種類で作る" }).click();
+  await page.locator(".ctxmenu .item", { hasText: "この日の記録" }).click(); // 日の記録は 1 つの項目にまとめた(押すと開いたまま)
+  await expect(page.locator(".ctxmenu .submenu .item", { hasText: "日記を開く" }).first()).toBeVisible();
+  await page.locator(".ctxmenu .submenu .item", { hasText: "新しい種類で作る" }).click();
   await page.keyboard.type("読書記録");
   await page.keyboard.press("Enter");
   await expect(page.locator(".popup.expanded")).toBeVisible();
@@ -630,7 +631,7 @@ test("ノートに添付: 画像以外(HTML など)も添付でき、リンク�
   expect(readdirSync(path.join(vault, "assets")).some((f) => f.endsWith("-見本.html"))).toBe(true);
 });
 
-test("分割: 右クリックの「反対側の画面に引用する」", async () => {
+test("分割: 選んだときのバーの「グループへ ▾ → 反対側の画面に引用する」", async () => {
   await write(300, 200, "向こうの物");
   await page.locator(".node", { hasText: "向こうの物" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+g");
@@ -639,7 +640,42 @@ test("分割: 右クリックの「反対側の画面に引用する」", async 
   await page.keyboard.press("Control+\\");
   await page.keyboard.type("向こう");
   await page.keyboard.press("Enter");
-  await page.locator(".peek .node", { hasText: "向こうの物" }).click({ button: "right" });
+  await page.locator(".peek .node", { hasText: "向こうの物" }).click({ modifiers: ["Control"] });
+  await page.locator(".peek .selbar .sb-btn", { hasText: "グループへ" }).click();
   await page.locator(".ctxmenu .item", { hasText: "反対側の画面に引用する" }).click();
   await expect(page.locator(".left-pane .node.ref", { hasText: "向こうの物" })).toHaveCount(1);
+});
+
+test("右クリックは短く、色・束ねる・つなぐは選んだときの上のバーに", async () => {
+  await write(300, 200, "ひとつ");
+  await page.locator(".node", { hasText: "ひとつ" }).click({ button: "right" });
+  const n = await page.locator(".ctxmenu > .item, .ctxmenu > .subwrap").count();
+  expect(n).toBeLessThanOrEqual(6);
+  await expect(page.locator(".ctxmenu .swatches")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".selbar")).toBeVisible(); // 右クリックで選ばれている
+  await page.locator(".selbar .sb-btn", { hasText: "色" }).click();
+  await page.locator(".ctxmenu .swatches .sw.c1").first().click();
+  await expect(page.locator(".node.t-text.c1", { hasText: "ひとつ" })).toHaveCount(1);
+  await shot("16-selbar");
+  await page.mouse.click(900, 700); // 空きを押すと選択が外れてバーも消える
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".selbar")).toHaveCount(0);
+});
+
+test("ボードにも添付: 空きの右クリック「ここにファイルを添付」・画像は絵で出る", async () => {
+  await page.mouse.click(400, 300, { button: "right" });
+  const chooser = page.waitForEvent("filechooser");
+  await page.locator(".ctxmenu .item", { hasText: "ファイルを添付" }).click();
+  // 1x1 の PNG
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await (await chooser).setFiles([
+    { name: "絵.png", mimeType: "image/png", buffer: png },
+    { name: "資料.html", mimeType: "text/html", buffer: Buffer.from("<p>x</p>") },
+  ]);
+  await expect(page.locator(".node.file")).toHaveCount(2);
+  await expect(page.locator(".node.file img.file-img")).toHaveCount(1);
+  await settle();
+  const files = Object.values(mdFiles());
+  expect(files.some((t) => /title: 資料\.html\n/.test(t) && /file: "?assets\/\d{8}-[0-9a-f]{6}-資料\.html/.test(t))).toBe(true);
 });
