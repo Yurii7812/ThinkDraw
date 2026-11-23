@@ -131,8 +131,9 @@ class App {
     this.btnFwd = btn("i-fwd", T.forward + " (Ctrl+])", () => this.forward());
     this.titleEl = h("button", { class: "group-title" });
     this.titleEl.addEventListener("click", () => this.openBody(this.canvas.group));
-    this.upBtn = h("button", { class: "group-up", title: T.upMenu, "aria-label": T.upMenu, text: "▾" });
-    this.upBtn.addEventListener("click", () => this.openUpMenu());
+    // 上のグループへ(← → の右隣。2026-11-23 利用者の希望)。所属先が 1 つならすぐ上がり、複数なら選ぶ
+    this.upBtn = h("button", { class: "tbtn group-up", title: T.upMenu + " (Ctrl+↑)", "aria-label": T.upMenu, text: "↑" });
+    this.upBtn.addEventListener("click", () => this.goUp());
     const search = h("button", { class: "searchbox", text: T.searchPlaceholder });
     search.addEventListener("click", () => this.search());
     this.btnDraw = btn("draw", "", () => this.drawAgain(), T.draw);
@@ -141,8 +142,8 @@ class App {
     const bar = h(
       "header",
       { class: "topbar" },
-      h("div", { class: "tb-left" }, this.btnBack, this.btnFwd, btn("i-home", T.goHome + " (Ctrl+Home)", () => this.openGroup(ROOT_ID))),
-      h("div", { class: "tb-center" }, this.titleEl, this.upBtn),
+      h("div", { class: "tb-left" }, this.btnBack, this.btnFwd, this.upBtn, btn("i-home", T.goHome + " (Ctrl+Home)", () => this.openGroup(ROOT_ID))),
+      h("div", { class: "tb-center" }, this.titleEl),
       h(
         "div",
         { class: "tb-right" },
@@ -152,7 +153,6 @@ class App {
         btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn),
         h("div", { class: "split" }, this.btnDraw, caret),
         btn("i-theme", T.theme, () => this.setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")),
-        btn("i-graph", T.sidePanel + " (Ctrl+E)", () => this.toggleSide()),
         btn("i-settings", T.settings + " (Ctrl+/)", () => this.settings()),
       ),
     );
@@ -207,7 +207,10 @@ class App {
       this.main,
     );
     this.side.graph.mode = this.state.graphMode;
-    this.side.setTab(this.state.sideTab, false);
+    // 右の欄はカード(タロット・易・発想カード)の詳細だけ(2026-11-23 利用者「地図やグラフは要らない」)
+    this.state.graphOpen = false;
+    this.state.sideTab = "detail";
+    this.side.setTab("detail", false);
     this.applySide();
     this.canvas.setPen({ ...this.config.pen, on: false });
     this.renderPenBar();
@@ -289,10 +292,46 @@ class App {
     this.btnBack.disabled = !this.backStack.length;
     this.btnFwd.disabled = !this.fwdStack.length;
     document.title = `${this.titleEl.textContent} — ${T.appName}`;
-    this.upBtn.style.display = this.canvas.group === ROOT_ID ? "none" : "";
+    this.upBtn.disabled = this.canvas.group === ROOT_ID;
     this.renderSideSoon();
   }
   /** 題の横の▾: 所属先とホームへ移る */
+  goUp(): void {
+    const g = this.canvas.group;
+    if (g === ROOT_ID) return;
+    const parents = this.vault.parentsOf(g).filter((p) => this.vault.get(p)?.type === "group" || p === ROOT_ID);
+    if (parents.length === 1) return this.openGroup(parents[0]);
+    this.openUpMenu();
+  }
+
+  // ---------- 日記(Ctrl+D): ホーム › 2026 › 2026-11 › 2026-11-23 のグループと、その中の「日記」ノート ----------
+  openToday(): void {
+    const d = new Date();
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    const y = String(d.getFullYear()), ym = `${y}-${p2(d.getMonth() + 1)}`, ymd = `${ym}-${p2(d.getDate())}`;
+    let note = "";
+    let day = "";
+    this.vault.tx(() => {
+      const year = this.childGroup(ROOT_ID, y);
+      const month = this.childGroup(year, ym);
+      day = this.childGroup(month, ymd);
+      const found = this.vault.itemsOf(day).find((i) => !i.ref && this.vault.get(i.id)?.type === "note" && this.vault.get(i.id)?.title === T.diaryNote);
+      note = found ? found.id : this.vault.create({ type: "note", title: T.diaryNote, group: day, x: 0, y: 0 }).id;
+    });
+    this.openGroup(day);
+    this.canvas.renderNow();
+    this.openBody(note);
+  }
+  /** parent の中の、名前が title のグループ(なければ作る。並びは日付順になるよう、下へ足す) */
+  private childGroup(parent: string, title: string): string {
+    const items = this.vault.itemsOf(parent).filter((i) => !i.ref);
+    const hit = items.find((i) => this.vault.get(i.id)?.type === "group" && this.vault.get(i.id)?.title === title);
+    if (hit) return hit.id;
+    const x = items.length ? Math.min(...items.map((i) => i.x)) : 0;
+    const y = items.length ? Math.max(...items.map((i) => i.y)) + 80 : 0;
+    return this.vault.create({ type: "group", title, group: parent, x, y }).id;
+  }
+
   private openUpMenu(): void {
     const g = this.canvas.group;
     const name = (id: string) => (id === ROOT_ID ? T.home : this.vault.get(id)?.title || T.untitledGroup);
@@ -676,9 +715,14 @@ class App {
         this.openGroup(ROOT_ID);
         return;
       }
-      if (e.ctrlKey && k === "e") {
+      if (e.ctrlKey && k === "d") {
         e.preventDefault();
-        this.toggleSide();
+        this.openToday();
+        return;
+      }
+      if (e.ctrlKey && e.key === "ArrowUp" && !inField) {
+        e.preventDefault();
+        this.goUp();
         return;
       }
       if (e.ctrlKey && e.key === "/") {

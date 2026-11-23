@@ -9,6 +9,7 @@ import { atomicWrite, FsVaultIO } from "./fsio";
 if (process.env.THINKDRAW_USERDATA) app.setPath("userData", process.env.THINKDRAW_USERDATA);
 // 画面の試験(xvfb)では、窓が隠れていると見なされて描画が止まることがあるので、止めないようにする
 if (process.env.THINKDRAW_TEST) {
+  app.commandLine.appendSwitch("ozone-platform", "x11"); // 試験の窓は xvfb の中だけに出す
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-background-timer-throttling");

@@ -9,7 +9,7 @@
     "start": "node build.mjs && electron .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "node build.mjs && xvfb-run -a playwright test"
+    "test:e2e": "node build.mjs && xvfb-run -a env THINKDRAW_HEADLESS=1 nice playwright test"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.3",

@@ -4,6 +4,17 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
+// 利用者の画面に窓を出さない: Wayland を外し、xvfb の見えない画面(X11)だけで起動する。
+// xvfb-run の外では動かさない(npm run test:e2e を使う)
+const HEADLESS_ARGS = ["--ozone-platform=x11", "."];
+function headlessEnv(): Record<string, string> {
+  if (!process.env.THINKDRAW_HEADLESS) throw new Error("画面の試験は npm run test:e2e で(xvfb の中で)動かしてください");
+  const env = { ...process.env } as Record<string, string>;
+  delete env.WAYLAND_DISPLAY;
+  delete env.ELECTRON_OZONE_PLATFORM_HINT;
+  env.XDG_SESSION_TYPE = "x11";
+  return env;
+}
 let app: ElectronApplication;
 let page: Page;
 let vault = "";
@@ -29,7 +40,7 @@ test.beforeEach(async () => {
   vault = mkdtempSync(path.join(base, "td-vault-"));
   userData = mkdtempSync(path.join(base, "td-user-"));
   exportDir = mkdtempSync(path.join(base, "td-export-"));
-  app = await electron.launch({ args: ["."], env: { ...process.env, THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1", THINKDRAW_EXPORT_DIR: exportDir } });
+  app = await electron.launch({ args: HEADLESS_ARGS, env: { ...headlessEnv(), THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1", THINKDRAW_EXPORT_DIR: exportDir } });
   page = await app.firstWindow();
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.waitForSelector(".canvas");
@@ -107,14 +118,13 @@ test("束ねる・開く・戻る、検索、グラフ", async () => {
   await page.keyboard.type("みかん");
   await page.keyboard.press("Enter");
   await expect(page.locator(".group-title")).toHaveText("果物");
-  if (!(await page.locator(".side-panel").isVisible())) await page.keyboard.press("Control+e");
-  await page.locator(".side-tabs .seg-b[data-tab=graph]").click();
-  await page.locator(".seg-b[data-mode=groups]").click();
-  await expect(page.locator(".g-node")).toHaveCount(2);
-  await page.locator(".seg-b[data-mode=local]").click();
-  // 今のグループ・その親・選んでいるノード(検索で選ばれた「みかん」)
-  await expect(page.locator(".g-node")).toHaveCount(3);
-  await shot("03-graph");
+  // ↑ で上のグループ(所属先が 1 つならすぐ)
+  await page.locator(".tbtn.group-up").click();
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+  await expect(page.locator(".tbtn.group-up")).toBeDisabled();
+  // 右の欄の切り替えボタンは無い
+  await expect(page.locator(".i-graph")).toHaveCount(0);
+  await shot("03-up");
 });
 
 test("ノートは大画面で開く・Ctrl+L で検索してリンク・バックリンク", async () => {
@@ -224,28 +234,12 @@ test("引用: Ctrl+L でほかのグループの物を引用して線でつな�
   await expect(page.locator(".edge")).toHaveCount(1);
   await settle();
   expect(mdFiles()["root.md"]).toContain(`refs:\n  - { id: ${idOf("遠い話")}`);
-  // 所属先は元のグループのまま
-  await page.keyboard.press("Control+e");
-  await page.mouse.click(900, 650);
-  await page.locator(".node.ref").click({ modifiers: ["Control"] });
-  await page.locator(".side-tabs .seg-b[data-tab=rel]").click();
-  await expect(page.locator(".side-panel .rel-item").first()).toContainText("別の箱");
-  await expect(page.locator(".side-panel .rel-item").nth(1)).toContainText("ホーム");
-  await shot("08b-rel");
-  // 所属先を押すと、そのグループへ上がれる
-  await page.locator(".side-panel .rel-item").first().click();
+  // 右クリックの「元の場所へ」で、元のグループへ
+  await page.locator(".node.ref").click({ button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "所属しているグループへ" }).click();
   await expect(page.locator(".group-title")).toHaveText("別の箱");
-  // 関係の欄も、上がった先のグループに切り替わる(続けて上がれる)
-  await expect(page.locator(".side-panel .rel-head")).toContainText("別の箱");
-  await expect(page.locator(".side-panel .rel-item").first()).toContainText("ホーム");
-  // 上へ ▾ メニューからホームへ
-  await page.locator(".group-up").click();
-  await shot("08c-up");
-  await page.locator(".ctxmenu .item", { hasText: "ホーム" }).first().click();
+  await page.locator(".tbtn.group-up").click();
   await expect(page.locator(".group-title")).toHaveText("ホーム");
-  // 地図タブ: 木に「別の箱」が出る
-  await page.locator(".side-tabs .seg-b[data-tab=map]").click();
-  await expect(page.locator(".side-panel .tr", { hasText: "別の箱" }).first()).toBeVisible();
   await shot("08-ref");
 });
 
@@ -276,7 +270,7 @@ test("右ドラッグで動かす・重ねるとグループ・状態の復元",
   await expect(page.locator(".edge")).toHaveCount(1);
   await settle();
   await app.close();
-  app = await electron.launch({ args: ["."], env: { ...process.env, THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1" } });
+  app = await electron.launch({ args: HEADLESS_ARGS, env: { ...headlessEnv(), THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1" } });
   page = await app.firstWindow();
   await page.waitForSelector(".canvas");
   await expect(page.locator(".group-title")).not.toHaveText("ホーム");
@@ -298,7 +292,7 @@ test("外部のエディタの変更を取り込む・ダーク・設定の画�
   await expect(page.locator(".shortcuts")).toBeVisible();
 });
 
-test("右の欄: 文字では開かない・カードを選ぶと自動で開く・空きをクリックで閉じる・手で開いた分は残る", async () => {
+test("右の欄: 文字では開かない・カードを選ぶと自動で開く・空きをクリックで閉じる", async () => {
   await write(300, 200, "ふつうの文字");
   await page.locator(".node", { hasText: "ふつうの文字" }).click();
   await expect(page.locator("textarea.draft")).toHaveCount(1);
@@ -311,13 +305,30 @@ test("右の欄: 文字では開かない・カードを選ぶと自動で開く
   await page.mouse.click(60, 700);
   await page.keyboard.press("Escape");
   await expect(page.locator(".main.side-open")).toHaveCount(0);
-  // 手で開いた分は、カードを選んでも外しても閉じない
+  // Ctrl+E は何もしない(右の欄はカードのときだけ)
   await page.keyboard.press("Control+e");
-  await expect(page.locator(".main.side-open")).toHaveCount(1);
-  await page.locator(".node.t-card").first().click();
-  await page.mouse.click(60, 700);
+  await expect(page.locator(".main.side-open")).toHaveCount(0);
+});
+
+test("Ctrl+D: 今日の日記(年 › 月 › 日 のグループの「日記」ノート)を大画面で開く。2 回目は同じものを開く", async () => {
+  const d = new Date();
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  const ymd = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  await page.keyboard.press("Control+d");
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await expect(page.locator(".group-title")).toHaveText(ymd);
+  await page.keyboard.type("今日のこと");
   await page.keyboard.press("Escape");
-  await expect(page.locator(".main.side-open")).toHaveCount(1);
+  await page.locator(".tbtn.group-up").click();
+  await expect(page.locator(".group-title")).toHaveText(ymd.slice(0, 7));
+  await page.keyboard.press("Control+d");
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await settle();
+  const diaries = Object.values(mdFiles()).filter((t) => t.includes("title: 日記\n"));
+  expect(diaries).toHaveLength(1);
+  expect(diaries[0]).toContain("今日のこと");
+  expect(titles().map((t) => (t ?? "").replace(/"/g, ""))).toEqual(expect.arrayContaining([String(d.getFullYear()), ymd.slice(0, 7), ymd]));
 });
 
 test("書き出し: Markdown・画像・HTML(試験では指定の場所へ書く)", async () => {
