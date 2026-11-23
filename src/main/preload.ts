@@ -1,5 +1,5 @@
 // 画面(renderer)に渡す、限られた API
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 const api = {
   getConfig: () => ipcRenderer.invoke("config:get"),
@@ -19,6 +19,21 @@ const api = {
   exportSave: (name: string, label: string, exts: string[], data: string | Uint8Array): Promise<string | null> =>
     ipcRenderer.invoke("export:save", name, label, exts, data),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open", url),
+  // 紙PKM
+  paperIndex: () => ipcRenderer.invoke("paper:index"),
+  paperStage: (files: string[]) => ipcRenderer.invoke("paper:stage", files),
+  paperCommit: (batch: string, decisions: { key: string; fz: string | null; include: boolean }[]) => ipcRenderer.invoke("paper:commit", batch, decisions),
+  paperDiscard: (batch: string) => ipcRenderer.invoke("paper:discard", batch),
+  paperSetFz: (pid: string, fz: string | null) => ipcRenderer.invoke("paper:setFz", pid, fz),
+  paperRemove: (pid: string) => ipcRenderer.invoke("paper:remove", pid),
+  paperOcrSettings: () => ipcRenderer.invoke("paper:ocrSettings"),
+  paperSetOcrSettings: (s: Record<string, unknown>) => ipcRenderer.invoke("paper:setOcrSettings", s),
+  paperPickFiles: (): Promise<string[]> => ipcRenderer.invoke("paper:pickFiles"),
+  paperExport: (): Promise<{ dir: string; n: number } | null> => ipcRenderer.invoke("paper:export"),
+  onPaperProgress: (fn: (p: { batch: string; phase: string; done: number; total: number; message?: string }) => void) =>
+    ipcRenderer.on("paper:progress", (_e, p) => fn(p)),
+  /** 落としたファイルの、ディスク上の場所 */
+  pathOf: (f: File): string => webUtils.getPathForFile(f),
   onChanged: (fn: (e: { name: string; content: string | null }) => void) =>
     ipcRenderer.on("vault:changed", (_e, arg) => fn(arg)),
   onFlush: (fn: () => Promise<void>) =>

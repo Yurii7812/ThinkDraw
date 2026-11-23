@@ -86,3 +86,13 @@ describe("本文のリンク", () => {
     expect(urlOnlyLines("文 https://a.jp\n  https://b.jp/x?y=1  \n<https://c.jp>")).toEqual(["https://b.jp/x?y=1", "https://c.jp"]);
   });
 });
+
+describe("紙PKM のページを指す文字のノード", () => {
+  it("paper(内部ID)を読み書きできる", () => {
+    const md = "---\nid: abcdefghij\ntitle: 紙 1a1\ntype: text\npaper: p0123456789ab\n---\n";
+    const n = parseNode(md, "abcdefghij");
+    expect(n.paper).toBe("p0123456789ab");
+    expect(serializeNode(n)).toContain("paper: p0123456789ab");
+    expect(parseNode(md.replace("p0123456789ab", "../x"), "abcdefghij").paper).toBeUndefined();
+  });
+});

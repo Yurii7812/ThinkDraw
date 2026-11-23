@@ -11,7 +11,9 @@ import { showGroupTree } from "./grouptree";
 import type { Rect } from "../core/placement";
 import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
-import { SHORTCUTS, T } from "./strings";
+import { PT, SHORTCUTS, T } from "./strings";
+import { PaperView } from "./paperview";
+import { paperStore } from "./paperstore";
 import { cardTip, closeDrawMenu, DEFAULT_CONFIG, drawLabel, drawMenuOpen, openDrawMenu, runDraw, type DrawConfig, type DrawKind } from "./tarot";
 import { api, askText, closeMenu, h, menuOpen, showMenu, svg, toast, type MenuItem } from "./ui";
 
@@ -47,6 +49,7 @@ function pushHist(stack: string[], g: string): void {
 const TOP_ICONS: Record<string, string> = {
   attach: '<path d="M20 11.5 12.5 19a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7L10.2 16.7a1.7 1.7 0 0 1-2.4-2.4L14.5 7.6"/>',
   pen: '<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/>',
+  paper: '<path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4M10 11h6M10 15h6M4 6v15h12"/>',
   records: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
   beside: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/>',
   surround: '<circle cx="12" cy="12" r="2.5"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="7" r="1.5"/><circle cx="6" cy="19" r="1.5"/><path d="M10 11 6 7M14 11l4-3M10.5 14 7 18"/>',
@@ -55,6 +58,8 @@ const TOP_ICONS: Record<string, string> = {
   draw: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="m12 8 1.2 2.6 2.8.4-2 2 .5 2.8-2.5-1.4-2.5 1.4.5-2.8-2-2 2.8-.4z"/>',
 };
 
+let paperHooked = false;
+
 class App {
   vault!: Vault;
   canvas!: Canvas;
@@ -62,6 +67,9 @@ class App {
   peek: Canvas | null = null;
   private peekWrap: HTMLElement | null = null;
   records: RecordsView | null = null;
+  paper: PaperView | null = null;
+  /** 紙PKM の画面が出ているか(閉じても取り込みの途中は残すので、画面は消さずに外すだけ) */
+  paperOpen = false;
   private kinds: RecordKind[] = [];
   private leftPane!: HTMLElement;
   private leftTitle!: HTMLElement;
@@ -134,6 +142,16 @@ class App {
     const files = await api().readAll();
     this.vault = new Vault({ write: (n, c) => api().write(n, c), trash: (n, c) => api().trash(n, c) });
     this.vault.load(files);
+    void paperStore.load();
+    if (!paperHooked) {
+      paperHooked = true;
+      api().onPaperProgress((p) => this.paper?.onProgress(p));
+      // 紙のページの ID を直したら、キャンバスの「紙」ノードの名前も変わる
+      paperStore.on(() => {
+        this.canvas?.requestRender();
+        this.peek?.requestRender();
+      });
+    }
     try {
       const st = JSON.parse((await api().readApp(STATE_FILE)) ?? "{}");
       if (st.graphMode !== "local" && st.graphMode !== "groups") delete st.graphMode;
@@ -210,6 +228,7 @@ class App {
         { class: "tb-right" },
         search,
         btn("records-btn", T.recordsTip, () => this.toggleRecords(), T.recordsBtn, "records"),
+        btn("paper-btn", PT.btnTip, () => this.togglePaper(), PT.title, "paper"),
         attachBtn,
         this.btnPen,
         btn("beside", T.besideTip, () => this.toggleBeside(), T.besideBtn, "beside"),
@@ -259,6 +278,7 @@ class App {
         extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
         groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openGroup(g)),
         openFile: (rel) => void api().openAsset(rel),
+        openPaper: (pid) => this.togglePaper(pid),
         onScopeChange: (n) => this.saveScope(n),
       },
       this.leftPane,
@@ -417,6 +437,59 @@ class App {
       day = this.childGroup(month, ymd);
     });
     return day;
+  }
+  // ---------- 紙PKM(Ctrl+P) ----------
+  togglePaper(start?: string): void {
+    if (this.paperOpen && !start) return this.closePaper();
+    if (this.records) this.closeRecords();
+    this.closePopup();
+    this.canvas.commitDraft("esc");
+    if (this.paper) {
+      if (start) this.paper.show(start);
+      this.main.append(this.paper.el);
+      this.paperOpen = true;
+      this.paper.el.focus();
+      return;
+    }
+    this.paper = new PaperView(
+      {
+        close: () => this.closePaper(),
+        place: (pid) => this.placePaper(pid),
+        usedIn: (pid) =>
+          [...this.vault.nodes.values()]
+            .filter((n) => n.paper === pid)
+            .flatMap((n) => this.vault.parentsOf(n.id).map((g) => ({ id: n.id, group: g, groupTitle: g === ROOT_ID ? T.home : this.vault.get(g)?.title || T.untitledGroup }))),
+        goTo: (g, id) => {
+          this.closePaper();
+          this.openGroup(g);
+          this.canvas.renderNow();
+          this.canvas.centerOn(id);
+          this.canvas.setSelection([id]);
+        },
+      },
+      start,
+    );
+    this.main.append(this.paper.el);
+    this.paperOpen = true;
+    this.paper.el.focus();
+  }
+  closePaper(): void {
+    if (!this.paper || !this.paperOpen) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    this.paper.el.remove();
+    this.paperOpen = false;
+    this.canvas.el.focus({ preventScroll: true });
+  }
+  /** 紙のページを、いま使っている画面のグループの真ん中に置く(文字のノードが内部IDで指す) */
+  private placePaper(pid: string): void {
+    const c = this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas;
+    const fz = paperStore.fzOf(pid);
+    const p = c.visibleCenter();
+    const n = this.vault.create({ type: "text", title: PT.nodeLabel(fz ?? "?"), group: c.group, x: Math.round(p.x), y: Math.round(p.y), paper: pid });
+    this.closePaper();
+    c.renderNow();
+    c.setSelection([n.id]);
+    toast(PT.placed(fz ?? "?"));
   }
   // ---------- 記録一覧(Ctrl+J) ----------
   toggleRecords(): void {
@@ -782,6 +855,7 @@ class App {
           extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
           groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openPeek(g)),
           openFile: (rel) => void api().openAsset(rel),
+          openPaper: (pid) => this.togglePaper(pid),
         },
         this.peekWrap,
       );
@@ -1151,7 +1225,7 @@ class App {
     addEventListener("paste", (e) => {
       const files = e.clipboardData?.files;
       const inField = (e.target as Element)?.closest?.("input, textarea, .ProseMirror");
-      if (inField || this.popup || this.records) return;
+      if (inField || this.popup || this.records || this.paperOpen) return;
       const c = this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas;
       // Ctrl+C でコピーした物(目印の文字が入っている)は、引用として貼る
       if (!files?.length && refClipboard.size && e.clipboardData?.getData("text/plain") === refClipboard.mark) {
@@ -1198,6 +1272,17 @@ class App {
         this.toggleRecords();
         return;
       }
+      if (e.ctrlKey && k === "p") {
+        e.preventDefault();
+        this.togglePaper();
+        return;
+      }
+      if (e.key === "Escape" && this.paperOpen && !document.fullscreenElement) {
+        e.preventDefault();
+        this.closePaper();
+        return;
+      }
+      if (this.paperOpen) return; // 紙PKM の画面ではキャンバスのキーを使わない
       if (e.key === "Escape" && this.records && !this.popup) {
         e.preventDefault();
         this.closeRecords();

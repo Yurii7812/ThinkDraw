@@ -46,6 +46,7 @@ export interface TDNode {
   color: number; // 0 は無し(文字の色)
   fill?: number; // 文字の背景の色。無し/0 は背景なし
   file?: string; // 添付(assets/… の場所)。文字のノードがファイルを指す
+  paper?: string; // 紙PKM のページ(内部ID p…)。文字のノードが紙のページを指す(紙の Folgezettel ID とは別)
   created: string;
   updated: string;
   members: Member[]; // type: group のみ意味を持つ。所属

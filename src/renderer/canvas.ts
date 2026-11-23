@@ -6,7 +6,8 @@ import { LINK_KINDS, ROOT_ID, type LinkKind, type Stroke, type TDNode } from "..
 import { cardName, spreadDef } from "../decks";
 import { cardFace, faceHeight } from "./cardface";
 import { openPicker } from "./picker";
-import { T } from "./strings";
+import { PT, T } from "./strings";
+import { paperStore } from "./paperstore";
 import { makeChecklist, makeTable, schema as mdSchema, serializeMarkdown } from "./mdschema";
 import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
 import { pickIslands, placeIslands } from "../core/islands";
@@ -46,6 +47,8 @@ export interface CanvasHost {
   onScopeChange?(n: number): void;
   /** 添付のファイルを、その種類のふつうのアプリで開く */
   openFile?(rel: string): void;
+  /** 紙PKM のページを開く(内部ID) */
+  openPaper?(pid: string): void;
   /** グループの ▸: 下のグループの木を出す */
   groupTree?(id: string, anchor: Element): void;
   /** 空きの右クリックに足す項目(日のグループでの記録の作成など)。x, y は置く位置 */
@@ -473,7 +476,7 @@ export class Canvas {
   }
 
   private signature(n: TDNode, ref: boolean): string {
-    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? null : !!n.body.trim(), n.card, n.spread]);
+    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, n.paper ? [n.paper, paperStore.fzOf(n.paper), paperStore.thumbOf(n.paper)] : null, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? null : !!n.body.trim(), n.card, n.spread]);
   }
 
   /** グループのノードに見せる中身: 上から 3 件の名前・残りの数・下のグループの数 */
@@ -494,7 +497,14 @@ export class Canvas {
   private nodeEl(n: TDNode, ref: boolean): HTMLElement {
     const el = h("div", { class: `node t-${n.type}${n.color ? " c" + n.color : ""}${n.fill ? " f" + n.fill : ""}${ref ? " ref" : ""}`, "data-id": n.id });
     if (ref) el.title = T.refMark;
-    if (n.type === "text" && n.file) {
+    if (n.type === "text" && n.paper) {
+      // 紙PKM のページ: 小さな絵と、今の ID(直せば変わる)
+      const fz = paperStore.fzOf(n.paper);
+      const thumb = paperStore.thumbOf(n.paper);
+      el.classList.add("file", "paper-node");
+      if (thumb) el.append(h("img", { class: "file-img paper-img", src: thumb, alt: "", draggable: "false" }));
+      el.append(h("span", { class: "label" }, fz === undefined ? PT.nodeMissing : PT.nodeLabel(fz ?? "?")));
+    } else if (n.type === "text" && n.file) {
       // 添付: 画像は小さな絵、ほかは 📎 と名前
       el.classList.add("file");
       if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(n.file)) el.append(h("img", { class: "file-img", src: "vault://local/" + n.file.split("/").map(encodeURIComponent).join("/"), alt: n.title, draggable: "false" }));
@@ -1143,7 +1153,7 @@ export class Canvas {
       this.setSelection([id]);
       return this.host.openBody(id);
     }
-    if (node.type === "text" && !node.file) {
+    if (node.type === "text" && !node.file && !node.paper) {
       this.setSelection([id]);
       return this.open(id, target);
     }
@@ -1159,6 +1169,7 @@ export class Canvas {
     const n = this.v.get(id);
     if (!n) return;
     if (n.type === "group") return this.host.openGroup(id);
+    if (n.type === "text" && n.paper) return this.host.openPaper?.(n.paper);
     if (n.type === "text" && n.file) return this.host.openFile?.(n.file);
     if (n.type === "text") {
       const r = this.rects.get(id);
@@ -1407,6 +1418,7 @@ export class Canvas {
     const bar: NonNullable<MenuItem["bar"]> = [];
     if (!many) {
       if (n.type === "group") bar.push({ icon: "open", label: T.mOpen, title: T.openGroup, action: () => this.host.openGroup(id) });
+      else if (n.type === "text" && n.paper) bar.push({ icon: "open", label: T.mOpen, title: PT.title, action: () => this.host.openPaper?.(n.paper!) });
       else if (n.type === "text" && n.file) bar.push({ icon: "open", label: T.mOpen, title: T.openFile, action: () => this.host.openFile?.(n.file!) });
       else if (n.type === "text") bar.push({ icon: "edit", label: T.mEdit, title: T.editText + " (R)", key: "r", action: () => this.editText(id) });
       else if (n.type === "note") bar.push({ icon: "open", label: T.mOpen, title: T.openNote, action: () => this.host.openBody(id) });
@@ -1421,7 +1433,7 @@ export class Canvas {
     if (many) items.unshift({ label: T.selCount(ids.length), heading: true });
     // 色
     items.push(this.colorItem(ids));
-    if (ids.every((i) => this.v.get(i)?.type === "text" && !this.v.get(i)?.file)) items.push(this.fillItem(ids));
+    if (ids.every((i) => this.v.get(i)?.type === "text" && !this.v.get(i)?.file && !this.v.get(i)?.paper)) items.push(this.fillItem(ids));
     // このノードだけのこと
     const own: MenuItem[] = [];
     if (!many && n.type === "group") own.push({ label: T.rename, key: "r", action: () => this.renameGroup(id) }, { label: T.unbundle, action: () => this.v.unbundle(id) });

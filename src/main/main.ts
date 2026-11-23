@@ -4,6 +4,8 @@ import { existsSync, watch, type FSWatcher, promises as fs } from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { atomicWrite, FsVaultIO } from "./fsio";
+import { DEFAULT_OCR, makeEngines, type OcrSettings } from "./ocr";
+import { DEFAULT_CROP, PaperStore, type CropSettings } from "./paperio";
 
 // 試験のときは、利用者の設定・フォルダに触らないよう、環境変数で場所を差し替える
 if (process.env.THINKDRAW_USERDATA) app.setPath("userData", process.env.THINKDRAW_USERDATA);
@@ -21,6 +23,9 @@ interface Config {
   lastFolder?: string;
   theme?: "system" | "light" | "dark";
   reversed?: boolean;
+  /** 紙PKM の OCR(詳細設定) */
+  ocr?: Partial<OcrSettings>;
+  paperCrop?: Partial<CropSettings>;
 }
 const configFile = () => path.join(app.getPath("userData"), "config.json");
 async function readConfig(): Promise<Config> {
@@ -36,6 +41,12 @@ async function writeConfig(c: Config): Promise<void> {
 
 let win: BrowserWindow | null = null;
 let io: FsVaultIO | null = null;
+let paper: PaperStore | null = null;
+function needPaper(): PaperStore {
+  if (!io) throw new Error("フォルダが開かれていません");
+  if (!paper || paper.vault !== io.dir) paper = new PaperStore(io.dir);
+  return paper;
+}
 let watcher: FSWatcher | null = null;
 const watchTimers = new Map<string, NodeJS.Timeout>();
 
@@ -153,6 +164,43 @@ function registerIpc(): void {
     const file = needIO().assetPath(rel);
     if (file && existsSync(file)) return shell.openPath(file);
     return "見つかりません";
+  });
+  // ---------- 紙PKM ----------
+  ipcMain.handle("paper:index", () => needPaper().readIndex());
+  ipcMain.handle("paper:stage", async (_e, files: string[]) => {
+    const c = await readConfig();
+    const ocr = { ...DEFAULT_OCR, ...(c.ocr ?? {}) };
+    const crop = { ...DEFAULT_CROP, ...(c.paperCrop ?? {}) };
+    return needPaper().stage(files, makeEngines(ocr), crop, (p) => win?.webContents.send("paper:progress", p));
+  });
+  ipcMain.handle("paper:commit", (_e, batch: string, decisions: { key: string; fz: string | null; include: boolean }[]) => needPaper().commit(batch, decisions));
+  ipcMain.handle("paper:discard", (_e, batch: string) => needPaper().discard(batch));
+  ipcMain.handle("paper:setFz", (_e, pid: string, fz: string | null) => needPaper().setFz(pid, fz));
+  ipcMain.handle("paper:remove", (_e, pid: string) => needPaper().remove(pid));
+  ipcMain.handle("paper:ocrSettings", async () => {
+    const c = await readConfig();
+    const ocr = { ...DEFAULT_OCR, ...(c.ocr ?? {}) };
+    const engs = makeEngines(ocr);
+    const why = (await Promise.all(engs.map((e) => e.check()))).filter(Boolean);
+    return { ...ocr, crop: { ...DEFAULT_CROP, ...(c.paperCrop ?? {}) }, status: !engs.length ? "OCR を使わない設定です" : why.length ? why.join(" / ") : null };
+  });
+  ipcMain.handle("paper:setOcrSettings", async (_e, s: Partial<OcrSettings> & { crop?: Partial<CropSettings> }) => {
+    const c = await readConfig();
+    const { crop, ...ocr } = s;
+    await writeConfig({ ...c, ocr: { ...(c.ocr ?? {}), ...ocr }, paperCrop: { ...(c.paperCrop ?? {}), ...(crop ?? {}) } });
+  });
+  ipcMain.handle("paper:pickFiles", async () => {
+    // 試験では選ぶ窓を出さず、決めたファイルを使う
+    if (process.env.THINKDRAW_PICK_FILES) return JSON.parse(process.env.THINKDRAW_PICK_FILES) as string[];
+    const r = await dialog.showOpenDialog(win!, { properties: ["openFile", "multiSelections"], filters: [{ name: "PDF・画像", extensions: ["pdf", "jpg", "jpeg", "png", "tif", "tiff", "webp"] }] });
+    return r.canceled ? [] : r.filePaths;
+  });
+  ipcMain.handle("paper:export", async () => {
+    if (process.env.THINKDRAW_EXPORT_DIR) return { dir: process.env.THINKDRAW_EXPORT_DIR, n: await needPaper().exportTo(path.join(process.env.THINKDRAW_EXPORT_DIR, "紙PKM")) };
+    const r = await dialog.showOpenDialog(win!, { title: "紙PKM の書き出し先", properties: ["openDirectory", "createDirectory"] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const dir = path.join(r.filePaths[0], "紙PKM-" + new Date().toISOString().slice(0, 10));
+    return { dir, n: await needPaper().exportTo(dir) };
   });
   ipcMain.handle("url:title", (_e, url: string) => urlTitle(url));
   ipcMain.handle("shell:open", (_e, url: string) => {
