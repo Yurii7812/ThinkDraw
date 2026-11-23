@@ -53,6 +53,8 @@ test("書いて Enter・Tab・Esc で、ノードと線ができる(まわりに
   await page.keyboard.type("考え");
   await page.keyboard.press("Tab");
   await page.keyboard.type("子1");
+  // 書いている最中でも、つなぎ元との仮の線が見える
+  await expect(page.locator("path.draftline")).toHaveCount(1);
   await page.keyboard.press("Enter");
   await page.keyboard.type("子2");
   await page.keyboard.press("Enter");
@@ -131,7 +133,7 @@ test("ノートは大画面で開く・Ctrl+L で検索してリンク・バッ�
   expect(note).toContain("type: note");
   expect(note).toContain(`前置き [相手](${idOf("相手")}.md) を見る`);
   await page.locator(".node.t-text", { hasText: "相手" }).click({ button: "right" });
-  await page.getByText("本文を開く").click();
+  await page.getByText("ノートを書く").click();
   await expect(page.locator(".pop-foot")).toContainText("メモ");
 });
 

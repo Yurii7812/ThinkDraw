@@ -22,11 +22,13 @@ export const T = {
   openFolder: "フォルダを開く…",
 
   // 右クリックのメニュー
-  openBody: "本文を開く",
+  openBody: "ノートを書く",
   openGroup: "グループを開く",
   rename: "名前を変える",
   color: "色",
   colorNone: "色なし",
+  fill: "背景色",
+  fillNone: "背景なし",
   bundle: "束ねる(Ctrl+G)",
   unbundle: "解く",
   addToGroup: "別のグループにも入れる…",

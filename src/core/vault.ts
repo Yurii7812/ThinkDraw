@@ -323,12 +323,13 @@ export class Vault {
     });
   }
 
-  update(id: string, patch: { title?: string; body?: string; color?: number }): void {
+  update(id: string, patch: { title?: string; body?: string; color?: number; fill?: number }): void {
     this.tx(() => {
       const n = this.mut(id);
       if (patch.title !== undefined) n.title = patch.title;
       if (patch.body !== undefined) n.body = patch.body;
       if (patch.color !== undefined) n.color = patch.color;
+      if (patch.fill !== undefined) n.fill = patch.fill || undefined;
     });
   }
 

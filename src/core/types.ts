@@ -43,7 +43,8 @@ export interface TDNode {
   id: string;
   title: string;
   type: NodeType;
-  color: number; // 0 は無し
+  color: number; // 0 は無し(文字の色)
+  fill?: number; // 文字の背景の色。無し/0 は背景なし
   created: string;
   updated: string;
   members: Member[]; // type: group のみ意味を持つ。所属

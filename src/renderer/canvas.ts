@@ -1,5 +1,5 @@
 // 無限キャンバス(SPEC 4.2)。1 つのグループの中身(所属 + 引用)とペンの線を描き、操作をデータの操作に翻訳する。
-import { placeAround, type Rect } from "../core/placement";
+import { gap, placeAround, type Rect } from "../core/placement";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
 import { LINK_KINDS, ROOT_ID, type LinkKind, type Stroke, type TDNode } from "../core/types";
@@ -279,11 +279,11 @@ export class Canvas {
   }
 
   private signature(n: TDNode, ref: boolean): string {
-    return JSON.stringify([n.type, n.title, n.color, ref, n.type === "note" ? excerpt(n.body) : !!n.body.trim(), n.card, n.spread]);
+    return JSON.stringify([n.type, n.title, n.color, n.fill, ref, n.type === "note" ? excerpt(n.body) : !!n.body.trim(), n.card, n.spread]);
   }
 
   private nodeEl(n: TDNode, ref: boolean): HTMLElement {
-    const el = h("div", { class: `node t-${n.type}${n.color ? " c" + n.color : ""}${ref ? " ref" : ""}`, "data-id": n.id });
+    const el = h("div", { class: `node t-${n.type}${n.color ? " c" + n.color : ""}${n.fill ? " f" + n.fill : ""}${ref ? " ref" : ""}`, "data-id": n.id });
     if (ref) el.title = T.refMark;
     if (n.type === "text") {
       el.append(h("span", { class: "label", text: n.title || T.untitled }));
@@ -373,6 +373,7 @@ export class Canvas {
         this.edgesSvg.append(g);
       }
     }
+    this.draftLine();
   }
 
   private renderStrokes(): void {
@@ -402,14 +403,29 @@ export class Canvas {
     if (n?.color) ta.classList.add("c" + n.color);
     this.draft = { id, x, y, parent, ta };
     ta.addEventListener("keydown", (e) => this.onDraftKey(e));
+    ta.addEventListener("input", () => this.draftLine());
     ta.addEventListener("blur", () => {
       if (this.draft?.ta === ta) this.commitDraft("esc");
     });
     ta.addEventListener("pointerdown", (e) => e.stopPropagation());
     this.draftLayer.append(ta);
     if (id) this.els.get(id)?.classList.add("editing");
+    this.draftLine();
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
+
+  /** 書いている最中の文字と、つなぎ元とのあいだの仮の線(確定前でも線が見えるように) */
+  private draftLine(): void {
+    this.edgesSvg.querySelector(".draftline")?.remove();
+    const d = this.draft;
+    if (!d?.parent) return;
+    const a = this.rects.get(d.parent);
+    if (!a) return;
+    const b = { x: d.x, y: d.y, w: Math.max(d.ta.offsetWidth, 40), h: Math.max(d.ta.offsetHeight, 24) };
+    const p1 = this.clip(a, b.x + b.w / 2, b.y + b.h / 2);
+    const p2 = this.clip(b, a.x + a.w / 2, a.y + a.h / 2);
+    this.edgesSvg.append(svg("path", { class: "draftline edge", d: `M${p1.x},${p1.y} L${p2.x},${p2.y}`, fill: "none" }));
   }
 
   private onDraftKey(e: KeyboardEvent): void {
@@ -434,6 +450,7 @@ export class Canvas {
     if (!d) return;
     this.draft = null;
     d.ta.remove();
+    this.edgesSvg.querySelector(".draftline")?.remove();
     const text = d.ta.value.replace(/\s+$/, "");
     let id = d.id;
     try {
@@ -451,6 +468,7 @@ export class Canvas {
     } finally {
       this.renderNow();
     }
+    if (id && !d.id && d.parent) this.fitNew(id, d.parent);
     if (!id || mode === "esc") return;
     if (mode === "enter") {
       const parent = d.parent ?? this.parentOf(id);
@@ -460,6 +478,18 @@ export class Canvas {
       const p = this.spot(id);
       this.startEdit(null, p.x, p.y, id);
     }
+  }
+
+  /** 書き終えた文字の実際の大きさで、親やほかの物に近すぎ・重なっていたら置き直す(書く前は大きさが分からないため) */
+  private fitNew(id: string, parent: string): void {
+    const r = this.rects.get(id);
+    const a = this.rects.get(parent);
+    if (!r || !a) return;
+    const others = this.obstacles(new Set([id, parent]));
+    if (gap(r, a) >= 30 && others.every((o) => gap(r, o) >= 16)) return;
+    const p = placeAround(a, others, { size: { w: r.w, h: r.h } });
+    this.v.move(this.group, [{ id, x: Math.round(p.x), y: Math.round(p.y) }]);
+    this.renderNow();
   }
 
   /** anchor のまわりで、ほかと一番離れる所(2026-11-22 利用者の希望。core/placement.ts) */
@@ -960,6 +990,16 @@ export class Canvas {
     };
   }
 
+  /** 文字の背景の色 */
+  private fillItem(ids: string[]): MenuItem {
+    const cur = this.v.get(ids[0])?.fill ?? 0;
+    const set = (c: number) => this.v.tx(() => ids.forEach((i) => this.v.update(i, { fill: c })));
+    return {
+      label: T.fill,
+      swatches: Array.from({ length: PRESET_COLORS + 1 }, (_, c) => ({ color: c, title: c ? `${T.fill} ${c}` : T.fillNone, active: c === cur, action: () => set(c) })),
+    };
+  }
+
   private nodeMenu(id: string, x: number, y: number): void {
     const n = this.v.get(id);
     if (!n) return;
@@ -971,7 +1011,9 @@ export class Canvas {
     items.push({ label: T.openBody, action: () => this.host.openBody(id) });
     if (n.type === "card" && n.card?.deck === "tarot")
       items.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
-    items.push(this.colorItem(ids), { separator: true, label: "" });
+    items.push(this.colorItem(ids));
+    if (ids.every((i) => this.v.get(i)?.type === "text")) items.push(this.fillItem(ids));
+    items.push({ separator: true, label: "" });
     items.push({ label: T.bundle, action: () => this.bundleSelection() });
     if (n.type === "group") items.push({ label: T.unbundle, action: () => this.v.unbundle(id) });
     items.push({ label: T.linkSearch, action: () => this.linkBySearch() });

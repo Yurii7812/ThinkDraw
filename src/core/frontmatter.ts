@@ -5,7 +5,7 @@
 import YAML from "yaml";
 import { LINK_KINDS, type Link, type LinkKind, type Member, type NodeType, type Stroke, type TDNode } from "./types";
 
-const KNOWN = new Set(["id", "title", "type", "color", "created", "updated", "members", "refs", "strokes", "links", "card", "spread"]);
+const KNOWN = new Set(["id", "title", "type", "color", "fill", "created", "updated", "members", "refs", "strokes", "links", "card", "spread"]);
 const TYPES: NodeType[] = ["text", "note", "group", "card"];
 
 export class ParseError extends Error {}
@@ -87,6 +87,7 @@ export function parseNode(src: string, fallbackId: string): TDNode {
     title: str(data.title),
     type,
     color: Math.max(0, Math.trunc(num(data.color))),
+    ...(num(data.fill) > 0 ? { fill: Math.trunc(num(data.fill)) } : {}),
     created: str(data.created),
     updated: str(data.updated),
     members,
@@ -149,6 +150,7 @@ export function serializeNode(n: TDNode): string {
   L.push(`title: ${scalar(n.title)}`);
   L.push(`type: ${n.type}`);
   if (n.color) L.push(`color: ${n.color}`);
+  if (n.fill) L.push(`fill: ${n.fill}`);
   if (n.created) L.push(`created: ${scalar(n.created)}`);
   if (n.updated) L.push(`updated: ${scalar(n.updated)}`);
   if (n.type === "group") {

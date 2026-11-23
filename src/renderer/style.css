@@ -127,11 +127,19 @@ input, textarea { font: inherit; color: inherit; }
 .marker { fill: var(--edge); }
 .edgelabel { fill: var(--muted); font-size: 12px; paint-order: stroke; stroke: var(--canvas); stroke-width: 4px; }
 .linkdrag { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 4; }
-.spreadframe { fill: var(--frame); stroke: var(--frame-line); stroke-width: 1; }
+.spreadframe { fill: none; stroke: var(--frame-line); stroke-width: 1; }
 
 /* ノード */
 .node { position: absolute; white-space: nowrap; cursor: pointer; }
-.node.t-text { padding: 2px 4px; font-size: 15px; white-space: pre; border-radius: 4px; border: 1px solid transparent; }
+.node.t-text { text-align: center; padding: 2px 4px; font-size: 15px; white-space: pre; border-radius: 4px; border: 1px solid transparent; }
+.node.t-text.f1 { background: color-mix(in srgb, var(--c1) 28%, transparent); }
+.node.t-text.f2 { background: color-mix(in srgb, var(--c2) 28%, transparent); }
+.node.t-text.f3 { background: color-mix(in srgb, var(--c3) 28%, transparent); }
+.node.t-text.f4 { background: color-mix(in srgb, var(--c4) 28%, transparent); }
+.node.t-text.f5 { background: color-mix(in srgb, var(--c5) 28%, transparent); }
+.node.t-text.f6 { background: color-mix(in srgb, var(--c6) 28%, transparent); }
+.node.t-text.f7 { background: color-mix(in srgb, var(--c7) 28%, transparent); }
+.node.t-text.f8 { background: color-mix(in srgb, var(--c8) 28%, transparent); }
 .node.t-text:hover { background: var(--accent-soft); }
 .node .bodymark { margin-left: 4px; font-size: 11px; color: var(--muted); vertical-align: super; cursor: pointer; }
 .node.t-note {
@@ -189,8 +197,9 @@ input, textarea { font: inherit; color: inherit; }
 .draft {
   position: absolute; font-size: 15px; line-height: 1.5; padding: 2px 4px; margin: 0; resize: none; overflow: hidden;
   border: 1px dashed var(--line); border-radius: 4px; background: transparent; outline: none; min-width: 3em;
-  field-sizing: content; white-space: pre; user-select: text;
+  field-sizing: content; white-space: pre; user-select: text; text-align: center;
 }
+.draftline { stroke: var(--edge); stroke-width: 1.5; pointer-events: none; }
 .draft.for-group { font-weight: 600; background: var(--group); padding: 10px 14px; min-width: 120px; }
 .rubber { position: absolute; border: 1px solid var(--accent); background: var(--accent-soft); pointer-events: none; }
 

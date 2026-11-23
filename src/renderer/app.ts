@@ -563,6 +563,10 @@ class App {
         this.togglePen(false);
         return;
       }
+      if (e.key === "Escape" && this.sideVisible()) {
+        this.toggleSide(false);
+        return;
+      }
       if (e.ctrlKey && k === "z") {
         e.preventDefault();
         if (!this.vault.undo()) toast(T.undoNothing);
