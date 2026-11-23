@@ -5,7 +5,7 @@ import { Canvas, PRESET_COLORS, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
 import { exportGroup, type ExportKind } from "./exporter";
-import { RecordsView, type RecordEntry } from "./records";
+import { findRecordNote, KINDS_FILE, parseKinds, parseRecordTitle, RecordsView, type RecordEntry, type RecordKind } from "./records";
 import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
 import { SHORTCUTS, T } from "./strings";
@@ -29,6 +29,14 @@ interface Config {
   pen?: Partial<PenState>;
 }
 const STATE_FILE = "state.json";
+const HISTORY_MAX = 50; // 戻る・進むで覚える数
+const HISTORY_MENU = 12; // 右クリックの一覧に出す数
+/** 履歴に足す。直前と同じなら足さない(同じグループが続けて並ばない)。古いものから捨てる */
+function pushHist(stack: string[], g: string): void {
+  if (stack[stack.length - 1] === g) return;
+  stack.push(g);
+  if (stack.length > HISTORY_MAX) stack.splice(0, stack.length - HISTORY_MAX);
+}
 
 class App {
   vault!: Vault;
@@ -37,6 +45,7 @@ class App {
   peek: Canvas | null = null;
   private peekWrap: HTMLElement | null = null;
   records: RecordsView | null = null;
+  private kinds: RecordKind[] = [];
   private leftPane!: HTMLElement;
   private leftTitle!: HTMLElement;
   private splitBar: HTMLElement | null = null;
@@ -112,6 +121,7 @@ class App {
     } catch {
       /* 壊れていたら初期値 */
     }
+    this.kinds = parseKinds(await api().readApp(KINDS_FILE));
     this.buildUi();
     if (this.vault.broken.length) toast(T.brokenFiles(this.vault.broken.length), 5000);
     this.vault.onChange((ids) => this.onVaultChange(ids));
@@ -341,6 +351,11 @@ class App {
 
   // ---------- 日記(Ctrl+D): ホーム › 記録 › 2026 › 2026-11 › 2026-11-23 のグループと、その中の「日記」ノート ----------
   /** 今日の日のグループ(なければ作る)。前の版でホームに直接作った年のグループは「記録」の中へ移す */
+  private today(): string {
+    const d = new Date();
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  }
   todayGroup(): string {
     const d = new Date();
     const p2 = (n: number) => String(n).padStart(2, "0");
@@ -366,15 +381,23 @@ class App {
     if (this.records) return this.closeRecords();
     this.closePopup();
     this.canvas.commitDraft("esc");
+    const app = this;
     this.records = new RecordsView({
       vault: this.vault,
+      get kinds() {
+        return app.kinds;
+      },
       kind: this.state.recordKind ?? null,
       onKind: (k) => {
         this.state.recordKind = k;
         this.saveState();
       },
       open: (e) => this.openRecord(e),
-      writeToday: (k) => this.writeToday(k),
+      writeToday: (k) => this.writeRecord(k),
+      saveKinds: (ks) => {
+        this.kinds = ks;
+        void api().writeApp(KINDS_FILE, JSON.stringify({ kinds: ks }, null, 2));
+      },
       close: () => this.closeRecords(),
     });
     this.main.append(this.records.el);
@@ -394,26 +417,50 @@ class App {
       this.openBody(e.id);
     } else this.openGroup(e.type === "group" ? e.id : e.day);
   }
-  /** 今日の◯を書く: 日記はノート(Ctrl+D と同じ)、ほかは今日の日のグループの中に、その名前のグループ */
-  private writeToday(kind: string): void {
-    this.closeRecords();
-    if (kind === T.diaryNote) return this.openToday();
-    const day = this.todayGroup();
-    const g = this.vault.tx(() => this.childGroup(day, kind));
-    this.openGroup(g);
-  }
-
-  openToday(): void {
+  /** 今日のその種類の記録(ノート「2026-11-23-種類」)を開く。なければ作り、上位・下位の記録と線でつなぐ */
+  writeRecord(kind: string): void {
     if (this.records) this.closeRecords();
-    let note = "";
     const day = this.todayGroup();
+    const ymd = this.today();
+    let note = "";
     this.vault.tx(() => {
-      const found = this.vault.itemsOf(day).find((i) => !i.ref && this.vault.get(i.id)?.type === "note" && this.vault.get(i.id)?.title === T.diaryNote);
-      note = found ? found.id : this.vault.create({ type: "note", title: T.diaryNote, group: day, x: 0, y: 0 }).id;
+      note = this.ensureRecordNote(day, ymd, kind);
     });
     this.openGroup(day);
     this.canvas.renderNow();
+    this.canvas.setSelection([note]);
     this.openBody(note);
+  }
+  private ensureRecordNote(day: string, ymd: string, kind: string): string {
+    const found = findRecordNote(this.vault, day, kind);
+    if (found) {
+      // 前の版の名前(「日記」だけ)は「2026-11-23-日記」に直す
+      if (!parseRecordTitle(this.vault.get(found)!.title)) this.vault.update(found, { title: `${ymd}-${kind}` });
+      return found;
+    }
+    const def = this.kinds.find((k) => k.name === kind);
+    const parentNotes = (def?.parents ?? []).map((p) => findRecordNote(this.vault, day, p)).filter((x): x is string => !!x);
+    const childNotes = this.kinds.filter((k) => k.parents.includes(kind)).map((k) => findRecordNote(this.vault, day, k.name)).filter((x): x is string => !!x);
+    // 置き場所: 上位のノートの右に、なければ下位の左に、どちらもなければ下に足す
+    const items = this.vault.itemsOf(day).filter((i) => !i.ref);
+    const posOf = (id: string) => this.vault.itemPos(day, id)!;
+    let x = 0, y = items.length ? Math.max(...items.map((i) => i.y)) + 120 : 0;
+    if (parentNotes.length) {
+      const p = posOf(parentNotes[0]);
+      const sibs = items.filter((i) => i.x > p.x + 100 && Math.abs(i.y - p.y) < 400).length;
+      (x = p.x + 300), (y = p.y + sibs * 110);
+    } else if (childNotes.length) {
+      const c = posOf(childNotes[0]);
+      (x = c.x - 300), (y = c.y);
+    }
+    const id = this.vault.create({ type: "note", title: `${ymd}-${kind}`, group: day, x, y }).id;
+    for (const p of parentNotes) this.vault.addLink(p, id);
+    for (const c of childNotes) this.vault.addLink(id, c);
+    return id;
+  }
+
+  openToday(): void {
+    this.writeRecord(T.diaryNote);
   }
   /** parent の中の、名前が title のグループ(なければ作る。並びは日付順になるよう、下へ足す) */
   private childGroup(parent: string, title: string): string {
@@ -438,7 +485,7 @@ class App {
     if (this.vault.get(id)?.type !== "group") return;
     this.closePopup();
     if (id !== this.canvas.group) {
-      this.backStack.push(this.canvas.group);
+      pushHist(this.backStack, this.canvas.group);
       this.fwdStack = [];
       this.showGroup(id, "in");
     }
@@ -454,25 +501,28 @@ class App {
   back(): void {
     const g = this.backStack.pop();
     if (!g) return;
-    this.fwdStack.push(this.canvas.group);
+    pushHist(this.fwdStack, this.canvas.group);
     this.showGroup(this.vault.exists(g) ? g : ROOT_ID, "out");
   }
   /** ← / → の右クリック: 履歴の一覧。近い順。押すとそこまで一度に戻る/進む */
   private historyMenu(anchor: HTMLElement, dir: "back" | "fwd"): void {
     const stack = dir === "back" ? this.backStack : this.fwdStack;
-    const items: MenuItem[] = [...stack].reverse().map((g, i) => ({
+    // ブラウザと同じく、近いものから決まった数だけ(古い分は「ほか N 件」)
+    const all = [...stack].reverse();
+    const items: MenuItem[] = all.slice(0, HISTORY_MENU).map((g, i) => ({
       label: this.groupName(g),
       action: () => {
         const from = dir === "back" ? this.backStack : this.fwdStack;
         const to = dir === "back" ? this.fwdStack : this.backStack;
         let cur = this.canvas.group; // 途中は表示せずに通り過ぎる
         for (let k = 0; k <= i && from.length; k++) {
-          to.push(cur);
+          pushHist(to, cur);
           cur = from.pop()!;
         }
         this.showGroup(this.vault.exists(cur) ? cur : ROOT_ID, dir === "back" ? "out" : "in");
       },
     }));
+    if (all.length > HISTORY_MENU) items.push({ separator: true } as MenuItem, { label: T.historyMore(all.length - HISTORY_MENU), disabled: true } as MenuItem);
     if (!items.length) items.push({ label: T.historyEmpty, disabled: true } as MenuItem);
     const r = anchor.getBoundingClientRect();
     showMenu(r.left, r.bottom + 2, items);
@@ -504,7 +554,7 @@ class App {
   forward(): void {
     const g = this.fwdStack.pop();
     if (!g) return;
-    this.backStack.push(this.canvas.group);
+    pushHist(this.backStack, this.canvas.group);
     this.showGroup(this.vault.exists(g) ? g : ROOT_ID, "in");
   }
   /** そのノード(が含まれるグループ)へ移る。home = 引用ではなく、所属しているグループへ */

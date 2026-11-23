@@ -325,7 +325,7 @@ test("Ctrl+D: 今日の日記(年 › 月 › 日 のグループの「日記」
   await expect(page.locator(".popup.expanded")).toBeVisible();
   await page.keyboard.press("Escape");
   await settle();
-  const diaries = Object.values(mdFiles()).filter((t) => t.includes("title: 日記\n"));
+  const diaries = Object.values(mdFiles()).filter((t) => t.includes(`title: ${ymd}-日記\n`));
   expect(diaries).toHaveLength(1);
   expect(diaries[0]).toContain("今日のこと");
   expect(titles().map((t) => (t ?? "").replace(/"/g, ""))).toEqual(expect.arrayContaining([String(d.getFullYear()), ymd.slice(0, 7), ymd]));
@@ -439,35 +439,48 @@ test("空きの右クリックでグループを作る", async () => {
   await expect(page.locator(".node.t-group", { hasText: "新しい箱" })).toHaveCount(1);
 });
 
-test("記録一覧: 日記は 記録 › 年 › 月 › 日。一覧から開く・種類で絞る・今日の夢を作る", async () => {
+test("記録一覧: 日記は 記録 › 年 › 月 › 日。種類を足す(上位は複数)・今日を書く・一覧から開く・絞る", async () => {
+  const d = new Date();
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  const ymd = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
   await page.keyboard.press("Control+d");
   await page.keyboard.type("今日あったこと");
   await page.keyboard.press("Escape");
   await settle();
-  expect(titles()).toContain("記録");
+  expect(titles()).toEqual(expect.arrayContaining(["記録", `${ymd}-日記`]));
   await page.keyboard.press("Control+j");
   await expect(page.locator(".records")).toBeVisible();
   await expect(page.locator(".rec-row")).toHaveCount(1);
   await expect(page.locator(".rec-row")).toContainText("今日あったこと");
-  // 今日の夢を作る(種類の名前を変えて書く)
-  await page.locator(".rec-chip", { hasText: "日記" }).click();
-  await page.locator(".rec-actions .btn").click(); // 今日の日記を書く
+  // 種類を足す: 夢日記(上位 = 日記)
+  await page.locator(".rec-actions .btn", { hasText: "種類を編集" }).click();
+  await page.locator(".modal.kinds .btn", { hasText: "種類を足す" }).click();
+  await page.keyboard.type("夢日記");
+  await page.locator(".modal.kinds input.kind-name").last().press("Tab");
+  await page.locator(".modal.kinds .kind-row").last().locator("label", { hasText: "日記" }).click();
+  await page.locator(".modal.kinds .btn.primary").click();
+  await expect(page.locator(".rec-chip", { hasText: "夢日記" })).toHaveCount(1);
+  await page.locator(".rec-write", { hasText: "夢日記" }).click();
   await expect(page.locator(".popup.expanded")).toBeVisible();
   await page.keyboard.press("Escape");
-  await page.mouse.click(500, 400, { button: "right" });
-  await page.locator(".ctxmenu .item", { hasText: "グループを作る" }).click();
-  await page.keyboard.type("夢");
-  await page.keyboard.press("Enter");
-  await page.keyboard.press("Escape");
+  await settle();
+  const files = mdFiles();
+  expect(titles()).toContain(`${ymd}-夢日記`);
+  expect(files[idOf(`${ymd}-日記`) + ".md"]).toContain(`to: ${idOf(`${ymd}-夢日記`)}`); // 上位から線
+  await expect(page.locator(".node.t-note")).toHaveCount(2);
+  // 一覧: 日記で絞ると下位(夢日記)も出る
   await page.keyboard.press("Control+j");
-  await page.locator(".rec-chip", { hasText: "すべて" }).click(); // 絞り込みは覚えているので戻す
+  await page.locator(".rec-chip", { hasText: "すべて" }).click();
   await expect(page.locator(".rec-row")).toHaveCount(2);
-  await page.locator(".rec-chip", { hasText: "夢" }).click();
+  await page.locator(".rec-chip[data-kind='日記']").click();
+  await expect(page.locator(".rec-row")).toHaveCount(2);
+  await page.locator(".rec-chip[data-kind='夢日記']").click();
   await expect(page.locator(".rec-row")).toHaveCount(1);
   await shot("11-records");
   await page.locator(".rec-row").click();
   await expect(page.locator(".records")).toHaveCount(0);
-  await expect(page.locator(".group-title")).toHaveText("夢");
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await page.keyboard.press("Escape");
   // Esc で閉じる
   await page.keyboard.press("Control+j");
   await page.keyboard.press("Escape");
