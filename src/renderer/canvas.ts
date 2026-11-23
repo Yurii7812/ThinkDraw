@@ -447,7 +447,7 @@ export class Canvas {
     try {
       if (id) {
         if (!text.trim()) {
-          if (this.v.get(id)?.type === "text") this.v.trash([id]);
+          if (this.v.get(id)?.type === "text") this.deleteItems([id]);
           id = null;
         } else this.v.update(id, { title: text });
       } else if (text.trim()) {
@@ -925,6 +925,19 @@ export class Canvas {
     this.draft!.ta.classList.add("for-group");
   }
 
+  /** 消す: 引用はこのグループから外すだけ(元のノードは消さない)。引用でないものはゴミ箱へ */
+  deleteItems(ids: string[], tell = false): void {
+    const refs = ids.filter((i) => this.v.isRefIn(this.group, i));
+    const own = ids.filter((i) => !refs.includes(i));
+    this.v.tx(() => {
+      for (const i of refs) this.v.removeRef(this.group, i);
+      if (own.length) this.v.trash(own);
+    });
+    if (!tell) return;
+    if (own.length) toast(T.trashed(own.length) + (refs.length ? T.refsRemoved(refs.length) : ""));
+    else if (refs.length) toast(T.refsRemoved(refs.length));
+  }
+
   // ---------- キー ----------
   handleKey(e: KeyboardEvent): boolean {
     if (this.draft) return false;
@@ -934,10 +947,9 @@ export class Canvas {
     if (e.key === "Delete" || e.key === "Backspace") {
       if (!ids.length && !this.strokeSel.size) return false;
       this.v.tx(() => {
-        this.v.trash(ids);
+        this.deleteItems(ids, true);
         this.v.removeStrokes(this.group, [...this.strokeSel]);
       });
-      if (ids.length) toast(T.trashed(ids.length));
       return true;
     }
     if (e.ctrlKey && k === "a") {
@@ -1073,11 +1085,8 @@ export class Canvas {
       });
     }
     items.push({ separator: true, label: "" }, {
-      label: T.delete,
-      action: () => {
-        this.v.trash(ids);
-        toast(T.trashed(ids.length));
-      },
+      label: ids.every((i) => this.v.isRefIn(this.group, i)) ? T.deleteRef : T.delete,
+      action: () => this.deleteItems(ids, true),
     });
     showMenu(x, y, items);
   }

@@ -397,3 +397,26 @@ test("右クリックで一覧: ↑ は上のグループ、← は戻れる先"
   await page.locator(".i-fwd").click({ button: "right" });
   await expect(page.locator(".ctxmenu .item")).toHaveCount(2);
 });
+
+test("引用を Delete で消しても、元のノードは消えない(引用だけ外れる)", async () => {
+  await write(300, 200, "元の話");
+  await page.locator(".node", { hasText: "元の話" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("元の箱");
+  await page.keyboard.press("Escape");
+  await write(300, 450, "ここ");
+  await page.locator(".node", { hasText: "ここ" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+l");
+  await page.keyboard.type("元の話");
+  await page.keyboard.press("Enter");
+  const ref = page.locator(".node.ref", { hasText: "元の話" });
+  await expect(ref).toHaveCount(1);
+  await ref.click({ button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: /^削除/ }).click();
+  await expect(ref).toHaveCount(0);
+  await settle();
+  expect(titles()).toContain("元の話");
+  expect(mdFiles()["root.md"]).not.toContain("refs:");
+  await page.locator(".node.t-group", { hasText: "元の箱" }).dblclick();
+  await expect(page.locator(".node", { hasText: "元の話" })).toHaveCount(1);
+});
