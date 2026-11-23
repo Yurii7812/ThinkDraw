@@ -615,36 +615,6 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 
 /* 全体の画面(見るだけ) */
 .whole-pane { min-width: 0; }
-.whole { flex: 1; position: relative; overflow: hidden; outline: none; background: var(--canvas); cursor: grab; }
-.whole.panning { cursor: grabbing; }
-.wh-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.wh-edges { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
-.wh-edge { stroke: var(--edge); stroke-width: 2; fill: none; }
-.wh-edge.b0 { stroke: color-mix(in srgb, var(--c1) 70%, var(--edge)); } .wh-node.grp.b0 { border-color: color-mix(in srgb, var(--c1) 60%, var(--line)); box-shadow: inset 3px 0 0 var(--c1); }
-.wh-edge.b1 { stroke: color-mix(in srgb, var(--c2) 70%, var(--edge)); } .wh-node.grp.b1 { border-color: color-mix(in srgb, var(--c2) 60%, var(--line)); box-shadow: inset 3px 0 0 var(--c2); }
-.wh-edge.b2 { stroke: color-mix(in srgb, var(--c3) 70%, var(--edge)); } .wh-node.grp.b2 { border-color: color-mix(in srgb, var(--c3) 60%, var(--line)); box-shadow: inset 3px 0 0 var(--c3); }
-.wh-edge.b3 { stroke: color-mix(in srgb, var(--c4) 70%, var(--edge)); } .wh-node.grp.b3 { border-color: color-mix(in srgb, var(--c4) 60%, var(--line)); box-shadow: inset 3px 0 0 var(--c4); }
-.wh-edge.b4 { stroke: color-mix(in srgb, var(--c5) 70%, var(--edge)); } .wh-node.grp.b4 { border-color: color-mix(in srgb, var(--c5) 60%, var(--line)); box-shadow: inset 3px 0 0 var(--c5); }
-.wh-edge.b5 { stroke: color-mix(in srgb, var(--c6) 70%, var(--edge)); } .wh-node.grp.b5 { border-color: color-mix(in srgb, var(--c6) 60%, var(--line)); box-shadow: inset 3px 0 0 var(--c6); }
-.wh-edge.b6 { stroke: color-mix(in srgb, var(--c7) 70%, var(--edge)); } .wh-node.grp.b6 { border-color: color-mix(in srgb, var(--c7) 60%, var(--line)); box-shadow: inset 3px 0 0 var(--c7); }
-.wh-edge.b7 { stroke: color-mix(in srgb, var(--c8) 70%, var(--edge)); } .wh-node.grp.b7 { border-color: color-mix(in srgb, var(--c8) 60%, var(--line)); box-shadow: inset 3px 0 0 var(--c8); }
-
-.wh-edge.k-up { stroke-width: 2.5; }
-.wh-edge.k-cross { stroke: var(--accent); stroke-dasharray: 6 5; }
-.wh-edge.k-extra { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.7; }
-.wh-nodes { position: absolute; left: 0; top: 0; }
-.wh-node { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; padding: 2px 6px; background: var(--canvas); border-radius: 6px; font-size: 15px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
-.wh-node:hover { background: var(--accent-soft); }
-.wh-node.far-d { opacity: 0.75; font-size: 14px; }
-.wh-node.grp { padding: 4px 12px; border: 1px solid var(--line); background: var(--group); font-weight: 700; font-size: 14px; }
-.wh-node.root { padding: 6px 14px; border: 1.5px solid var(--accent); font-size: 18px; box-shadow: 0 0 0 6px var(--accent-soft); }
-.wh-node.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
-.wh-node.more { transform: none; left: 0; top: 0; color: var(--muted); font-size: 12px; }
-.wh-tag { font-size: 11px; font-weight: 500; color: var(--muted); }
-.whole.far .wh-node:not(.grp) .wh-label, .whole.far .wh-node:not(.grp) .ico { display: none; }
-.whole.far .wh-node:not(.grp) { width: 8px; height: 8px; padding: 0; border-radius: 50%; background: var(--edge); }
-.whole.far .wh-node.grp { font-size: 28px; }
-.wh-ghost { position: fixed; z-index: 70; pointer-events: none; background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 3px 8px; font-size: 13px; box-shadow: var(--shadow); }
 .main.whole-full .left-pane, .main.whole-full .split-bar { display: none; }
 .main.whole-full .whole-pane { flex: 1; }
 .whole-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -661,3 +631,17 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .node.t-text.file { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; border: 1px solid var(--line); background: var(--panel); padding: 6px 10px; border-radius: 8px; }
 .node.t-text.file .file-img { max-width: 220px; max-height: 160px; border-radius: 4px; display: block; pointer-events: none; }
 .node.t-text.file .clip { opacity: 0.7; }
+
+/* まわり(今のグループはそのまま、外につながりを広げる) */
+.node.outer { transform: translate(-50%, -50%); }
+.node.outer.t-text { background: var(--canvas); }
+.node.outer:hover { box-shadow: 0 0 0 1.5px var(--accent); border-radius: 6px; }
+.node.outer.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+.outer-home { font-size: 11px; font-weight: 400; color: var(--muted); text-align: center; white-space: nowrap; margin-top: 2px; }
+.node.outer.t-text { display: inline-flex; flex-direction: column; align-items: center; }
+.edges .inner-frame { fill: none; stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 8 8; }
+.edges .outer-edge { stroke: var(--edge); stroke-width: 1.5; }
+.edges .outer-edge.k-member { stroke-dasharray: 5 6; opacity: 0.8; }
+.tbtn.surround-btn { white-space: nowrap; font-size: 13px; color: var(--fg); border: 1px solid var(--line); padding: 0 10px; }
+.tbtn.surround-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.whole-canvas { flex: 1; }

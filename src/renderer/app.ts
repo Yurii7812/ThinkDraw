@@ -8,7 +8,6 @@ import { exportGroup, type ExportKind } from "./exporter";
 import { cleanKind, DATE } from "../core/records";
 import { findRecordNote, KINDS_FILE, parseKinds, parseRecordTitle, RecordsView, type RecordEntry, type RecordKind } from "./records";
 import { showGroupTree } from "./grouptree";
-import { WholeView } from "./whole";
 import type { Rect } from "../core/placement";
 import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
@@ -26,6 +25,7 @@ interface AppState {
   peekGroup?: string | null; // 横に開いているグループ
   recordKind?: string | null; // 記録一覧の絞り込み
   splitRatio?: number; // 画面を分けたときの左の幅の割合
+  surround?: boolean; // 左の画面で「まわり」を出しているか
 }
 interface Config {
   theme?: Theme;
@@ -54,7 +54,7 @@ class App {
   private leftTitle!: HTMLElement;
   private splitBar: HTMLElement | null = null;
   /** 全体の画面(見るだけ)。分割の右側か、全画面 */
-  whole: WholeView | null = null;
+  whole: Canvas | null = null;
   private wholeWrap: HTMLElement | null = null;
   private peekTitle: HTMLElement | null = null;
   side!: SidePanel;
@@ -139,6 +139,7 @@ class App {
     await api().watch();
     const g = this.vault.get(this.state.lastGroup)?.type === "group" ? this.state.lastGroup : ROOT_ID;
     this.canvas.show(g, this.state.views[g] ?? null);
+    if (this.state.surround) this.toggleSurround(true);
     const pg = this.state.peekGroup;
     if (pg && this.vault.get(pg)?.type === "group") this.openPeek(pg);
     this.updateBar();
@@ -189,6 +190,7 @@ class App {
         btn("records-btn", T.recordsTip, () => this.toggleRecords(), T.recordsBtn),
         this.btnPen,
         btn("beside", T.besideTip, () => this.toggleBeside(), T.besideBtn),
+        btn("surround-btn", T.surroundTip, () => this.toggleSurround(), T.surroundBtn),
         btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn),
         btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn),
         h("div", { class: "split" }, this.btnDraw, caret),
@@ -538,7 +540,11 @@ class App {
   }
   private showGroup(id: string, anim: "in" | "out"): void {
     this.canvas.show(id, this.state.views[id] ?? null, anim);
-    this.whole?.setCenter(id); // 全体の画面は、左の画面のグループを真ん中に
+    if (this.whole) {
+      // 全体の画面(右)は、左の画面と同じグループを見せる
+      this.whole.show(id, null);
+      this.whole.fitAll();
+    }
     this.state.lastGroup = id;
     this.saveState();
     this.updateBar();
@@ -789,6 +795,15 @@ class App {
     this.saveState();
     this.canvas.el.focus({ preventScroll: true });
   }
+  /** 「まわり」: この画面のまま、つながりを外へ広げて見る(外の物は見るだけ。ドラッグで引用) */
+  toggleSurround(on = !this.canvas.surround): void {
+    this.canvas.setSurround(on);
+    document.querySelector(".tbtn.surround-btn")?.classList.toggle("on", on);
+    this.state.surround = on;
+    this.saveState();
+    if (on) this.canvas.fitAll();
+  }
+
   // ---------- 全体の画面(見るだけ) ----------
   toggleWhole(): void {
     if (this.whole) this.closeWhole();
@@ -799,28 +814,46 @@ class App {
     const full = h("button", { class: "tbtn whole-full-btn", title: T.wholeFullTip, "aria-label": T.wholeFullTip, text: "⛶" });
     full.addEventListener("click", () => this.main.classList.toggle("whole-full"));
     const fit = h("button", { class: "tbtn", title: T.fitAll, "aria-label": T.fitAll, text: "◎" });
-    fit.addEventListener("click", () => this.whole?.fit());
+    fit.addEventListener("click", () => this.whole?.fitAll());
     const close = h("button", { class: "tbtn whole-close", title: T.wholeClose, "aria-label": T.wholeClose, text: "×" });
     close.addEventListener("click", () => this.closeWhole());
     const head = h("div", { class: "pane-head" }, h("span", { class: "pane-title whole-title", text: T.wholeTitle }), h("span", { class: "muted small whole-hint", text: T.wholeHint }), h("span", { class: "pane-space" }), fit, full, close);
-    this.whole = new WholeView({
-      vault: this.vault,
-      open: (g, focus) => {
-        this.main.classList.remove("whole-full");
-        this.openGroup(g, focus);
-        if (focus) this.canvas.setSelection([focus]);
+    this.wholeWrap = h("div", { class: "pane whole-pane" }, head);
+    // 右側は、左と同じグループを、そのままの見た目で、まわりのつながりまで広げて見せる(見るだけ)
+    const w = new Canvas(
+      {
+        vault: this.vault,
+        openGroup: (g) => {
+          this.main.classList.remove("whole-full");
+          this.openGroup(g);
+        },
+        openBody: (id) => this.openBody(id),
+        goToNode: (id) => {
+          this.main.classList.remove("whole-full");
+          this.goToNode(id, false, true);
+        },
+        pickGroup: async () => null,
+        cardHover: (id, e) => cardTip(this.vault, id, e),
+        onViewChange: () => {},
+        onSelectionChange: () => {},
+        dropOutside: (ids, cx, cy, link) => this.dropInto(w, this.canvas, ids, cx, cy, link),
+        dragOutside: (ids, cx, cy) => this.dragOver(this.canvas, cx, cy, ids),
       },
-      dropOut: (id, cx, cy) => this.dropInto({ rectOf: () => undefined }, this.canvas, [id], cx, cy, true),
-    });
-    this.wholeWrap = h("div", { class: "pane whole-pane" }, head, this.whole.el);
+      this.wholeWrap,
+    );
+    w.readOnly = true;
+    w.el.classList.add("whole-canvas");
+    w.surround = true;
+    w.el.classList.add("surround");
+    this.whole = w;
     this.splitBar = h("div", { class: "split-bar", title: T.splitBarTip });
     this.splitBar.addEventListener("pointerdown", (e) => this.dragSplit(e));
     this.splitBar.addEventListener("dblclick", () => this.setSplit(0.5));
     this.leftPane.after(this.splitBar, this.wholeWrap);
     this.main.classList.add("split");
     this.setSplit(this.state.splitRatio ?? 0.5);
-    this.whole.setCenter(this.canvas.group);
-    this.whole.fit();
+    w.show(this.canvas.group, null);
+    w.fitAll();
   }
   closeWhole(): void {
     this.wholeWrap?.remove();
@@ -836,7 +869,7 @@ class App {
   private wholeSoon(): void {
     if (!this.whole) return;
     clearTimeout(this.wholeTimer);
-    this.wholeTimer = setTimeout(() => this.whole?.render(), 200);
+    this.wholeTimer = setTimeout(() => this.whole?.requestRender(), 200);
   }
 
   /** 左右どちらを今使っているか(見出しに色を付けるだけ) */

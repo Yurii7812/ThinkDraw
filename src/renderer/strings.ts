@@ -24,6 +24,9 @@ export const T = {
   // 右クリックのメニュー
   openBody: "ノートを書く",
   openNote: "ノートを開く",
+  outerQuoteHere: "ここに引用する",
+  surroundBtn: "まわり",
+  surroundTip: "この画面のまま、つながり(リンク・バックリンク・ほかの所属先・引用)を外へ広げて見る",
   openFile: "ファイルを開く",
   attachHere: "ここにファイルを添付…",
   attached: (n: number) => `${n} 件を添付しました(assets/ に保存)`,
@@ -45,7 +48,7 @@ export const T = {
   wholeBtn: "全体",
   wholeTip: "全体の画面(今のグループのまわりを見る。見るだけ)",
   wholeTitle: "全体",
-  wholeHint: "見るだけ。つながりをたどれる限り広げます。左へドラッグで引用、ダブルクリックで開く",
+  wholeHint: "見るだけ。左と同じグループのまわりに、つながりを広げます。左へドラッグで引用、ダブルクリックで開く",
   wholeFullTip: "全画面にする/戻す(Esc で戻る)",
   wholeClose: "全体の画面を閉じる",
   wholeOpenTip: "このグループを左の画面で開く",
