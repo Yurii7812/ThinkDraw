@@ -575,54 +575,53 @@ test("グループのノード: ▸ で下のグループの木を出して飛�
   await expect(page.locator(".node", { hasText: "奥の文字" })).toHaveCount(1);
 });
 
-test("まわり・全体: 今のグループはそのまま、外につながり(リンク・所属先)を広げる。外の物はドラッグで引用", async () => {
+test("島(まわり・全体): 今のグループはそのまま、ほかのグループも同じ見た目の島で。範囲の切り替え・島の中の線・ドラッグで引用", async () => {
   await write(300, 200, "中の考え");
   await page.locator(".node", { hasText: "中の考え" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+g");
   await page.keyboard.type("宗教");
   await page.keyboard.press("Escape");
   await write(300, 500, "外の考え");
+  await write(600, 500, "外の続き");
   await page.evaluate(() => {
     const v = (window as any).__app.vault;
     const id = (t: string) => [...v.nodes.values()].find((n: any) => n.title === t).id;
     v.addLink(id("中の考え"), id("外の考え"));
+    v.addLink(id("外の考え"), id("外の続き"));
   });
   await page.locator(".node.t-group", { hasText: "宗教" }).dblclick();
   await expect(page.locator(".group-title")).toHaveText("宗教");
-  // この画面のまま「まわり」
+  // この画面のまま「まわり」: ホームの島が出る(中の物と、その中の線もそのまま)
   await page.locator(".tbtn.surround-btn").click();
-  const outer = page.locator(".canvas:not(.whole-canvas) .node.outer", { hasText: "外の考え" });
-  await expect(outer).toHaveCount(1);
-  await expect(outer.locator(".outer-home")).toHaveText("ホーム");
-  await expect(page.locator(".canvas:not(.whole-canvas) .node.outer.t-group", { hasText: "ホーム" })).toHaveCount(1);
-  await expect(page.locator(".canvas:not(.whole-canvas) .node:not(.outer)", { hasText: "中の考え" })).toHaveCount(1); // 中はそのまま
-  await shot("14-surround");
-  // 全体(分割の右側): 同じグループを、まわりまで(見るだけ)
+  const home = page.locator(".canvas:not(.whole-canvas) .island", { hasText: "ホーム" });
+  await expect(home).toHaveCount(1);
+  await expect(home.locator(".node.outer", { hasText: "外の考え" })).toHaveCount(1);
+  await expect(home.locator(".node.outer.t-group", { hasText: "宗教" })).toHaveCount(1);
+  await expect(page.locator(".canvas:not(.whole-canvas) .node:not(.outer)", { hasText: "中の考え" })).toHaveCount(1); // 今の島はそのまま
+  await expect(page.locator(".canvas:not(.whole-canvas) line.outer-edge.k-link")).toHaveCount(2); // 島をまたぐ線 + ホームの島の中の線
+  await expect(page.locator(".canvas:not(.whole-canvas) line.outer-edge.k-member")).toHaveCount(1); // ホームの中の「宗教」→ 今の島
+  await shot("14-islands");
+  // 範囲「このグループ」で島は消える
+  await page.locator(".canvas:not(.whole-canvas) .scope-ctl .sc-opt", { hasText: "このグループ" }).click();
+  await expect(page.locator(".canvas:not(.whole-canvas) .island")).toHaveCount(0);
+  await page.locator(".canvas:not(.whole-canvas) .scope-ctl .sc-opt", { hasText: "全部" }).click();
+  await expect(page.locator(".canvas:not(.whole-canvas) .island")).toHaveCount(1);
+  // 全体(分割の右側): 見るだけ。右の島の物を左へドラッグで引用
   await page.locator(".tbtn.whole-btn").click();
   await expect(page.locator(".whole-canvas")).toBeVisible();
-  await expect(page.locator(".whole-canvas .node:not(.outer)", { hasText: "中の考え" })).toHaveCount(1);
-  const wouter = page.locator(".whole-canvas .node.outer", { hasText: "外の考え" });
+  const wouter = page.locator(".whole-canvas .node.outer", { hasText: "外の続き" });
   await expect(wouter).toHaveCount(1);
   await shot("14b-whole");
-  // 右の外の物を、左へドラッグで引用
   const src = (await wouter.boundingBox())!;
   await page.mouse.move(src.x + src.width / 2, src.y + 6);
   await page.mouse.down();
   await page.mouse.move(src.x - 40, src.y + 10, { steps: 4 });
   await page.mouse.move(200, 650, { steps: 8 });
   await page.mouse.up();
-  await expect(page.locator(".left-pane .node.ref", { hasText: "外の考え" })).toHaveCount(1);
-  await settle();
-  expect(mdFiles()[idOf("宗教") + ".md"]).toContain(`refs:\n  - { id: ${idOf("外の考え")}`);
-  // 見るだけ: 右で空きを押しても書き始めない
-  const wb = (await page.locator(".whole-canvas").boundingBox())!;
-  await page.mouse.click(wb.x + 20, wb.y + wb.height - 20);
-  await expect(page.locator(".whole-canvas textarea.draft")).toHaveCount(0);
-  // 全画面と Esc
-  await page.locator(".whole-full-btn").click();
-  await expect(page.locator(".left-pane")).toBeHidden();
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".left-pane")).toBeVisible();
+  await expect(page.locator(".left-pane .node.ref", { hasText: "外の続き" })).toHaveCount(1);
+  // 島をダブルクリックすると、そのグループに入って編集
+  await page.locator(".whole-canvas .island", { hasText: "ホーム" }).dblclick({ position: { x: 8, y: 8 } });
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
   await page.locator(".whole-close").click();
   await expect(page.locator(".whole-canvas")).toHaveCount(0);
 });

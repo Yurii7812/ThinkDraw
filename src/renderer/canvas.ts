@@ -8,7 +8,7 @@ import { cardFace, faceHeight } from "./cardface";
 import { openPicker } from "./picker";
 import { T } from "./strings";
 import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
-import { computeSurround, type OuterEdge, type OuterNode } from "./surround";
+import { pickIslands, placeIslands } from "../core/islands";
 
 export interface View {
   x: number; // 画面 = 世界 * z + (x, y)
@@ -41,6 +41,8 @@ export interface CanvasHost {
   quoteToOther?(ids: string[]): void;
   /** この画面の外(横の画面)へ落としたとき。受け取ったら true */
   dropOutside?(ids: string[], cx: number, cy: number, link: boolean): boolean;
+  /** 島の範囲を変えたとき(覚えるため) */
+  onScopeChange?(n: number): void;
   /** 添付のファイルを、その種類のふつうのアプリで開く */
   openFile?(rel: string): void;
   /** グループの ▸: 下のグループの木を出す */
@@ -134,7 +136,6 @@ export class Canvas {
   /** 見るだけ(全体の画面の右側)。書く・動かす・消すはできない */
   readOnly = false;
   private outerLayer: HTMLElement;
-  private outer: { nodes: OuterNode[]; edges: OuterEdge[]; box: Rect } | null = null;
   private draft: Draft | null = null;
   private renderQueued = false;
 
@@ -168,6 +169,8 @@ export class Canvas {
   }
   private applyView(): void {
     this.world.style.transform = `translate(${this.view.x}px, ${this.view.y}px) scale(${this.view.z})`;
+    // 縮めたとき、島の名前は読める大きさに保つ
+    this.el.style.setProperty("--inv-z", String(Math.min(5, Math.max(1, 1 / this.view.z))));
     this.host.onViewChange(this.group, { ...this.view });
   }
   setView(v: View): void {
@@ -196,7 +199,7 @@ export class Canvas {
   }
 
   private allBoxes(): Rect[] {
-    const outer = (this.outer?.nodes ?? []).map((o) => ({ x: o.x - 60, y: o.y - 14, w: 120, h: 28 }));
+    const outer = this.surround ? this.islands.map((i) => i.box) : [];
     return [...this.rects.values(), ...this.v.strokesOf(this.group).map(strokeBox), ...outer];
   }
 
@@ -307,58 +310,149 @@ export class Canvas {
     this.renderStrokes();
   }
 
-  // ---------- まわり(つながりを外へ広げる。2026-11-23 利用者と決めた) ----------
+  // ---------- 島(全体・まわり。2026-11-23 利用者と決めた A2) ----------
+  // 今のグループの島はいつものキャンバスそのまま。ほかのグループも、開いたときと同じ位置・見た目・線のまま島として並べる。
+  // 島をまたぐ線は、まっすぐ(曲線は使わない)。所属は、親の島の中のグループのノードから、その島の縁への点線。
   setSurround(on: boolean): void {
     this.surround = on;
     this.el.classList.toggle("surround", on);
+    this.renderScopeCtl();
     this.renderNow();
   }
+  /** 範囲: 0 = このグループ、1 = ＋1、2 = ＋2、Infinity = 全部 */
+  scope = 1;
+  setScope(n: number): void {
+    this.scope = n;
+    this.renderScopeCtl();
+    this.renderNow();
+    this.fitAll();
+    this.host.onScopeChange?.(n);
+  }
+  private scopeCtl: HTMLElement | null = null;
+  private renderScopeCtl(): void {
+    this.scopeCtl?.remove();
+    this.scopeCtl = null;
+    if (!this.surround) return;
+    const opts: [string, number][] = [[T.scopeThis, 0], ["＋1", 1], ["＋2", 2], [T.scopeAll, Infinity]];
+    const ctl = h("div", { class: "scope-ctl", role: "group", "aria-label": T.scopeLabel });
+    for (const [label, n] of opts) {
+      const b = h("button", { class: "sc-opt" + (this.scope === n ? " on" : ""), text: label, "data-scope": String(n) });
+      b.addEventListener("pointerdown", (e) => e.stopPropagation());
+      b.addEventListener("click", () => this.setScope(n));
+      ctl.append(b);
+    }
+    ctl.addEventListener("pointerdown", (e) => e.stopPropagation());
+    this.el.append(ctl);
+    this.scopeCtl = ctl;
+  }
+
+  private islands: { group: string; box: Rect; nodes: { id: string; el: HTMLElement }[] }[] = [];
+  private curBox: Rect | null = null;
   private renderOuter(): void {
     this.outerLayer.replaceChildren();
-    if (!this.surround) {
-      this.outer = null;
-      return;
-    }
-    this.outer = computeSurround(this.v, this.group, this.rects);
-    for (const o of this.outer.nodes) {
-      const n = this.v.get(o.id);
-      if (!n) continue;
-      const el = this.nodeEl(n, false);
-      el.removeAttribute("data-id");
-      el.dataset.oid = o.id;
-      el.classList.add("outer");
-      el.style.left = o.x + "px";
-      el.style.top = o.y + "px";
-      if (o.home && o.home !== this.group) el.append(h("div", { class: "outer-home", text: this.v.get(o.home)?.title || (o.home === ROOT_ID ? T.home : T.untitledGroup) }));
+    this.islands = [];
+    this.curBox = null;
+    if (!this.surround) return;
+    const PAD = 28, HEAD = 26;
+    // 今の島の箱(中の物がちょうど入る大きさ)
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const r of this.rects.values()) (x0 = Math.min(x0, r.x)), (y0 = Math.min(y0, r.y)), (x1 = Math.max(x1, r.x + r.w)), (y1 = Math.max(y1, r.y + r.h));
+    if (!isFinite(x0)) (x0 = y0 = 0), (x1 = 200), (y1 = 80);
+    const cur = { x: x0 - PAD, y: y0 - PAD - HEAD, w: x1 - x0 + PAD * 2, h: y1 - y0 + PAD * 2 + HEAD };
+    this.curBox = cur;
+    const curName = h("div", { class: "island-name cur", text: this.group === ROOT_ID ? T.home : this.v.get(this.group)?.title || T.untitledGroup });
+    curName.style.left = cur.x + 14 + "px";
+    curName.style.top = cur.y + 8 + "px";
+    this.outerLayer.append(curName);
+    const picks = pickIslands(this.v, this.group, this.scope);
+    // ほかの島を作って、大きさを測る
+    const built: { group: string; el: HTMLElement; nodes: { id: string; el: HTMLElement }[] }[] = [];
+    const sizes = new Map<string, { w: number; h: number }>();
+    for (const pk of picks.slice(1)) {
+      const items = this.v.itemsOf(pk.group).filter((i) => this.v.exists(i.id));
+      let mx = Infinity, my = Infinity;
+      for (const i of items) (mx = Math.min(mx, i.x)), (my = Math.min(my, i.y));
+      if (!isFinite(mx)) mx = my = 0;
+      const el = h("div", { class: "island", "data-ig": pk.group }, h("div", { class: "island-name", text: pk.group === ROOT_ID ? T.home : this.v.get(pk.group)?.title || T.untitledGroup }));
+      const nodes: { id: string; el: HTMLElement }[] = [];
+      for (const it of items) {
+        const n = this.v.get(it.id)!;
+        const ne = this.nodeEl(n, it.ref);
+        ne.removeAttribute("data-id");
+        ne.dataset.oid = it.id;
+        ne.dataset.ig = pk.group;
+        ne.classList.add("outer");
+        ne.style.left = it.x - mx + PAD + "px";
+        ne.style.top = it.y - my + PAD + HEAD + "px";
+        el.append(ne);
+        nodes.push({ id: it.id, el: ne });
+      }
       this.outerLayer.append(el);
+      let w = 180, hh = 70;
+      for (const nd of nodes) (w = Math.max(w, nd.el.offsetLeft + nd.el.offsetWidth + PAD)), (hh = Math.max(hh, nd.el.offsetTop + nd.el.offsetHeight + PAD));
+      el.style.width = w + "px";
+      el.style.height = hh + "px";
+      sizes.set(pk.group, { w, h: hh });
+      built.push({ group: pk.group, el, nodes });
+    }
+    const boxes = placeIslands(picks, cur, sizes);
+    for (const b of built) {
+      const box = boxes.get(b.group)!;
+      b.el.style.left = box.x + "px";
+      b.el.style.top = box.y + "px";
+      this.islands.push({ group: b.group, box, nodes: b.nodes });
     }
   }
+
+  /** 島どうし・島の中の線(全部まっすぐ)。今の島の中の線は、ふつうの線として別に描いている */
   private drawOuterEdges(): void {
-    const o = this.outer;
-    if (!o) return;
-    const pos = new Map(o.nodes.map((n) => [n.id, n]));
-    const b = o.box;
-    this.edgesSvg.append(svg("rect", { class: "inner-frame", x: b.x - 40, y: b.y - 40, width: b.w + 80, height: b.h + 80, rx: 24 }));
-    for (const e of o.edges) {
-      let p: { x: number; y: number } | undefined;
-      if (e.fromInner) {
-        if (!e.from) p = { x: b.x + b.w / 2, y: b.y - 40 };
-        else {
-          const r = this.rects.get(e.from);
-          if (r) p = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
-        }
-      } else p = pos.get(e.from);
-      const q = pos.get(e.to);
-      if (!p || !q) continue;
-      // 中の物の側は、ふつうの線と同じく文字の縁で止める。外の物の側は、文字の手前で止める
-      const fr = e.fromInner && e.from ? this.rects.get(e.from) : undefined;
-      const a = fr ? this.clip(fr, q.x, q.y) : p;
-      const len = Math.hypot(q.x - a.x, q.y - a.y) || 1;
-      const stop = Math.min(18, len / 3);
-      const bx = q.x - ((q.x - a.x) / len) * stop, by = q.y - ((q.y - a.y) / len) * stop;
-      this.edgesSvg.append(svg("line", { class: "outer-edge k-" + e.kind, x1: a.x, y1: a.y, x2: bx, y2: by }));
+    if (!this.surround || !this.curBox) return;
+    const cur = this.curBox;
+    this.edgesSvg.append(svg("rect", { class: "island-bg cur", x: cur.x, y: cur.y, width: cur.w, height: cur.h, rx: 24 }));
+    // ノードの場所(今の島は rects、ほかの島は島の位置 + ノードの位置)
+    const inst = new Map<string, { r: Rect; ig: string }[]>();
+    const put = (id: string, r: Rect, ig: string) => (inst.get(id) ?? inst.set(id, []).get(id)!).push({ r, ig });
+    for (const [id, r] of this.rects) put(id, r, this.group);
+    for (const isl of this.islands)
+      for (const nd of isl.nodes) put(nd.id, { x: isl.box.x + nd.el.offsetLeft, y: isl.box.y + nd.el.offsetTop, w: nd.el.offsetWidth, h: nd.el.offsetHeight }, isl.group);
+    const line = (a: Rect, b: Rect, cls: string) => {
+      const p = this.clip(a, b.x + b.w / 2, b.y + b.h / 2);
+      const q = this.clip(b, a.x + a.w / 2, a.y + a.h / 2);
+      this.edgesSvg.append(svg("line", { class: cls, x1: p.x, y1: p.y, x2: q.x, y2: q.y }));
+    };
+    const dist = (a: Rect, b: Rect) => Math.hypot(a.x + a.w / 2 - b.x - b.w / 2, a.y + a.h / 2 - b.y - b.h / 2);
+    // 線(リンク)
+    const done = new Set<string>();
+    for (const [id, list] of inst) {
+      const n = this.v.get(id);
+      if (!n) continue;
+      for (const l of n.links) {
+        const tl = inst.get(l.to);
+        if (!tl) continue;
+        const key = id + ">" + l.to;
+        if (done.has(key)) continue;
+        done.add(key);
+        // 同じ島に両方あれば、その島の中で(今の島どうしは、ふつうの線がもうある)
+        let drewSame = false;
+        for (const a of list)
+          for (const b of tl)
+            if (a.ig === b.ig) {
+              drewSame = true;
+              if (a.ig !== this.group) line(a.r, b.r, "outer-edge k-link");
+            }
+        if (drewSame) continue;
+        let best: [Rect, Rect] | null = null, bd = Infinity;
+        for (const a of list) for (const b of tl) if (dist(a.r, b.r) < bd) (bd = dist(a.r, b.r)), (best = [a.r, b.r]);
+        if (best) line(best[0], best[1], "outer-edge k-link");
+      }
+    }
+    // 所属: 島の中のグループのノード → そのグループの島の縁(点線)
+    const islandBox = new Map<string, Rect>([[this.group, cur], ...this.islands.map((i) => [i.group, i.box] as [string, Rect])]);
+    for (const [gid, box] of islandBox) {
+      for (const a of inst.get(gid) ?? []) if (a.ig !== gid) line(a.r, box, "outer-edge k-member");
     }
   }
+
   private outerAt(target: EventTarget | null): string | null {
     return (target as Element | null)?.closest?.<HTMLElement>(".node.outer")?.dataset.oid ?? null;
   }
@@ -377,7 +471,8 @@ export class Canvas {
   private outerMenu(id: string, x: number, y: number): void {
     const items: MenuItem[] = [];
     if (!this.readOnly) items.push({ label: T.outerQuoteHere, action: () => this.quoteOuterHere(id, x, y) });
-    items.push({ label: T.goOrigin, action: () => this.host.goToNode(id) });
+    const ig = (document.elementFromPoint(x, y) as Element | null)?.closest?.<HTMLElement>(".island")?.dataset.ig;
+    if (ig) items.push({ label: T.openIsland, action: () => this.host.openGroup(ig) });
     if (this.host.openBeside) items.push({ label: T.openBeside, action: () => this.host.openBeside!(id) });
     showMenu(x, y, items);
   }
@@ -704,10 +799,11 @@ export class Canvas {
     addEventListener("pointerup", (e) => this.onUp(e));
     el.addEventListener("dblclick", (e) => {
       if (this.pen.on) return;
-      const oid = this.outerAt(e.target);
-      if (oid) {
+      // ほかの島: その島のグループを開いて編集できるように
+      const isl = (e.target as Element).closest?.<HTMLElement>(".island");
+      if (isl?.dataset.ig) {
         e.preventDefault();
-        return this.host.goToNode(oid); // 外の物: それがあるグループへ
+        return this.host.openGroup(isl.dataset.ig);
       }
       const id = this.nodeAt(e.target);
       if (!id) return;
@@ -980,6 +1076,8 @@ export class Canvas {
         return;
       }
       case "empty-press": {
+        // ほかの島の空きでは書き始めない(書くのは今の島)
+        if ((e.target as Element).closest?.(".island")) return this.setSelection([]);
         if (d.ctrl || this.readOnly) return this.readOnly ? this.setSelection([]) : undefined;
         if (this.draft) {
           this.commitDraft("esc");

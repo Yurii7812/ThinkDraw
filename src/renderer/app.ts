@@ -26,6 +26,7 @@ interface AppState {
   recordKind?: string | null; // 記録一覧の絞り込み
   splitRatio?: number; // 画面を分けたときの左の幅の割合
   surround?: boolean; // 左の画面で「まわり」を出しているか
+  islandScope?: number | null; // 島の範囲(0・1・2・全部 = null)
 }
 interface Config {
   theme?: Theme;
@@ -236,6 +237,7 @@ class App {
         extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
         groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openGroup(g)),
         openFile: (rel) => void api().openAsset(rel),
+        onScopeChange: (n) => this.saveScope(n),
       },
       this.leftPane,
     );
@@ -796,7 +798,16 @@ class App {
     this.canvas.el.focus({ preventScroll: true });
   }
   /** 「まわり」: この画面のまま、つながりを外へ広げて見る(外の物は見るだけ。ドラッグで引用) */
+  private savedScope(): number {
+    const s = this.state.islandScope;
+    return s === null ? Infinity : typeof s === "number" ? s : 1;
+  }
+  private saveScope(n: number): void {
+    this.state.islandScope = isFinite(n) ? n : null;
+    this.saveState();
+  }
   toggleSurround(on = !this.canvas.surround): void {
+    this.canvas.scope = this.savedScope();
     this.canvas.setSurround(on);
     document.querySelector(".tbtn.surround-btn")?.classList.toggle("on", on);
     this.state.surround = on;
@@ -838,13 +849,14 @@ class App {
         onSelectionChange: () => {},
         dropOutside: (ids, cx, cy, link) => this.dropInto(w, this.canvas, ids, cx, cy, link),
         dragOutside: (ids, cx, cy) => this.dragOver(this.canvas, cx, cy, ids),
+        onScopeChange: (n) => this.saveScope(n),
       },
       this.wholeWrap,
     );
+    w.scope = this.savedScope();
     w.readOnly = true;
     w.el.classList.add("whole-canvas");
-    w.surround = true;
-    w.el.classList.add("surround");
+    w.setSurround(true);
     this.whole = w;
     this.splitBar = h("div", { class: "split-bar", title: T.splitBarTip });
     this.splitBar.addEventListener("pointerdown", (e) => this.dragSplit(e));

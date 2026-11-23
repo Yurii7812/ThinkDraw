@@ -632,16 +632,18 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .node.t-text.file .file-img { max-width: 220px; max-height: 160px; border-radius: 4px; display: block; pointer-events: none; }
 .node.t-text.file .clip { opacity: 0.7; }
 
-/* まわり(今のグループはそのまま、外につながりを広げる) */
-.node.outer { transform: translate(-50%, -50%); }
-.node.outer.t-text { background: var(--canvas); }
-.node.outer:hover { box-shadow: 0 0 0 1.5px var(--accent); border-radius: 6px; }
-.node.outer.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
-.outer-home { font-size: 11px; font-weight: 400; color: var(--muted); text-align: center; white-space: nowrap; margin-top: 2px; }
-.node.outer.t-text { display: inline-flex; flex-direction: column; align-items: center; }
-.edges .inner-frame { fill: none; stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 8 8; }
+/* 島(全体・まわり): ほかのグループも開いたときと同じ見た目のまま。枠・札は無し。線はまっすぐ */
+.island { position: absolute; border-radius: 24px; background: rgba(127, 127, 127, 0.06); }
+.edges .island-bg.cur { fill: rgba(127, 127, 127, 0.08); stroke: none; }
+.island-name { position: absolute; left: 14px; top: 8px; font-size: calc(12px * var(--inv-z, 1)); font-weight: 700; color: var(--muted); white-space: nowrap; pointer-events: none; transform-origin: 0 0; }
+.island-name.cur { color: var(--accent); }
+.node.outer { cursor: pointer; }
+.node.outer.selected { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 .edges .outer-edge { stroke: var(--edge); stroke-width: 1.5; }
-.edges .outer-edge.k-member { stroke-dasharray: 5 6; opacity: 0.8; }
+.edges .outer-edge.k-member { stroke-dasharray: 5 6; }
+.scope-ctl { position: absolute; right: 16px; bottom: 16px; z-index: 15; display: flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); }
+.scope-ctl .sc-opt { height: 28px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
+.scope-ctl .sc-opt.on { background: var(--accent-soft); color: var(--fg); font-weight: 700; }
 .tbtn.surround-btn { white-space: nowrap; font-size: 13px; color: var(--fg); border: 1px solid var(--line); padding: 0 10px; }
 .tbtn.surround-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .whole-canvas { flex: 1; }
