@@ -368,22 +368,19 @@ test("Esc で選択が外れる/R で名前を変える/Ctrl+C → 別のグル�
   expect(g).toContain(idOf("オレンジ"));
 });
 
-test("ノートはタイトルだけ見せる(中身はクリックして開いたとき)。添付メニューから チェックリスト・表", async () => {
-  await page.mouse.click(600, 400, { button: "right" });
-  await page.getByText("ノートを作る").click();
-  await expect(page.locator(".popup")).toBeVisible();
-  await page.locator(".pop-title").fill("買い物");
-  await page.locator(".b-attach").click();
+test("右上の「添付」から チェックリスト・表をノードとして置く。キャンバスには題だけ", async () => {
+  await page.locator(".tbtn.attach-btn").click();
   await page.locator(".ctxmenu .mb-btn", { hasText: "チェック" }).click();
+  await expect(page.locator(".popup")).toBeVisible();
   await page.keyboard.type("牛乳");
   await page.keyboard.press("Enter");
   await page.keyboard.type("パン");
   await expect(page.locator(".ProseMirror li.task")).toHaveCount(2);
   await page.locator(".ProseMirror li.task .task-box").first().click();
   await expect(page.locator(".ProseMirror li.task.done")).toHaveCount(1);
-  await page.keyboard.press("Enter");
-  await page.keyboard.press("Enter"); // 空の項目で Enter → 箇条書きから出る
-  await page.locator(".b-attach").click();
+  await page.keyboard.press("Escape");
+  await page.locator(".popup").waitFor({ state: "detached" }).catch(() => {});
+  await page.locator(".tbtn.attach-btn").click();
   await page.locator(".ctxmenu .mb-btn", { hasText: "表" }).click();
   await expect(page.locator(".ProseMirror table")).toHaveCount(1);
   await page.keyboard.type("名前");
@@ -392,20 +389,22 @@ test("ノートはタイトルだけ見せる(中身はクリックして開い�
   await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
   await page.keyboard.type("x");
-  await page.locator(".b-attach").click();
+  await expect(page.locator(".ProseMirror table")).toContainText("名前値");
+  await page.locator(".b-tableops").click();
   await page.getByText("右に列を足す").click();
   await expect(page.locator(".ProseMirror tr").first().locator("th")).toHaveCount(4);
   await settle();
-  const md = Object.values(mdFiles()).find((t) => t.includes("title: 買い物"))!;
+  const md = Object.values(mdFiles()).find((t) => t.includes("title: チェックリスト"))!;
   expect(md).toContain("[x] 牛乳");
   expect(md).toContain("[ ] パン");
-  expect(md).toContain("| 名前 |");
-  expect(md).toContain("| --- |");
+  const tb = Object.values(mdFiles()).find((t) => t.includes("title: 表\n"))!;
+  expect(tb).toContain("| 名前 |");
+  expect(tb).toContain("| --- |");
   await page.keyboard.press("Escape");
   await page.locator(".popup").waitFor({ state: "detached" }).catch(() => {});
   await expect(page.locator(".node.t-note .excerpt")).toHaveCount(0);
-  await expect(page.locator(".node.t-note")).toContainText("買い物");
-  await expect(page.locator(".node.t-note")).not.toContainText("牛乳");
+  await expect(page.locator(".node.t-note", { hasText: "チェックリスト" })).not.toContainText("牛乳");
+  await expect(page.locator(".node.t-note", { hasText: "表" })).toBeVisible();
 });
 
 test("書き出し: Markdown・画像・HTML(試験では指定の場所へ書く)", async () => {
@@ -699,20 +698,13 @@ test("島(まわり・全体): 今のグループはそのまま、ほかのグ�
   await expect(page.locator(".whole-canvas")).toHaveCount(0);
 });
 
-test("ノートに添付: 画像以外(HTML など)も添付でき、リンクとして入る", async () => {
-  await page.mouse.click(300, 400, { button: "right" });
-  await page.getByText("ノートを作る").click();
-  await page.keyboard.type("添付の試し");
-  await page.keyboard.press("Enter");
+test("右上の「添付」からファイルをノードとして置く", async () => {
   const chooser = page.waitForEvent("filechooser");
-  await page.locator(".tb.b-attach").click();
+  await page.locator(".tbtn.attach-btn").click();
   await page.locator(".ctxmenu .mb-btn", { hasText: "ファイル" }).click();
   await (await chooser).setFiles({ name: "見本.html", mimeType: "text/html", buffer: Buffer.from("<p>hi</p>") });
-  await expect(page.locator(".ProseMirror a", { hasText: "見本.html" })).toHaveCount(1);
-  await page.keyboard.press("Escape");
+  await expect(page.locator(".node.file", { hasText: "見本.html" })).toHaveCount(1);
   await settle();
-  const note = Object.values(mdFiles()).find((t) => t.includes("title: 添付の試し\n"))!;
-  expect(note).toMatch(/\[📎 見本\.html\]\(assets\/\d{8}-[0-9a-f]{6}-/);
   expect(readdirSync(path.join(vault, "assets")).some((f) => f.endsWith("-見本.html"))).toBe(true);
 });
 
@@ -741,10 +733,10 @@ test("右クリック: 一番上に絵付きのボタン(書き直す・つな�
   await expect(page.locator(".selbar")).toHaveCount(0); // 上に出るバーはやめた
 });
 
-test("ボードにも添付: 空きの右クリック「ここにファイルを添付」・画像は絵で出る", async () => {
+test("ボードにも添付: 空きの右クリックの「添付 › ファイル」・画像は絵で出る", async () => {
   await page.mouse.click(400, 300, { button: "right" });
   const chooser = page.waitForEvent("filechooser");
-  await page.locator(".ctxmenu .item", { hasText: "ファイルを添付" }).click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "ファイル" }).click();
   // 1x1 の PNG
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
   await (await chooser).setFiles([

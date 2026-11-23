@@ -7,6 +7,7 @@ import { cardName, spreadDef } from "../decks";
 import { cardFace, faceHeight } from "./cardface";
 import { openPicker } from "./picker";
 import { T } from "./strings";
+import { makeChecklist, makeTable, schema as mdSchema, serializeMarkdown } from "./mdschema";
 import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
 import { pickIslands, placeIslands } from "../core/islands";
 
@@ -1510,6 +1511,35 @@ export class Canvas {
     this.setSelection(made);
     toast(T.attached(made.length));
   }
+  /** チェックリスト・表を、その場所にノードとして置いて開く(題だけがキャンバスに出る) */
+  attachNodeAt(kind: "check" | "table", x: number, y: number): void {
+    const content = kind === "check" ? makeChecklist() : makeTable(3, 3);
+    const body = serializeMarkdown(mdSchema.nodes.doc.create(null, [content, mdSchema.nodes.paragraph.create()]));
+    const n = this.v.create({ type: "note", title: kind === "check" ? T.attachChecklistTitle : T.attachTableTitle, group: this.group, x: Math.round(x), y: Math.round(y) });
+    this.v.setBody(n.id, body);
+    this.renderNow();
+    this.setSelection([n.id]);
+    this.host.openBody(n.id);
+  }
+  /** 添付の選び方(右上の「添付」と空きの右クリックで共通) */
+  attachItems(x: number, y: number): MenuItem[] {
+    return [
+      {
+        label: "",
+        bar: [
+          { icon: "file", label: T.attachFile, title: T.attachFileTip, action: () => this.pickFilesAt(x, y) },
+          { icon: "check", label: T.attachChecklist, title: T.attachChecklistTip, action: () => this.attachNodeAt("check", x, y) },
+          { icon: "table", label: T.attachTable, title: T.attachTableTip, action: () => this.attachNodeAt("table", x, y) },
+        ],
+      },
+    ];
+  }
+  /** 右上の「添付」ボタンから: 見えている画面の真ん中に置く */
+  openAttachMenu(anchor: HTMLElement): void {
+    const r = anchor.getBoundingClientRect();
+    const p = this.visibleCenter();
+    showMenu(r.left, r.bottom + 4, this.attachItems(Math.round(p.x), Math.round(p.y)));
+  }
   pickFilesAt(x: number, y: number): void {
     const input = h("input", { type: "file", multiple: "" }) as HTMLInputElement;
     input.addEventListener("change", () => void this.attachFilesAt(input.files ?? undefined, x, y));
@@ -1549,7 +1579,8 @@ export class Canvas {
           this.host.openBody(n.id);
         },
       },
-      { label: T.attachHere, action: () => this.pickFilesAt(px, py) },
+      { label: T.attachHead, heading: true },
+      ...this.attachItems(px, py),
       {
         label: T.quoteHere,
         action: () => {

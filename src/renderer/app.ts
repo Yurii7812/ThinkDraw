@@ -13,7 +13,7 @@ import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
 import { SHORTCUTS, T } from "./strings";
 import { cardTip, closeDrawMenu, DEFAULT_CONFIG, drawLabel, drawMenuOpen, openDrawMenu, runDraw, type DrawConfig, type DrawKind } from "./tarot";
-import { api, askText, closeMenu, h, menuOpen, showMenu, toast, type MenuItem } from "./ui";
+import { api, askText, closeMenu, h, menuOpen, showMenu, svg, toast, type MenuItem } from "./ui";
 
 type Theme = "system" | "light" | "dark";
 interface AppState {
@@ -42,6 +42,18 @@ function pushHist(stack: string[], g: string): void {
   stack.push(g);
   if (stack.length > HISTORY_MAX) stack.splice(0, stack.length - HISTORY_MAX);
 }
+
+/** 右上のボタンの絵(線だけの小さな SVG) */
+const TOP_ICONS: Record<string, string> = {
+  attach: '<path d="M20 11.5 12.5 19a5 5 0 0 1-7-7L13 4.5a3.3 3.3 0 0 1 4.7 4.7L10.2 16.7a1.7 1.7 0 0 1-2.4-2.4L14.5 7.6"/>',
+  pen: '<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/>',
+  records: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+  beside: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/>',
+  surround: '<circle cx="12" cy="12" r="2.5"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="7" r="1.5"/><circle cx="6" cy="19" r="1.5"/><path d="M10 11 6 7M14 11l4-3M10.5 14 7 18"/>',
+  whole: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  export: '<path d="M12 4v11M8 8l4-4 4 4"/><path d="M5 14v6h14v-6"/>',
+  draw: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="m12 8 1.2 2.6 2.8.4-2 2 .5 2.8-2.5-1.4-2.5 1.4.5-2.8-2-2 2.8-.4z"/>',
+};
 
 class App {
   vault!: Vault;
@@ -148,8 +160,15 @@ class App {
   }
 
   private buildUi(): void {
-    const btn = (cls: string, title: string, fn: () => void, text = "") => {
-      const b = h("button", { class: "tbtn " + cls, title, "aria-label": title, text });
+    // 右上のボタンは絵だけ(名前はホバーの説明。2026-11-23 利用者「文字はなるべく無くていい」)
+    const btn = (cls: string, title: string, fn: () => void, text = "", icon = "") => {
+      const b = h("button", { class: "tbtn " + cls + (icon ? " has-ico" : ""), title, "aria-label": title });
+      if (icon) {
+        const ico = svg("svg", { viewBox: "0 0 24 24", width: 18, height: 18, "aria-hidden": "true", class: "tb-ico" });
+        ico.innerHTML = TOP_ICONS[icon] ?? "";
+        b.append(ico);
+      } else if (text) b.append(h("span", { class: "tb-text", text }));
+      if (icon && text) b.dataset.label = text;
       b.addEventListener("click", fn);
       return b;
     };
@@ -176,9 +195,11 @@ class App {
     });
     const search = h("button", { class: "searchbox", text: T.searchPlaceholder });
     search.addEventListener("click", () => this.search());
-    this.btnDraw = btn("draw", "", () => this.drawAgain(), T.draw);
+    this.btnDraw = btn("draw", "", () => this.drawAgain(), T.draw, "draw");
     const caret = btn("draw-caret", T.drawMenu, () => this.openDraw(), "▾");
-    this.btnPen = btn("i-pen", T.penOn, () => this.togglePen(), T.pen);
+    this.btnPen = btn("i-pen", T.penOn, () => this.togglePen(), T.pen, "pen");
+    // ボードに添付(ファイル・チェックリスト・表をノードとして置く)。いま使っている画面に入る
+    const attachBtn = btn("attach-btn", T.attachBtnTip, () => (this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas).openAttachMenu(attachBtn), T.attachBtn, "attach");
     const bar = h(
       "header",
       { class: "topbar" },
@@ -188,12 +209,13 @@ class App {
         "div",
         { class: "tb-right" },
         search,
-        btn("records-btn", T.recordsTip, () => this.toggleRecords(), T.recordsBtn),
+        btn("records-btn", T.recordsTip, () => this.toggleRecords(), T.recordsBtn, "records"),
+        attachBtn,
         this.btnPen,
-        btn("beside", T.besideTip, () => this.toggleBeside(), T.besideBtn),
-        btn("surround-btn", T.surroundTip, () => this.toggleSurround(), T.surroundBtn),
-        btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn),
-        btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn),
+        btn("beside", T.besideTip, () => this.toggleBeside(), T.besideBtn, "beside"),
+        btn("surround-btn", T.surroundTip, () => this.toggleSurround(), T.surroundBtn, "surround"),
+        btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn, "whole"),
+        btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn, "export"),
         h("div", { class: "split" }, this.btnDraw, caret),
         btn("i-theme", T.theme, () => this.setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")),
         btn("i-settings", T.settings + " (Ctrl+/)", () => this.settings()),

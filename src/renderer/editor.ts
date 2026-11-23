@@ -13,8 +13,8 @@ import type { Vault } from "../core/vault";
 import { cardName } from "../decks";
 import { openPicker } from "./picker";
 import { T } from "./strings";
-import { addColRight, addRowBelow, cellAt, cellBelow, deleteTable, makeChecklist, makeTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
-import { api, h, showMenu, svg } from "./ui";
+import { addColRight, addRowBelow, cellAt, cellBelow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
+import { api, h, showMenu, svg, toast } from "./ui";
 
 export interface EditorHost {
   vault: Vault;
@@ -169,7 +169,7 @@ export class BodyPopup {
       btn(T.heading, "b-heading", () => this.cmd(setBlockType(schema.nodes.heading, { level: 2 }))),
       btn(T.bulletList, "b-list", () => this.cmd(wrapInList(schema.nodes.bullet_list))),
       btn(T.makeLink, "b-link", () => this.makeLink()),
-      btn(T.attach, "b-attach", () => this.attachMenu()),
+      btn(T.tableOps, "b-tableops", () => this.attachMenu(), "table"),
       h("span", { class: "spacer" }),
       btn(T.expand, "b-expand", () => this.toggleExpand()),
       btn(T.close, "b-close", () => this.close()),
@@ -274,6 +274,13 @@ export class BodyPopup {
     this.unsub = v.onChange((ids) => this.onVaultChange(ids));
     if (this.titleInput && !n.title && id !== ROOT_ID) this.titleInput.focus();
     else this.view.focus();
+    // 添付で作った(チェックリスト・表だけの)ノードは、最初の項目・セルにカーソルを置く
+    const first = this.view.state.doc.firstChild;
+    if (first && (first.type === schema.nodes.table || first.type === schema.nodes.bullet_list) && this.view.state.doc.textContent === "") {
+      this.view.dispatch(this.view.state.tr.setSelection(TextSelection.near(this.view.state.doc.resolve(2))));
+      if (!this.titleInput?.value) return;
+      this.view.focus();
+    }
   }
 
   private cmd(c: (s: EditorState, d?: EditorView["dispatch"]) => boolean): void {
@@ -378,61 +385,23 @@ export class BodyPopup {
 
   /** 添付ボタン: ファイル・チェックリスト・表を入れる(表の中では、行・列の操作も出る) */
   private attachMenu(): void {
-    const btn = this.el.querySelector(".b-attach") as HTMLElement;
+    const btn = this.el.querySelector(".b-tableops") as HTMLElement;
     const r = btn.getBoundingClientRect();
     const run = (c: (st: import("prosemirror-state").EditorState, d?: (tr: import("prosemirror-state").Transaction) => void) => boolean) => () => {
       this.view.focus();
       c(this.view.state, this.view.dispatch);
     };
-    const items: import("./ui").MenuItem[] = [
-      { label: "", bar: [
-        { icon: "file", label: T.attachFile, title: T.attach, action: () => this.pickFiles() },
-        { icon: "check", label: T.attachChecklist, title: T.attachChecklistTip, action: () => this.insertBlock(makeChecklist()) },
-        { icon: "table", label: T.attachTable, title: T.attachTableTip, action: () => this.insertBlock(makeTable(3, 3)) },
-      ] },
-    ];
+    const items: import("./ui").MenuItem[] = [];
     if (cellAt(this.view.state)) {
       items.push(
-        { separator: true, label: "" },
         { label: T.tableHead, heading: true },
         { label: T.tableAddRow, action: run(addRowBelow) },
         { label: T.tableAddCol, action: run(addColRight) },
         { label: T.tableDelete, danger: true, action: run(deleteTable) },
       );
     }
-    showMenu(r.left, r.bottom + 4, items);
-  }
-
-  /** カーソルの所(空の段落なら、その段落と入れ替えて)にブロックを入れ、最初の中へカーソルを置く */
-  private insertBlock(node: import("prosemirror-model").Node): void {
-    const st = this.view.state;
-    const { $from } = st.selection;
-    const para = $from.parent;
-    let tr = st.tr;
-    let at: number;
-    if (para.type === schema.nodes.paragraph && para.content.size === 0) {
-      at = $from.before();
-      tr = tr.replaceWith(at, $from.after(), node);
-    } else {
-      at = $from.after($from.depth);
-      tr = tr.insert(at, node);
-    }
-    // 後ろに書く場所が無いと抜けられないので、段落を 1 つ足しておく
-    const end = at + node.nodeSize;
-    if (!tr.doc.nodeAt(end)) tr = tr.insert(end, schema.nodes.paragraph.create());
-    tr = tr.setSelection(TextSelection.near(tr.doc.resolve(at + 1)));
-    this.view.dispatch(tr.scrollIntoView());
-    this.view.focus();
-  }
-
-  /** ファイルを選んで添付する(画像・HTML・PDF など何でも) */
-  private pickFiles(): void {
-    const input = h("input", { type: "file", multiple: "" }) as HTMLInputElement;
-    input.addEventListener("change", () => {
-      this.attachFiles(input.files ?? undefined);
-      this.view.focus();
-    });
-    input.click();
+    if (items.length) showMenu(r.left, r.bottom + 4, items);
+    else toast(T.tableOpsNone);
   }
 
   /** 貼り付け・落とす・添付ボタン: 画像は本文に絵として、ほかのファイルは「📎 名前」のリンクとして入れる(assets/ に保存) */

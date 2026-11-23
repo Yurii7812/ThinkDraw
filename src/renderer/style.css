@@ -651,3 +651,11 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .ProseMirror th, .ProseMirror td { border: 1px solid var(--line); padding: 4px 8px; vertical-align: top; min-width: 3em; }
 .ProseMirror th { background: var(--accent-soft); font-weight: 600; text-align: left; }
 .ProseMirror td p, .ProseMirror th p { margin: 0; }
+
+/* 右上のボタン: 絵だけ(2026-11-23) */
+.tbtn.has-ico { width: 32px; min-width: 32px; color: var(--fg); border: 0; padding: 0; }
+.tbtn.has-ico .tb-ico { flex: none; opacity: 0.85; }
+.tbtn.has-ico.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tbtn.has-ico.on .tb-ico { opacity: 1; }
+.tbtn.draw.has-ico { border-radius: 6px 0 0 6px; border: 1px solid var(--line); border-right: 0; }
+.tbtn.attach-btn { background: var(--accent-soft); }
