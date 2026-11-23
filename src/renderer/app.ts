@@ -227,6 +227,8 @@ class App {
         },
         onSelectionChange: (ids) => this.onSelection(ids),
         dropOutside: (ids, cx, cy, link) => (this.peek ? this.dropInto(this.canvas, this.peek, ids, cx, cy, link) : false),
+        dragOutside: (ids, cx, cy) => this.dragOver(this.peek, cx, cy, ids),
+        quoteToOther: (ids) => this.peek && this.quoteAcross(this.canvas, this.peek, ids),
         openBeside: (id) => this.openBeside(id),
         extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
         groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openGroup(g)),
@@ -739,6 +741,8 @@ class App {
           },
           onSelectionChange: () => {},
           dropOutside: (ids, cx, cy, link) => this.dropInto(this.peek!, this.canvas, ids, cx, cy, link),
+          dragOutside: (ids, cx, cy) => this.dragOver(this.canvas, cx, cy, ids),
+          quoteToOther: (ids) => this.quoteAcross(this.peek!, this.canvas, ids),
           openBeside: (id) => this.openBeside(id),
           extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
           groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openPeek(g)),
@@ -885,6 +889,27 @@ class App {
     const g = this.vault.parentsOf(id)[0] ?? this.vault.quotedBy(id)[0];
     if (g) this.openPeek(g, id);
   }
+  /** 反対側の画面の上をドラッグしている間: 落とせる画面に枠、落とす先のノードに印(cx = null で消す) */
+  private dragOver(to: Canvas | null, cx: number | null, cy: number, _ids: string[]): boolean {
+    const panes = [this.leftPane, this.peekWrap].filter((x): x is HTMLElement => !!x);
+    const clear = () => {
+      for (const p of panes) p.classList.remove("drop-zone");
+      this.canvas.markDropOut(null);
+      this.peek?.markDropOut(null);
+    };
+    if (!to || cx === null) return clear(), false;
+    const r = to.el.getBoundingClientRect();
+    if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return clear(), false;
+    (to === this.canvas ? this.leftPane : this.peekWrap)?.classList.add("drop-zone");
+    to.markDropOut(to.nodeAtPoint(cx, cy));
+    return true;
+  }
+  /** 右クリックの「反対側の画面に引用する」: 反対側の画面の真ん中あたりに置く */
+  private quoteAcross(from: Canvas, to: Canvas, ids: string[]): void {
+    const r = to.el.getBoundingClientRect();
+    this.dropInto(from, to, ids, r.left + r.width / 2, r.top + r.height / 2, false);
+  }
+
   /** from の画面から to の画面へ落とした: to のグループに引用として置く(すでにあれば置かない)。ノードの上なら線でつなぐ */
   private dropInto(from: { rectOf(id: string): Rect | undefined }, to: Canvas, ids: string[], cx: number, cy: number, link: boolean): boolean {
     const r = to.el.getBoundingClientRect();

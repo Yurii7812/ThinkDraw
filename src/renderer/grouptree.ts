@@ -23,7 +23,16 @@ export function subGroups(v: Vault, g: string): string[] {
 
 export function showGroupTree(v: Vault, root: string, anchor: Element, go: (id: string) => void): void {
   closeGroupTree();
+  // 初めから全部の段を開いておく(2026-11-23 利用者「中にあるグループが全部表示されるように」)。▾ で閉じられる
   const expanded = new Set<string>([root]);
+  const openAll = (g: string, path: Set<string>) => {
+    for (const c of subGroups(v, g)) {
+      if (path.has(c)) continue;
+      expanded.add(c);
+      openAll(c, new Set([...path, c]));
+    }
+  };
+  openAll(root, new Set([root]));
   const list = h("div", { class: "gt-list" });
   const name = (id: string) => v.get(id)?.title || T.untitledGroup;
   const draw = () => {

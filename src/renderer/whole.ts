@@ -29,12 +29,13 @@ interface V {
   children: V[];
   depth: number;
   leaves: number;
+  branch: number; // 根から出た枝の番号(色分け)
   x: number;
   y: number;
 }
 
 const MAX_NODES = 3000; // 描く数の上限(重くならないように)
-const RING = 170; // 1 段の距離
+const RING = 200; // 1 段の距離
 
 export class WholeView {
   readonly el: HTMLElement;
@@ -75,7 +76,7 @@ export class WholeView {
     const v = this.v;
     this.verts.clear();
     this.more = 0;
-    const root: V = { id: this.center, ctx: this.center, parent: null, kind: "in", children: [], depth: 0, leaves: 0, x: 0, y: 0 };
+    const root: V = { id: this.center, ctx: this.center, parent: null, kind: "in", children: [], depth: 0, leaves: 0, branch: 0, x: 0, y: 0 };
     this.verts.set(root.id, root);
     const queue: V[] = [root];
     const add = (p: V, id: string, ctx: string, kind: EdgeKind) => {
@@ -84,7 +85,7 @@ export class WholeView {
         this.more++;
         return;
       }
-      const c: V = { id, ctx, parent: p, kind, children: [], depth: p.depth + 1, leaves: 0, x: 0, y: 0 };
+      const c: V = { id, ctx, parent: p, kind, children: [], depth: p.depth + 1, leaves: 0, branch: p.parent ? p.branch : p.children.length % 8, x: 0, y: 0 };
       this.verts.set(id, c);
       p.children.push(c);
       queue.push(c);
@@ -132,7 +133,7 @@ export class WholeView {
     let maxDepth = 0;
     for (const n of this.verts.values()) maxDepth = Math.max(maxDepth, n.depth);
     // 外の輪ほど広く: 葉が多いときは輪の間を広げて、文字が重ならないように
-    const ring = Math.max(RING, (root.leaves * 34) / (2 * Math.PI * Math.max(1, maxDepth)));
+    const ring = Math.max(RING, (root.leaves * 46) / (2 * Math.PI * Math.max(1, maxDepth)));
     const place = (n: V, a0: number, a1: number) => {
       const a = (a0 + a1) / 2;
       const r = n.depth * ring;
@@ -166,10 +167,16 @@ export class WholeView {
     this.nodesLayer.replaceChildren();
     this.edges.replaceChildren();
     const v = this.v;
-    // 木の辺
+    // 木の辺: 親から外へ、ゆるい曲線で(マインドマップの枝のように)。根から出た枝ごとに色を変える
     for (const n of this.verts.values()) {
-      if (!n.parent) continue;
-      this.edges.append(svg("line", { x1: n.parent.x, y1: n.parent.y, x2: n.x, y2: n.y, class: "wh-edge k-" + n.kind }));
+      const p = n.parent;
+      if (!p) continue;
+      const pr = Math.hypot(p.x, p.y), nr = Math.hypot(n.x, n.y);
+      const mid = (pr + nr) / 2;
+      const ang = Math.atan2(n.y, n.x);
+      const c1 = pr ? { x: (p.x / pr) * mid, y: (p.y / pr) * mid } : p;
+      const c2 = { x: Math.cos(ang) * mid, y: Math.sin(ang) * mid };
+      this.edges.append(svg("path", { d: `M${p.x},${p.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${n.x},${n.y}`, class: `wh-edge k-${n.kind} b${n.branch}` }));
     }
     // 木に使わなかった線(両方見えているもの)
     for (const n of this.verts.values()) {
@@ -186,7 +193,7 @@ export class WholeView {
       const isRoot = !n.parent;
       const node = v.get(n.id);
       const group = n.id === ROOT_ID || node?.type === "group";
-      const el = h("div", { class: "wh-node" + (group ? " grp" : "") + (isRoot ? " root" : "") + (node?.type === "note" ? " note" : ""), "data-id": n.id, "data-ctx": n.ctx });
+      const el = h("div", { class: "wh-node" + (group ? " grp" : "") + (isRoot ? " root" : "") + (node?.type === "note" ? " note" : "") + (isRoot ? "" : ` b${n.branch}`) + (n.depth >= 4 ? " far-d" : ""), "data-id": n.id, "data-ctx": n.ctx });
       el.style.left = n.x + "px";
       el.style.top = n.y + "px";
       if (group) {

@@ -157,6 +157,7 @@ export class BodyPopup {
       btn(T.heading, "b-heading", () => this.cmd(setBlockType(schema.nodes.heading, { level: 2 }))),
       btn(T.bulletList, "b-list", () => this.cmd(wrapInList(schema.nodes.bullet_list))),
       btn(T.makeLink, "b-link", () => this.makeLink()),
+      btn(T.attach, "b-attach", () => this.pickFiles()),
       h("span", { class: "spacer" }),
       btn(T.expand, "b-expand", () => this.toggleExpand()),
       btn(T.close, "b-close", () => this.close()),
@@ -213,8 +214,8 @@ export class BodyPopup {
         this.view.updateState(this.view.state.apply(tr));
         if (tr.docChanged) this.scheduleSave();
       },
-      handlePaste: (_v, e) => this.pasteImage(e.clipboardData?.files),
-      handleDrop: (_v, e) => this.pasteImage((e as DragEvent).dataTransfer?.files),
+      handlePaste: (_v, e) => this.attachFiles(e.clipboardData?.files),
+      handleDrop: (_v, e) => this.attachFiles((e as DragEvent).dataTransfer?.files),
       handleDOMEvents: {
         keydown: (_v, e) => {
           if (e.key === "Escape") {
@@ -338,15 +339,34 @@ export class BodyPopup {
     this.view.dispatch(tr.setSelection(TextSelection.create(tr.doc, to)));
   }
 
-  private pasteImage(files: FileList | undefined): boolean {
-    const imgs = [...(files ?? [])].filter((f) => f.type.startsWith("image/"));
-    if (!imgs.length) return false;
+  /** 添付ボタン: ファイルを選んで添付する(画像・HTML・PDF など何でも) */
+  private pickFiles(): void {
+    const input = h("input", { type: "file", multiple: "" }) as HTMLInputElement;
+    input.addEventListener("change", () => {
+      this.attachFiles(input.files ?? undefined);
+      this.view.focus();
+    });
+    input.click();
+  }
+
+  /** 貼り付け・落とす・添付ボタン: 画像は本文に絵として、ほかのファイルは「📎 名前」のリンクとして入れる(assets/ に保存) */
+  attachFiles(files: FileList | undefined): boolean {
+    const list = [...(files ?? [])];
+    if (!list.length) return false;
     (async () => {
-      for (const f of imgs) {
-        const ext = (f.type.split("/")[1] ?? "png").replace("jpeg", "jpg").replace(/\+.*/, "");
-        const rel = await api().saveAsset(ext, new Uint8Array(await f.arrayBuffer()));
-        const node = schema.nodes.image.create({ src: rel, alt: "" });
-        this.view.dispatch(this.view.state.tr.replaceSelectionWith(node).scrollIntoView());
+      for (const f of list) {
+        const data = new Uint8Array(await f.arrayBuffer());
+        if (f.type.startsWith("image/")) {
+          const ext = (f.type.split("/")[1] ?? "png").replace("jpeg", "jpg").replace(/\+.*/, "");
+          const rel = await api().saveAsset(ext, data);
+          this.view.dispatch(this.view.state.tr.replaceSelectionWith(schema.nodes.image.create({ src: rel, alt: f.name || "" })).scrollIntoView());
+        } else {
+          const rel = await api().saveAttachment(f.name || "file", data);
+          const href = rel.split("/").map(encodeURIComponent).join("/");
+          const st = this.view.state;
+          const text = schema.text("📎 " + (f.name || "file"), [schema.marks.link.create({ href })]);
+          this.view.dispatch(st.tr.replaceSelectionWith(text, false).insertText(" ").scrollIntoView());
+        }
       }
     })();
     return true;
@@ -366,7 +386,8 @@ export class BodyPopup {
         if (!v.exists(nodeId)) return;
         this.close();
         this.host.goToNode(nodeId, true);
-      } else api().openExternal(href);
+      } else if (/^assets\//.test(href)) void api().openAsset(href); // 添付は、その種類のふつうのアプリで開く
+      else api().openExternal(href);
     });
     const r = a.getBoundingClientRect();
     const pr = this.el.getBoundingClientRect();

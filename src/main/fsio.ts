@@ -83,6 +83,27 @@ export class FsVaultIO implements VaultIO {
   }
 
   /** 貼り付けた画像を assets/ に保存し、本文に書く相対パスを返す */
+  /** 添付(画像以外も): 元の名前を残して assets/ に置く。同じ名前があれば頭を変える */
+  async saveAttachment(name: string, data: Uint8Array): Promise<string> {
+    const base = path.basename(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").replace(/^\.+/, "").slice(-120) || "file";
+    for (;;) {
+      const fname = `${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomBytes(3).toString("hex")}-${base}`;
+      const file = path.join(this.dir, ASSETS_DIR, fname);
+      try {
+        await fs.access(file);
+      } catch {
+        await atomicWrite(file, data);
+        return `${ASSETS_DIR}/${fname}`;
+      }
+    }
+  }
+
+  /** 添付の、フォルダの中での本当の場所(フォルダの外を指していれば null) */
+  assetPath(rel: string): string | null {
+    const file = path.resolve(this.dir, decodeURIComponent(rel));
+    return file.startsWith(path.resolve(this.dir, ASSETS_DIR) + path.sep) ? file : null;
+  }
+
   async saveAsset(ext: string, data: Uint8Array): Promise<string> {
     const clean = /^[a-z0-9]{1,5}$/.test(ext) ? ext : "png";
     for (;;) {

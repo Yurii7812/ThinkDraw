@@ -148,6 +148,12 @@ function registerIpc(): void {
     await fs.writeFile(file, typeof data === "string" ? data : Buffer.from(data));
     return file;
   });
+  ipcMain.handle("vault:saveAttachment", (_e, name: string, data: Uint8Array) => needIO().saveAttachment(name, data));
+  ipcMain.handle("asset:open", async (_e, rel: string) => {
+    const file = needIO().assetPath(rel);
+    if (file && existsSync(file)) return shell.openPath(file);
+    return "見つかりません";
+  });
   ipcMain.handle("url:title", (_e, url: string) => urlTitle(url));
   ipcMain.handle("shell:open", (_e, url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);

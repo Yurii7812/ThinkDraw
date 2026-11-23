@@ -16,7 +16,29 @@ export function gap(a: Rect, b: Rect): number {
   return Math.hypot(dx, dy);
 }
 
+/** 線分 (x1,y1)-(x2,y2) が長方形(まわりに pad の余白)を通るか */
+export function segHitsRect(x1: number, y1: number, x2: number, y2: number, r: Rect, pad = 4): boolean {
+  const L = r.x - pad, R = r.x + r.w + pad, T = r.y - pad, B = r.y + r.h + pad;
+  let t0 = 0, t1 = 1;
+  const dx = x2 - x1, dy = y2 - y1;
+  const clip = (p: number, q: number) => {
+    if (p === 0) return q >= 0;
+    const t = q / p;
+    if (p < 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
+    return true;
+  };
+  return clip(-dx, x1 - L) && clip(dx, R - x1) && clip(-dy, y1 - T) && clip(dy, B - y1);
+}
+
 export interface PlaceOptions {
+  /** これらの物を、つなぐ線が通らないようにする(文字の箱。ペンの線や線の印は入れない) */
+  lineBlockers?: Rect[];
   /** 新しいものの大きさ(推定) */
   size?: { w: number; h: number };
   /** これ以上空いていれば、その輪で決める */
@@ -44,7 +66,9 @@ export function placeAround(anchor: Rect, obstacles: Rect[], o: PlaceOptions = {
       const px = cx + Math.cos(a) * r * 1.35 - size.w / 2;
       const py = cy + Math.sin(a) * r * 0.85 - size.h / 2;
       const me = { x: px, y: py, w: size.w, h: size.h };
-      const c = Math.min(...all.map((b) => gap(me, b)));
+      let c = Math.min(...all.map((b) => gap(me, b)));
+      // 親からの線が、ほかの文字の上を通る所は選ばない
+      if (o.lineBlockers?.some((b) => segHitsRect(cx, cy, px + size.w / 2, py + size.h / 2, b))) c = Math.min(c, 1);
       cands.push({ x: Math.round(px), y: Math.round(py), c });
     }
     cands.sort((p, q) => q.c - p.c);

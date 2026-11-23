@@ -103,6 +103,18 @@ export interface RecordsHost {
 }
 
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
+function todayStr(): string {
+  const d = new Date();
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+}
+/** 種類ごとの色(名前から決める。いつも同じ色) */
+const KIND_COLORS = ["#2f6fdf", "#0f8a7a", "#c2417f", "#c0691b", "#7c5cd6", "#2e8540", "#b8860b", "#4a6178"];
+export function kindColor(k: string): string {
+  let h = 0;
+  for (const ch of k) h = (h * 31 + ch.codePointAt(0)!) >>> 0;
+  return KIND_COLORS[h % KIND_COLORS.length];
+}
 
 export class RecordsView {
   readonly el: HTMLElement;
@@ -110,6 +122,8 @@ export class RecordsView {
   private head: HTMLElement;
   private body: HTMLElement;
   private adding = false;
+  private query = "";
+  private search!: HTMLInputElement;
   constructor(private host: RecordsHost) {
     const close = h("button", { class: "tbtn rec-close", title: T.recordsClose + " (Esc)", "aria-label": T.recordsClose, text: "×" });
     close.addEventListener("click", () => host.close());
@@ -119,10 +133,26 @@ export class RecordsView {
     this.el = h(
       "section",
       { class: "records", tabindex: "-1" },
-      h("div", { class: "rec-top" }, h("div", { class: "rec-title", text: T.recordsTitle }), h("span", { class: "rec-gap" }), close),
+      h("div", { class: "rec-top" }, h("div", { class: "rec-title", text: T.recordsTitle }), this.makeSearch(), h("span", { class: "rec-gap" }), close),
       h("div", { class: "rec-cols" }, this.side, h("div", { class: "rec-main-col" }, this.head, this.body)),
     );
     this.render();
+  }
+
+  private makeSearch(): HTMLElement {
+    this.search = h("input", { type: "search", class: "rec-search", placeholder: T.recordsSearch, "aria-label": T.recordsSearch }) as HTMLInputElement;
+    this.search.addEventListener("input", () => {
+      this.query = this.search.value;
+      this.render();
+    });
+    this.search.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this.search.value) {
+        e.stopPropagation();
+        this.search.value = this.query = "";
+        this.render();
+      }
+    });
+    return this.search;
   }
 
   private select(k: string | null): void {
@@ -144,7 +174,7 @@ export class RecordsView {
 
     // ---- 左: 種類の一覧(木)。いちばん下で新しい種類を足す
     const item = (label: string, k: string | null, n: number, depth = 0, extra = "") => {
-      const b = h("button", { class: "rec-k" + (k === kind ? " active" : "") + extra, "data-kind": k ?? "", style: `padding-left:${10 + depth * 16}px` }, depth ? h("span", { class: "rec-sub", text: "└" }) : null, h("span", { class: "rec-kname", text: label }), h("span", { class: "rec-n", text: String(n) }));
+      const b = h("button", { class: "rec-k" + (k === kind ? " active" : "") + extra, "data-kind": k ?? "", style: `padding-left:${10 + depth * 16}px` }, depth ? h("span", { class: "rec-sub", text: "└" }) : null, k ? h("span", { class: "rec-dot", style: `background:${kindColor(k)}` }) : null, h("span", { class: "rec-kname", text: label }), h("span", { class: "rec-n", text: String(n) }));
       b.addEventListener("click", () => this.select(k));
       return b;
     };
@@ -178,35 +208,54 @@ export class RecordsView {
     const parentsNote = def?.parents.length ? h("div", { class: "muted small", text: T.recordsParentsNote(def.parents) }) : null;
     this.head.replaceChildren(h("div", { class: "rec-head-row" }, h("div", { class: "rec-h", text: kind ?? T.recordsAll }), h("span", { class: "rec-gap" }), ...btns), parentsNote ?? "");
 
-    // ---- 右: 記録の一覧
-    const list = all.filter((e) => !shown || shown.has(e.kind));
+    // ---- 右: 記録の一覧(日ごとにまとめたカード。上の欄で中身を探せる)
+    const q = this.query.trim().toLowerCase();
+    const list = all.filter((e) => (!shown || shown.has(e.kind)) && (!q || (e.kind + " " + e.sub + " " + e.preview).toLowerCase().includes(q)));
     if (!list.length) {
-      this.body.replaceChildren(h("div", { class: "rec-empty", text: kind ? T.recordsEmptyKind(kind) : T.recordsEmpty }));
+      this.body.replaceChildren(h("div", { class: "rec-empty" }, h("div", { class: "rec-empty-t", text: q ? T.recordsNoHit : kind ? T.recordsEmptyKind(kind) : T.recordsEmpty })));
       return;
     }
-    const rows: HTMLElement[] = [];
+    const today = todayStr();
+    const blocks: HTMLElement[] = [];
     let month = "";
-    let lastDate = "";
-    for (const e of list) {
-      const m = e.date.slice(0, 7);
+    let i = 0;
+    while (i < list.length) {
+      const date = list[i].date;
+      const day: RecordEntry[] = [];
+      while (i < list.length && list[i].date === date) day.push(list[i++]);
+      const m = date.slice(0, 7);
       if (m !== month) {
         month = m;
-        rows.push(h("div", { class: "rec-month", text: `${m.slice(0, 4)}年 ${Number(m.slice(5))}月` }));
+        blocks.push(h("div", { class: "rec-month", text: `${m.slice(0, 4)}年${Number(m.slice(5))}月` }));
       }
-      const wd = WEEK[new Date(e.date + "T00:00:00").getDay()] ?? "";
-      const sameDay = e.date === lastDate;
-      lastDate = e.date;
-      const row = h(
-        "button",
-        { class: "rec-row" + (sameDay ? " same-day" : ""), "data-id": e.id },
-        h("span", { class: "rec-date" }, h("span", { class: "rec-d", text: sameDay ? "" : String(Number(e.date.slice(8))) }), h("span", { class: "rec-wd" + (wd === "日" ? " sun" : wd === "土" ? " sat" : ""), text: sameDay ? "" : wd })),
-        h("span", { class: "rec-kind", text: e.kind }),
-        h("span", { class: "rec-main" }, e.sub ? h("span", { class: "rec-subt", text: e.sub }) : null, h("span", { class: "rec-prev", text: e.preview || (e.sub ? "" : T.recordsNoText) })),
+      const d = new Date(date + "T00:00:00");
+      const wd = WEEK[d.getDay()] ?? "";
+      const cards = day.map((e) => {
+        const card = h(
+          "button",
+          { class: "rec-card", "data-id": e.id },
+          h("span", { class: "rec-card-top" }, h("span", { class: "rec-dot", style: `background:${kindColor(e.kind)}` }), h("span", { class: "rec-card-kind", text: e.kind }), e.sub ? h("span", { class: "rec-card-sub", text: e.sub }) : null),
+          h("span", { class: "rec-card-prev" + (e.preview ? "" : " empty"), text: e.preview || T.recordsNoText }),
+        );
+        card.addEventListener("click", () => this.host.open(e));
+        return card;
+      });
+      blocks.push(
+        h(
+          "section",
+          { class: "rec-day" + (date === today ? " today" : "") },
+          h(
+            "div",
+            { class: "rec-day-head" },
+            h("span", { class: "rec-day-d", text: String(d.getDate()) }),
+            h("span", { class: "rec-day-wd" + (wd === "日" ? " sun" : wd === "土" ? " sat" : ""), text: wd + "曜" }),
+            date === today ? h("span", { class: "rec-today", text: T.recordsToday }) : null,
+          ),
+          h("div", { class: "rec-cards" }, ...cards),
+        ),
       );
-      row.addEventListener("click", () => this.host.open(e));
-      rows.push(row);
     }
-    this.body.replaceChildren(...rows);
+    this.body.replaceChildren(...blocks);
   }
 
   /** 左の一覧のいちばん下で、新しい種類の名前を書く(Enter で足す・Esc でやめる) */

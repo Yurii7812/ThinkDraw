@@ -455,8 +455,8 @@ test("記録一覧: 左に種類・右に記録。新しい種類を足す・上
   await page.keyboard.press("Control+j");
   await expect(page.locator(".records")).toBeVisible();
   await page.locator(".rec-k[data-kind='']").click(); // すべて
-  await expect(page.locator(".rec-row")).toHaveCount(1);
-  await expect(page.locator(".rec-row")).toContainText("今日あったこと");
+  await expect(page.locator(".rec-card")).toHaveCount(1);
+  await expect(page.locator(".rec-card")).toContainText("今日あったこと");
   // 左の「＋ 新しい種類」で名前を書いて Enter
   await page.locator(".rec-add").click();
   await page.keyboard.type("夢日記");
@@ -486,12 +486,12 @@ test("記録一覧: 左に種類・右に記録。新しい種類を足す・上
   // 一覧: 日記を選ぶと下位(夢日記)も出る
   await page.keyboard.press("Control+j");
   await page.locator(".rec-k[data-kind='日記']").click();
-  await expect(page.locator(".rec-row")).toHaveCount(2);
+  await expect(page.locator(".rec-card")).toHaveCount(2);
   await page.locator(".rec-k[data-kind='読書記録']").click();
-  await expect(page.locator(".rec-row")).toHaveCount(1);
+  await expect(page.locator(".rec-card")).toHaveCount(1);
   await page.locator(".rec-k[data-kind='夢日記']").click();
   await shot("11-records");
-  await page.locator(".rec-row").click();
+  await page.locator(".rec-card").click();
   await expect(page.locator(".records")).toHaveCount(0);
   await expect(page.locator(".popup.expanded")).toBeVisible();
   await page.keyboard.press("Escape");
@@ -612,4 +612,34 @@ test("全体の画面: 今のグループを根に、マインドマップとし
   await expect(page.locator(".wh-node.root")).toContainText("ホーム");
   await page.locator(".whole-close").click();
   await expect(page.locator(".whole")).toHaveCount(0);
+});
+
+test("ノートに添付: 画像以外(HTML など)も添付でき、リンクとして入る", async () => {
+  await page.mouse.click(300, 400, { button: "right" });
+  await page.getByText("ノートを作る").click();
+  await page.keyboard.type("添付の試し");
+  await page.keyboard.press("Enter");
+  const chooser = page.waitForEvent("filechooser");
+  await page.locator(".tb.b-attach").click();
+  await (await chooser).setFiles({ name: "見本.html", mimeType: "text/html", buffer: Buffer.from("<p>hi</p>") });
+  await expect(page.locator(".ProseMirror a", { hasText: "見本.html" })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await settle();
+  const note = Object.values(mdFiles()).find((t) => t.includes("title: 添付の試し\n"))!;
+  expect(note).toMatch(/\[📎 見本\.html\]\(assets\/\d{8}-[0-9a-f]{6}-/);
+  expect(readdirSync(path.join(vault, "assets")).some((f) => f.endsWith("-見本.html"))).toBe(true);
+});
+
+test("分割: 右クリックの「反対側の画面に引用する」", async () => {
+  await write(300, 200, "向こうの物");
+  await page.locator(".node", { hasText: "向こうの物" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("向こう");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+\\");
+  await page.keyboard.type("向こう");
+  await page.keyboard.press("Enter");
+  await page.locator(".peek .node", { hasText: "向こうの物" }).click({ button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "反対側の画面に引用する" }).click();
+  await expect(page.locator(".left-pane .node.ref", { hasText: "向こうの物" })).toHaveCount(1);
 });

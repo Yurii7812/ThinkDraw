@@ -49,3 +49,12 @@ describe("まとめて置くときに重ならない", () => {
     expect(freeOffset([{ x: 500, y: 500, w: 10, h: 10 }], obs)).toEqual({ dx: 0, dy: 0 });
   });
 });
+
+import { segHitsRect } from "../src/core/placement";
+it("線分が長方形を通るか", () => {
+  const r = { x: 10, y: 10, w: 20, h: 10 };
+  expect(segHitsRect(0, 15, 50, 15, r)).toBe(true);
+  expect(segHitsRect(0, 0, 50, 0, r)).toBe(false);
+  expect(segHitsRect(0, 0, 5, 5, r)).toBe(false);
+  expect(segHitsRect(0, 40, 40, 0, r)).toBe(true);
+});

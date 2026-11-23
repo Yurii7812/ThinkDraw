@@ -1,5 +1,5 @@
 // 無限キャンバス(SPEC 4.2)。1 つのグループの中身(所属 + 引用)とペンの線を描き、操作をデータの操作に翻訳する。
-import { gap, placeAround, type Rect } from "../core/placement";
+import { gap, placeAround, segHitsRect, type Rect } from "../core/placement";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
 import { LINK_KINDS, ROOT_ID, type LinkKind, type Stroke, type TDNode } from "../core/types";
@@ -32,6 +32,10 @@ export interface CanvasHost {
   cardHover(id: string | null, e?: MouseEvent): void;
   onViewChange(group: string, v: View): void;
   onSelectionChange(ids: string[]): void;
+  /** 画面の外(分割の反対側)の上をドラッグしている間。cx = null で終わり。反対側に落とせる所なら true */
+  dragOutside?(ids: string[], cx: number | null, cy: number, link: boolean): boolean;
+  /** 分割の反対側に、引用として置く(右クリックから) */
+  quoteToOther?(ids: string[]): void;
   /** この画面の外(横の画面)へ落としたとき。受け取ったら true */
   dropOutside?(ids: string[], cx: number, cy: number, link: boolean): boolean;
   /** グループの ▸: 下のグループの木を出す */
@@ -507,8 +511,11 @@ export class Canvas {
     const a = this.rects.get(parent);
     if (!r || !a) return;
     const others = [...this.obstacles(new Set([id, parent])), ...this.edgeBoxes(id)];
-    if (gap(r, a) >= 30 && others.every((o) => gap(r, o) >= 16)) return;
-    const p = placeAround(a, others, { size: { w: r.w, h: r.h } });
+    const boxes = [...this.rects.entries()].filter(([i]) => i !== id && i !== parent).map(([, b]) => b);
+    const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+    const myLineHits = boxes.some((b) => segHitsRect(ac.x, ac.y, r.x + r.w / 2, r.y + r.h / 2, b));
+    if (gap(r, a) >= 30 && others.every((o) => gap(r, o) >= 16) && !myLineHits) return;
+    const p = placeAround(a, others, { size: { w: r.w, h: r.h }, lineBlockers: boxes });
     this.v.move(this.group, [{ id, x: Math.round(p.x), y: Math.round(p.y) }]);
     this.renderNow();
   }
@@ -518,7 +525,8 @@ export class Canvas {
     const a = this.rects.get(anchor)!;
     const others = [...this.rects.entries()].filter(([i]) => i !== anchor).map(([, r]) => r);
     others.push(...this.v.strokesOf(this.group).map(strokeBox), ...this.edgeBoxes());
-    return placeAround(a, others, { size: { w: 90, h: Math.min(40, a.h) } });
+    const boxes = [...this.rects.entries()].filter(([i]) => i !== anchor).map(([, r]) => r);
+    return placeAround(a, others, { size: { w: 90, h: Math.min(40, a.h) }, lineBlockers: boxes });
   }
 
   /** つなぎの線を、小さな箱の並びとして表す(Tab で置く文字が線にかぶらないように)。except につながる線は除く */
@@ -575,6 +583,10 @@ export class Canvas {
   private strokeAt(target: EventTarget | null): string | null {
     const el = (target as Element | null)?.closest?.("[data-sid]");
     return el?.getAttribute("data-sid") ?? null;
+  }
+  /** 反対側からのドラッグで、落とす先のノードに印を付ける(null で外す) */
+  markDropOut(id: string | null): void {
+    for (const [i, el] of this.els) el.classList.toggle("droptarget-out", i === id);
   }
   nodeAtPoint(cx: number, cy: number, exclude: Set<string> = new Set()): string | null {
     for (const el of document.elementsFromPoint(cx, cy)) {
@@ -736,7 +748,10 @@ export class Canvas {
         d.line.setAttribute("y1", String(a.y + a.h / 2));
         d.line.setAttribute("x2", String(p.x));
         d.line.setAttribute("y2", String(p.y));
-        const over = this.nodeAtPoint(e.clientX, e.clientY, new Set([d.from]));
+        const out = !this.inside(e) && !!this.host.dragOutside?.([d.from], e.clientX, e.clientY, true);
+        d.line.style.display = out ? "none" : "";
+        this.dragGhost(out ? [d.from] : null, e, true);
+        const over = out ? null : this.nodeAtPoint(e.clientX, e.clientY, new Set([d.from]));
         for (const [i, el] of this.els) el.classList.toggle("droptarget", i === over);
         return;
       }
@@ -771,7 +786,9 @@ export class Canvas {
         }
         for (const sid of d.strokes) this.strokesSvg.querySelector(`g[data-sid="${sid}"]`)?.setAttribute("transform", `translate(${dx},${dy})`);
         this.renderEdges();
-        const over = d.ids.length ? this.nodeAtPoint(e.clientX, e.clientY, new Set(d.ids)) : null;
+        const out = !this.inside(e) && d.ids.length > 0 && !!this.host.dragOutside?.(d.ids, e.clientX, e.clientY, false);
+        this.dragGhost(out ? d.ids : null, e, false);
+        const over = d.ids.length && !out ? this.nodeAtPoint(e.clientX, e.clientY, new Set(d.ids)) : null;
         for (const [i, el] of this.els) el.classList.toggle("droptarget", i === over);
         return;
       }
@@ -786,6 +803,8 @@ export class Canvas {
     if (!d) return;
     this.drag = null;
     for (const el of this.els.values()) el.classList.remove("droptarget", "moving");
+    this.dragGhost(null, e, false);
+    this.host.dragOutside?.([], null, 0, false);
     switch (d.kind) {
       case "draw": {
         d.path.remove();
@@ -900,6 +919,27 @@ export class Canvas {
     // 本文はノートだけ(2026-11-23 利用者)。カードは選ぶと右の欄に詳細が出る
     if (n.type === "note" || n.body.trim()) this.host.openBody(id);
     else this.setSelection([id]);
+  }
+
+  /** 反対側の画面へドラッグしている間、カーソルに付いてくる札(何がどうなるかを書く) */
+  private ghost: HTMLElement | null = null;
+  private dragGhost(ids: string[] | null, e: { clientX: number; clientY: number }, link: boolean): void {
+    if (!ids) {
+      this.ghost?.remove();
+      this.ghost = null;
+      return;
+    }
+    if (!this.ghost) {
+      const first = this.v.get(ids[0]);
+      const name = first ? (first.card ? cardName(first.card) : first.title || T.untitled) : "";
+      this.ghost = h("div", { class: "drag-ghost" }, h("b", { text: ids.length > 1 ? T.dragMany(name, ids.length) : name }), h("span", { class: "dg-hint" }));
+      document.body.append(this.ghost);
+    }
+    this.ghost.style.left = e.clientX + 14 + "px";
+    this.ghost.style.top = e.clientY + 12 + "px";
+    const hint = this.ghost.querySelector(".dg-hint")!;
+    const overNode = document.querySelector(".canvas .node.droptarget-out");
+    hint.textContent = link && overNode ? T.dragQuoteLink : T.dragQuote;
   }
 
   private inside(e: { clientX: number; clientY: number }): boolean {
@@ -1107,6 +1147,7 @@ export class Canvas {
       },
     });
     if (this.host.openBeside) items.push({ label: T.openBeside, action: () => this.host.openBeside!(id) });
+    if (this.host.quoteToOther) items.push({ label: T.quoteToOther, action: () => this.host.quoteToOther!(ids) });
     if (isRef) {
       items.push({ label: T.goOrigin, action: () => this.host.goToNode(id) });
       items.push({ label: T.removeRef, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
