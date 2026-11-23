@@ -573,3 +573,44 @@ test("グループのノード: ▸ で下のグループの木を出して飛�
   await expect(page.locator(".group-title")).toHaveText("下の箱");
   await expect(page.locator(".node", { hasText: "奥の文字" })).toHaveCount(1);
 });
+
+test("全体の画面: 今のグループを真ん中に、上のグループを見る。見るだけ・左へドラッグで引用・全画面", async () => {
+  await write(300, 200, "中の考え");
+  await page.locator(".node", { hasText: "中の考え" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("宗教");
+  await page.keyboard.press("Escape");
+  await write(300, 500, "外の考え");
+  await page.locator(".node.t-group", { hasText: "宗教" }).dblclick();
+  await expect(page.locator(".group-title")).toHaveText("宗教");
+  await page.locator(".tbtn.whole-btn").click();
+  await expect(page.locator(".whole")).toBeVisible();
+  const center = page.locator(".wh-region.role-center");
+  await expect(center).toContainText("中の考え");
+  const parent = page.locator(".wh-region.role-parent");
+  await expect(parent).toContainText("外の考え");
+  await shot("14-whole");
+  // 見るだけ: ダブルクリックしても書き直しにならない(左で開く)
+  // 左へドラッグで引用
+  const src = (await parent.locator(".wh-node", { hasText: "外の考え" }).boundingBox())!;
+  await page.mouse.move(src.x + 5, src.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(src.x - 50, src.y + 10, { steps: 4 });
+  await page.mouse.move(250, 300, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator(".left-pane .node.ref", { hasText: "外の考え" })).toHaveCount(1);
+  await settle();
+  expect(mdFiles()[idOf("宗教") + ".md"]).toContain(`refs:\n  - { id: ${idOf("外の考え")}`);
+  await expect(page.locator(".wh-region.role-center")).toContainText("外の考え"); // 全体の画面も描き直す
+  // 全画面と Esc
+  await page.locator(".whole-full-btn").click();
+  await expect(page.locator(".left-pane")).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".left-pane")).toBeVisible();
+  // 上のグループの名前を押すと、左でそこを開く(全体の真ん中もついてくる)
+  await parent.locator(".wh-title").click();
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+  await expect(page.locator(".wh-region.role-center")).toContainText("外の考え");
+  await page.locator(".whole-close").click();
+  await expect(page.locator(".whole")).toHaveCount(0);
+});

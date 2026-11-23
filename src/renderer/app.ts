@@ -8,6 +8,8 @@ import { exportGroup, type ExportKind } from "./exporter";
 import { cleanKind, DATE } from "../core/records";
 import { findRecordNote, KINDS_FILE, parseKinds, parseRecordTitle, RecordsView, type RecordEntry, type RecordKind } from "./records";
 import { showGroupTree } from "./grouptree";
+import { WholeView } from "./whole";
+import type { Rect } from "../core/placement";
 import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
 import { SHORTCUTS, T } from "./strings";
@@ -51,6 +53,9 @@ class App {
   private leftPane!: HTMLElement;
   private leftTitle!: HTMLElement;
   private splitBar: HTMLElement | null = null;
+  /** 全体の画面(見るだけ)。分割の右側か、全画面 */
+  whole: WholeView | null = null;
+  private wholeWrap: HTMLElement | null = null;
   private peekTitle: HTMLElement | null = null;
   side!: SidePanel;
   popup: BodyPopup | null = null;
@@ -184,6 +189,7 @@ class App {
         btn("records-btn", T.recordsTip, () => this.toggleRecords(), T.recordsBtn),
         this.btnPen,
         btn("beside", T.besideTip, () => this.toggleBeside(), T.besideBtn),
+        btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn),
         btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn),
         h("div", { class: "split" }, this.btnDraw, caret),
         btn("i-theme", T.theme, () => this.setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")),
@@ -300,6 +306,7 @@ class App {
   private onVaultChange(ids: Set<string>): void {
     this.canvas.requestRender();
     this.records?.render();
+    this.wholeSoon();
     if (this.peek) {
       if (this.vault.exists(this.peek.group)) {
         this.peek.requestRender();
@@ -527,6 +534,7 @@ class App {
   }
   private showGroup(id: string, anim: "in" | "out"): void {
     this.canvas.show(id, this.state.views[id] ?? null, anim);
+    this.whole?.setCenter(id); // 全体の画面は、左の画面のグループを真ん中に
     this.state.lastGroup = id;
     this.saveState();
     this.updateBar();
@@ -698,6 +706,7 @@ class App {
 
   // ---------- 横の画面 ----------
   private openPeek(group: string, focus?: string): void {
+    if (this.whole) this.closeWhole();
     if (!this.peek) {
       this.peekTitle = h("button", { class: "pane-title peek-title", title: T.panePick });
       this.peekTitle.addEventListener("click", () => this.pickBeside());
@@ -772,6 +781,56 @@ class App {
     this.saveState();
     this.canvas.el.focus({ preventScroll: true });
   }
+  // ---------- 全体の画面(見るだけ) ----------
+  toggleWhole(): void {
+    if (this.whole) this.closeWhole();
+    else this.openWhole();
+  }
+  private openWhole(): void {
+    if (this.peek) this.closePeek();
+    const full = h("button", { class: "tbtn whole-full-btn", title: T.wholeFullTip, "aria-label": T.wholeFullTip, text: "⛶" });
+    full.addEventListener("click", () => this.main.classList.toggle("whole-full"));
+    const fit = h("button", { class: "tbtn", title: T.fitAll, "aria-label": T.fitAll, text: "◎" });
+    fit.addEventListener("click", () => this.whole?.fit());
+    const close = h("button", { class: "tbtn whole-close", title: T.wholeClose, "aria-label": T.wholeClose, text: "×" });
+    close.addEventListener("click", () => this.closeWhole());
+    const head = h("div", { class: "pane-head" }, h("span", { class: "pane-title whole-title", text: T.wholeTitle }), h("span", { class: "muted small whole-hint", text: T.wholeHint }), h("span", { class: "pane-space" }), fit, full, close);
+    this.whole = new WholeView({
+      vault: this.vault,
+      open: (g, focus) => {
+        this.main.classList.remove("whole-full");
+        this.openGroup(g, focus);
+        if (focus) this.canvas.setSelection([focus]);
+      },
+      dropOut: (id, cx, cy) => this.dropInto({ rectOf: () => undefined }, this.canvas, [id], cx, cy, true),
+    });
+    this.wholeWrap = h("div", { class: "pane whole-pane" }, head, this.whole.el);
+    this.splitBar = h("div", { class: "split-bar", title: T.splitBarTip });
+    this.splitBar.addEventListener("pointerdown", (e) => this.dragSplit(e));
+    this.splitBar.addEventListener("dblclick", () => this.setSplit(0.5));
+    this.leftPane.after(this.splitBar, this.wholeWrap);
+    this.main.classList.add("split");
+    this.setSplit(this.state.splitRatio ?? 0.5);
+    this.whole.setCenter(this.canvas.group);
+    this.whole.fit();
+  }
+  closeWhole(): void {
+    this.wholeWrap?.remove();
+    this.splitBar?.remove();
+    this.splitBar = null;
+    this.wholeWrap = null;
+    this.whole = null;
+    this.main.classList.remove("split", "whole-full");
+    this.leftPane.style.flex = "";
+    this.canvas.el.focus({ preventScroll: true });
+  }
+  private wholeTimer: ReturnType<typeof setTimeout> | undefined;
+  private wholeSoon(): void {
+    if (!this.whole) return;
+    clearTimeout(this.wholeTimer);
+    this.wholeTimer = setTimeout(() => this.whole?.render(), 200);
+  }
+
   /** 左右どちらを今使っているか(見出しに色を付けるだけ) */
   private setActivePane(p: "left" | "right"): void {
     this.main.dataset.active = p;
@@ -827,7 +886,7 @@ class App {
     if (g) this.openPeek(g, id);
   }
   /** from の画面から to の画面へ落とした: to のグループに引用として置く(すでにあれば置かない)。ノードの上なら線でつなぐ */
-  private dropInto(from: Canvas, to: Canvas, ids: string[], cx: number, cy: number, link: boolean): boolean {
+  private dropInto(from: { rectOf(id: string): Rect | undefined }, to: Canvas, ids: string[], cx: number, cy: number, link: boolean): boolean {
     const r = to.el.getBoundingClientRect();
     if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) return false;
     const over = to.nodeAtPoint(cx, cy);
@@ -1012,6 +1071,11 @@ class App {
       if (e.ctrlKey && e.key === "Home") {
         e.preventDefault();
         this.openGroup(ROOT_ID);
+        return;
+      }
+      if (e.key === "Escape" && this.main.classList.contains("whole-full")) {
+        e.preventDefault();
+        this.main.classList.remove("whole-full");
         return;
       }
       if (e.ctrlKey && k === "j") {
