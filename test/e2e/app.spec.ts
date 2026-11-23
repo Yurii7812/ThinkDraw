@@ -378,3 +378,22 @@ test("横に開く: 別のグループを見ながら、右から左へドラッ
   await page.locator(".peek-close").click();
   await expect(page.locator(".peek")).toHaveCount(0);
 });
+
+test("右クリックで一覧: ↑ は上のグループ、← は戻れる先", async () => {
+  await page.keyboard.press("Control+d"); // ホーム › 年 › 月 › 日
+  await page.keyboard.press("Escape");
+  const ymd = (await page.locator(".group-title").textContent())!;
+  await page.locator(".tbtn.group-up").click({ button: "right" });
+  const items = page.locator(".ctxmenu .item");
+  await expect(items).toHaveCount(3);
+  await expect(items.nth(0)).toContainText(ymd.slice(0, 7));
+  await expect(items.nth(2)).toContainText("ホーム");
+  await items.nth(1).click();
+  await expect(page.locator(".group-title")).toHaveText(ymd.slice(0, 4));
+  await page.locator(".i-back").click({ button: "right" });
+  await expect(page.locator(".ctxmenu .item").first()).toContainText(ymd);
+  await page.locator(".ctxmenu .item").nth(1).click(); // 2 つ前(ホーム)まで一度に戻る
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+  await page.locator(".i-fwd").click({ button: "right" });
+  await expect(page.locator(".ctxmenu .item")).toHaveCount(2);
+});

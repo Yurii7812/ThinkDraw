@@ -129,11 +129,24 @@ class App {
     };
     this.btnBack = btn("i-back", T.back + " (Ctrl+[)", () => this.back());
     this.btnFwd = btn("i-fwd", T.forward + " (Ctrl+])", () => this.forward());
+    // 右クリックで一覧(2026-11-23 利用者の希望): ← は戻れる先、→ は進める先
+    this.btnBack.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      this.historyMenu(this.btnBack, "back");
+    });
+    this.btnFwd.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      this.historyMenu(this.btnFwd, "fwd");
+    });
     this.titleEl = h("button", { class: "group-title" });
     this.titleEl.addEventListener("click", () => this.openBody(this.canvas.group));
     // 上のグループへ(← → の右隣。2026-11-23 利用者の希望)。所属先が 1 つならすぐ上がり、複数なら選ぶ
     this.upBtn = h("button", { class: "tbtn group-up", title: T.upMenu + " (Ctrl+↑)", "aria-label": T.upMenu, text: "↑" });
     this.upBtn.addEventListener("click", () => this.goUp());
+    this.upBtn.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      this.ancestorMenu();
+    });
     const search = h("button", { class: "searchbox", text: T.searchPlaceholder });
     search.addEventListener("click", () => this.search());
     this.btnDraw = btn("draw", "", () => this.drawAgain(), T.draw);
@@ -364,6 +377,50 @@ class App {
     this.fwdStack.push(this.canvas.group);
     this.showGroup(this.vault.exists(g) ? g : ROOT_ID, "out");
   }
+  /** ← / → の右クリック: 履歴の一覧。近い順。押すとそこまで一度に戻る/進む */
+  private historyMenu(anchor: HTMLElement, dir: "back" | "fwd"): void {
+    const stack = dir === "back" ? this.backStack : this.fwdStack;
+    const items: MenuItem[] = [...stack].reverse().map((g, i) => ({
+      label: this.groupName(g),
+      action: () => {
+        const from = dir === "back" ? this.backStack : this.fwdStack;
+        const to = dir === "back" ? this.fwdStack : this.backStack;
+        let cur = this.canvas.group; // 途中は表示せずに通り過ぎる
+        for (let k = 0; k <= i && from.length; k++) {
+          to.push(cur);
+          cur = from.pop()!;
+        }
+        this.showGroup(this.vault.exists(cur) ? cur : ROOT_ID, dir === "back" ? "out" : "in");
+      },
+    }));
+    if (!items.length) items.push({ label: T.historyEmpty, disabled: true } as MenuItem);
+    const r = anchor.getBoundingClientRect();
+    showMenu(r.left, r.bottom + 2, items);
+  }
+  /** ↑ の右クリック: 上のグループの一覧(親、その親…ホームまで。近い順。字下げで段を示す) */
+  private ancestorMenu(): void {
+    const items: MenuItem[] = [];
+    const seen = new Set<string>([this.canvas.group]);
+    let level = [this.canvas.group];
+    for (let depth = 0; level.length && depth < 20; depth++) {
+      const next: string[] = [];
+      for (const g of level)
+        for (const p of this.vault.parentsOf(g)) {
+          if (seen.has(p) || (p !== ROOT_ID && this.vault.get(p)?.type !== "group")) continue;
+          seen.add(p);
+          next.push(p);
+          items.push({ label: "　".repeat(depth) + this.groupName(p), action: () => this.openGroup(p) });
+        }
+      level = next;
+    }
+    if (!items.length) items.push({ label: T.historyEmpty, disabled: true } as MenuItem);
+    const r = this.upBtn.getBoundingClientRect();
+    showMenu(r.left, r.bottom + 2, items);
+  }
+  private groupName(id: string): string {
+    return id === ROOT_ID ? T.home : this.vault.get(id)?.title || T.untitledGroup;
+  }
+
   forward(): void {
     const g = this.fwdStack.pop();
     if (!g) return;
