@@ -34,6 +34,8 @@ export interface CanvasHost {
   onSelectionChange(ids: string[]): void;
   /** 画面の外(分割の反対側)の上をドラッグしている間。cx = null で終わり。反対側に落とせる所なら true */
   dragOutside?(ids: string[], cx: number | null, cy: number, link: boolean): boolean;
+  /** 分割していて、反対側の画面があるか */
+  hasOther?(): boolean;
   /** 分割の反対側に、引用として置く(右クリックから) */
   quoteToOther?(ids: string[]): void;
   /** この画面の外(横の画面)へ落としたとき。受け取ったら true */
@@ -1127,24 +1129,45 @@ export class Canvas {
     };
   }
 
-  /** ノードの右クリック: そのノードのことだけ(色・束ねる・つなぐ・移すは、選んだときに上に出るバーへ) */
+  /** ノードの右クリック(2026-11-23 利用者と決めた): 一番上に、よく使う操作を絵と名前の大きなボタンで横に並べ、
+   * その下に色の見本、そのあと「グループ」の操作を見出し付きで。ショートカットは右に小さく */
   private nodeMenu(id: string, x: number, y: number): void {
     const n = this.v.get(id);
     if (!n) return;
     const ids = this.selection.has(id) ? [...this.selection] : [id];
     const isRef = this.v.isRefIn(this.group, id);
-    const items: MenuItem[] = [];
-    if (n.type === "group") items.push({ label: T.openGroup, action: () => this.host.openGroup(id) }, { label: T.rename, action: () => this.renameGroup(id) });
-    if (n.type === "text" && n.file) items.push({ label: T.openFile, action: () => this.host.openFile?.(n.file!) });
-    if (n.type === "text") items.push({ label: T.editText, action: () => this.editText(id) });
-    if (n.type === "note") items.push({ label: T.openNote, action: () => this.host.openBody(id) });
-    if (n.type === "card" && n.card?.deck === "tarot")
-      items.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
-    if (this.host.openBeside) items.push({ label: T.openBeside, action: () => this.host.openBeside!(id) });
-    if (isRef) items.push({ label: T.goOrigin, action: () => this.host.goToNode(id) });
-    if (n.type === "group") items.push({ label: T.unbundle, action: () => this.v.unbundle(id) });
-    items.push({ separator: true, label: "" });
-    if (isRef) items.push({ label: T.removeRef, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
+    const allRefs = ids.every((i) => this.v.isRefIn(this.group, i));
+    const many = ids.length > 1;
+    // よく使う操作(横に並べる)
+    const bar: NonNullable<MenuItem["bar"]> = [];
+    if (!many) {
+      if (n.type === "group") bar.push({ icon: "open", label: T.mOpen, title: T.openGroup, action: () => this.host.openGroup(id) });
+      else if (n.type === "text" && n.file) bar.push({ icon: "open", label: T.mOpen, title: T.openFile, action: () => this.host.openFile?.(n.file!) });
+      else if (n.type === "text") bar.push({ icon: "edit", label: T.mEdit, title: T.editText, action: () => this.editText(id) });
+      else if (n.type === "note") bar.push({ icon: "open", label: T.mOpen, title: T.openNote, action: () => this.host.openBody(id) });
+      else bar.push({ icon: "open", label: T.mOpen, action: () => this.open(id) });
+    }
+    bar.push({ icon: "link", label: T.linkShort, title: T.linkSearch + " (Ctrl+L)", action: () => this.linkBySearch() });
+    bar.push({ icon: "bundle", label: T.bundleShort, title: T.bundle + " (Ctrl+G)", action: () => this.bundleSelection() });
+    if (this.host.openBeside && !many) bar.push({ icon: "beside", label: T.mBeside, title: T.openBeside, action: () => this.host.openBeside!(id) });
+    bar.push({ icon: "trash", label: T.deleteShort, title: (allRefs ? T.deleteRef : T.delete) + " (Delete)", danger: true, action: () => this.deleteItems(ids, true) });
+
+    const items: MenuItem[] = [{ label: "", bar }];
+    if (many) items.unshift({ label: T.selCount(ids.length), heading: true });
+    // 色
+    items.push(this.colorItem(ids));
+    if (ids.every((i) => this.v.get(i)?.type === "text" && !this.v.get(i)?.file)) items.push(this.fillItem(ids));
+    // このノードだけのこと
+    const own: MenuItem[] = [];
+    if (!many && n.type === "group") own.push({ label: T.rename, action: () => this.renameGroup(id) }, { label: T.unbundle, action: () => this.v.unbundle(id) });
+    if (!many && n.type === "text" && n.file) own.push({ label: T.rename, action: () => this.editText(id) });
+    if (!many && n.type === "card" && n.card?.deck === "tarot") own.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
+    if (own.length) items.push({ separator: true, label: "" }, ...own);
+    // グループ(入れる・引用する・外す)
+    items.push({ label: T.mGroupHead, heading: true });
+    if (isRef && !many) items.push({ label: T.goOrigin, action: () => this.host.goToNode(id) });
+    items.push(...this.groupMenuItems(ids));
+    if (allRefs) items.push({ label: T.removeRef, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
     else
       items.push({
         label: T.removeFromGroup,
@@ -1154,7 +1177,6 @@ export class Canvas {
           if (refused && this.group === ROOT_ID) toast(T.rootLastParent);
         },
       });
-    items.push({ label: ids.every((i) => this.v.isRefIn(this.group, i)) ? T.deleteRef : T.delete, action: () => this.deleteItems(ids, true) });
     showMenu(x, y, items);
   }
 
@@ -1185,64 +1207,12 @@ export class Canvas {
         },
       },
     ];
-    if (this.host.quoteToOther) items.push({ label: T.quoteToOther, action: () => this.host.quoteToOther!(ids) });
+    if (this.host.quoteToOther && this.host.hasOther?.()) items.push({ label: T.quoteToOther, action: () => this.host.quoteToOther!(ids) });
     return items;
   }
 
-  // ---------- 選んだときに上に出るバー(色・背景・束ねる・つなぐ・グループへ・消す) ----------
-  private selBar: HTMLElement | null = null;
-  private updateSelBar(): void {
-    const ids = [...this.selection].filter((i) => this.v.exists(i));
-    const strokes = [...this.strokeSel];
-    if ((!ids.length && !strokes.length) || this.pen.on || this.draft) {
-      this.selBar?.remove();
-      this.selBar = null;
-      return;
-    }
-    const b = (label: string, title: string, fn: (el: HTMLElement) => void, cls = "") => {
-      const e = h("button", { class: "sb-btn " + cls, title, "aria-label": title, text: label });
-      e.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-      e.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        fn(e);
-      });
-      return e;
-    };
-    const at = (el: HTMLElement) => el.getBoundingClientRect();
-    const parts: HTMLElement[] = [h("span", { class: "sb-count", text: T.selCount(ids.length + strokes.length) })];
-    if (ids.length) {
-      parts.push(
-        b(T.color + " ▾", T.color, (el) => {
-          const r = at(el);
-          const items: MenuItem[] = [this.colorItem(ids)];
-          if (ids.every((i) => this.v.get(i)?.type === "text")) items.push(this.fillItem(ids));
-          showMenu(r.left, r.bottom + 4, items);
-        }),
-      );
-      parts.push(b(T.linkShort, T.linkSearch + " (Ctrl+L)", () => this.linkBySearch()));
-    }
-    parts.push(b(T.bundleShort, T.bundle + " (Ctrl+G)", () => this.bundleSelection()));
-    if (ids.length)
-      parts.push(
-        b(T.toGroup + " ▾", T.toGroup, (el) => {
-          const r = at(el);
-          showMenu(r.left, r.bottom + 4, this.groupMenuItems(ids));
-        }),
-      );
-    parts.push(
-      b(T.deleteShort, T.delete + " (Delete)", () => {
-        this.v.tx(() => {
-          this.deleteItems(ids, true);
-          this.v.removeStrokes(this.group, strokes);
-        });
-      }, "danger"),
-    );
-    const bar = h("div", { class: "selbar" }, ...parts);
-    bar.addEventListener("pointerdown", (e) => e.stopPropagation());
-    if (this.selBar) this.selBar.replaceWith(bar);
-    else this.el.append(bar);
-    this.selBar = bar;
-  }
+  /** (上に出るバーはやめた。2026-11-23 利用者「上に出るのも違う」。操作は右クリックへ) */
+  private updateSelBar(): void {}
 
   /** 文字を書き直す(添付の文字も、名前を書き直せる) */
   private editText(id: string): void {

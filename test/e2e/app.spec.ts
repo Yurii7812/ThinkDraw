@@ -426,7 +426,7 @@ test("引用を Delete で消しても、元のノードは消えない(引用�
   const ref = page.locator(".node.ref", { hasText: "元の話" });
   await expect(ref).toHaveCount(1);
   await ref.click({ button: "right" });
-  await page.locator(".ctxmenu .item", { hasText: /^削除/ }).click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "消す" }).click();
   await expect(ref).toHaveCount(0);
   await settle();
   expect(titles()).toContain("元の話");
@@ -631,7 +631,7 @@ test("ノートに添付: 画像以外(HTML など)も添付でき、リンク�
   expect(readdirSync(path.join(vault, "assets")).some((f) => f.endsWith("-見本.html"))).toBe(true);
 });
 
-test("分割: 選んだときのバーの「グループへ ▾ → 反対側の画面に引用する」", async () => {
+test("分割: 右クリックの「反対側の画面に引用する」", async () => {
   await write(300, 200, "向こうの物");
   await page.locator(".node", { hasText: "向こうの物" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+g");
@@ -640,27 +640,20 @@ test("分割: 選んだときのバーの「グループへ ▾ → 反対側の
   await page.keyboard.press("Control+\\");
   await page.keyboard.type("向こう");
   await page.keyboard.press("Enter");
-  await page.locator(".peek .node", { hasText: "向こうの物" }).click({ modifiers: ["Control"] });
-  await page.locator(".peek .selbar .sb-btn", { hasText: "グループへ" }).click();
+  await page.locator(".peek .node", { hasText: "向こうの物" }).click({ button: "right" });
   await page.locator(".ctxmenu .item", { hasText: "反対側の画面に引用する" }).click();
   await expect(page.locator(".left-pane .node.ref", { hasText: "向こうの物" })).toHaveCount(1);
 });
 
-test("右クリックは短く、色・束ねる・つなぐは選んだときの上のバーに", async () => {
+test("右クリック: 一番上に絵付きのボタン(書き直す・つなぐ・束ねる・横に開く・消す)、その下に色、グループの操作は見出しの下", async () => {
   await write(300, 200, "ひとつ");
   await page.locator(".node", { hasText: "ひとつ" }).click({ button: "right" });
-  const n = await page.locator(".ctxmenu > .item, .ctxmenu > .subwrap").count();
-  expect(n).toBeLessThanOrEqual(6);
-  await expect(page.locator(".ctxmenu .swatches")).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".selbar")).toBeVisible(); // 右クリックで選ばれている
-  await page.locator(".selbar .sb-btn", { hasText: "色" }).click();
-  await page.locator(".ctxmenu .swatches .sw.c1").first().click();
+  await expect(page.locator(".ctxmenu .menubar .mb-btn")).toHaveCount(5); // 書き直す・つなぐ・束ねる・横に開く・消す
+  await expect(page.locator(".ctxmenu .menuhead", { hasText: "グループ" })).toBeVisible();
+  await shot("16-menu");
+  await page.locator(".ctxmenu .swatches").first().locator(".sw.c1").click();
   await expect(page.locator(".node.t-text.c1", { hasText: "ひとつ" })).toHaveCount(1);
-  await shot("16-selbar");
-  await page.mouse.click(900, 700); // 空きを押すと選択が外れてバーも消える
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".selbar")).toHaveCount(0);
+  await expect(page.locator(".selbar")).toHaveCount(0); // 上に出るバーはやめた
 });
 
 test("ボードにも添付: 空きの右クリック「ここにファイルを添付」・画像は絵で出る", async () => {

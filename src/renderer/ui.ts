@@ -53,7 +53,26 @@ export interface MenuItem {
   sub?: MenuItem[];
   separator?: boolean;
   checked?: boolean;
+  /** 右に出すショートカットの書き方(Ctrl+L など) */
+  hint?: string;
+  /** 赤い字(消すなど) */
+  danger?: boolean;
+  /** 一番上に横に並べる、絵と名前の大きなボタン(右クリックの「よく使う操作」) */
+  bar?: { icon: string; label: string; title?: string; action: () => void; danger?: boolean; keepOpen?: boolean }[];
+  /** 見出し(押せない小さな字) */
+  heading?: boolean;
 }
+
+/** 右クリックのボタンの絵(線だけの小さな SVG) */
+export const MENU_ICONS: Record<string, string> = {
+  open: '<path d="M7 17 17 7M9 7h8v8"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  bundle: '<path d="M3 7h6l2 2h10v10H3z"/><path d="M12 12v5M9.5 14.5h5"/>',
+  color: '<circle cx="12" cy="12" r="8"/><circle cx="9" cy="10" r="1.2"/><circle cx="14" cy="9" r="1.2"/><circle cx="16" cy="13" r="1.2"/>',
+  trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>',
+  beside: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/>',
+};
 
 let openMenu: HTMLElement | null = null;
 export function closeMenu(): void {
@@ -83,7 +102,26 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
         parent.append(row);
         continue;
       }
-      const b = h("button", { class: "item" + (it.checked ? " checked" : ""), role: "menuitem", disabled: it.disabled }, it.label);
+      if (it.bar) {
+        const row = h("div", { class: "menubar" });
+        for (const x of it.bar) {
+          const ico = svg("svg", { viewBox: "0 0 24 24", width: 20, height: 20, "aria-hidden": "true" });
+          ico.innerHTML = MENU_ICONS[x.icon] ?? "";
+          const bb = h("button", { class: "mb-btn" + (x.danger ? " danger" : ""), title: x.title ?? x.label, "aria-label": x.title ?? x.label }, ico, h("span", { text: x.label }));
+          bb.addEventListener("click", () => {
+            if (!x.keepOpen) closeMenu();
+            x.action();
+          });
+          row.append(bb);
+        }
+        parent.append(row);
+        continue;
+      }
+      if (it.heading) {
+        parent.append(h("div", { class: "menuhead", text: it.label }));
+        continue;
+      }
+      const b = h("button", { class: "item" + (it.checked ? " checked" : "") + (it.danger ? " danger" : ""), role: "menuitem", disabled: it.disabled }, h("span", { class: "mi-label", text: it.label }), it.hint ? h("span", { class: "mi-hint", text: it.hint }) : null);
       if (it.sub) {
         b.classList.add("hassub");
         const sub = h("div", { class: "submenu" });
