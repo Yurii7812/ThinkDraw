@@ -575,6 +575,21 @@ export class Vault {
       const gm = this.mut(g.id);
       for (const p of pos) (p.ref ? gm.refs : gm.members).push({ id: p.id, x: Math.round(p.x - cx), y: Math.round(p.y - cy) });
       for (const s of strokes) gm.strokes.push({ ...s, p: s.p.map((v, i) => (i % 2 ? v - cy : v - cx)) });
+      // 束ねなかったが、束ねた物と線でつながっていた物は、新しいグループに引用として置く(線が中でも見えるように。
+      // 2026-11-23 利用者の希望)。位置は元の並びのまま
+      const inside = new Set(picked);
+      const outside = new Set<string>();
+      for (const id of picked) {
+        const n = this.nodes.get(id);
+        if (!n) continue;
+        for (const o of [...n.links.map((l) => l.to), ...this.index.backlinksOf(id)]) {
+          if (!inside.has(o) && o !== g.id && o !== ROOT_ID && this.nodes.has(o) && this.itemPos(group, o)) outside.add(o);
+        }
+      }
+      for (const o of outside) {
+        const at = this.itemPos(group, o)!;
+        gm.refs.push({ id: o, x: Math.round(at.x - cx), y: Math.round(at.y - cy) });
+      }
       this.index.update(g.id, gm);
       const parent = this.mut(group);
       parent.members = parent.members.filter((m) => !picked.includes(m.id));

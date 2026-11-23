@@ -263,3 +263,21 @@ describe("引用(所属とは別)", () => {
     expect(v.strokesOf(ROOT_ID).length).toBe(1);
   });
 });
+
+describe("束ねるとき、線でつながっていた外の物は引用として入る", () => {
+  it("束ねなかった相手は、新しいグループに引用(元の場所には残る)", () => {
+    const a = text("a", ROOT_ID, 0, 0);
+    const b = text("b", ROOT_ID, 100, 0);
+    const c = text("c", ROOT_ID, 300, 50);
+    const d = text("d", ROOT_ID, 500, 50); // つながっていない
+    v.addLink(a, c);
+    v.addLink(c, b); // 向きが逆でも
+    const g = v.bundle(ROOT_ID, [a, b], "束");
+    expect(v.membersOf(g.id).map((m) => m.id).sort()).toEqual([a, b].sort());
+    expect(v.refsOf(g.id).map((m) => m.id)).toEqual([c]);
+    expect(v.refsOf(g.id)[0]).toMatchObject({ x: 300 - 50, y: 50 }); // 元の並びのまま
+    expect(v.itemPos(ROOT_ID, c)?.ref).toBe(false); // 元の場所に残る
+    expect(v.refsOf(g.id).some((m) => m.id === d)).toBe(false);
+    expect(v.quotedBy(c)).toContain(g.id);
+  });
+});
