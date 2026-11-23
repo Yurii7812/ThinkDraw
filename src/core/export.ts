@@ -9,14 +9,16 @@ export function labelOf(n: TDNode): string {
   return t.replace(/\s*\n\s*/g, " ").trim();
 }
 
-export function groupToMarkdown(v: Vault, group: string, depth = 1, seen: Set<string> = new Set()): string {
+/** only を渡すと、そのグループの中の、その物だけ(選んだ範囲の書き出し)。中のグループは丸ごと */
+export function groupToMarkdown(v: Vault, group: string, depth = 1, seen: Set<string> = new Set(), only?: Set<string>): string {
   const g = v.get(group);
   if (!g || seen.has(group)) return "";
   seen.add(group);
   const h = "#".repeat(Math.min(depth, 6));
-  const out: string[] = [`${h} ${group === ROOT_ID ? g.title || "ホーム" : labelOf(g)}`, ""];
-  if (g.body.trim()) out.push(g.body.trim(), "");
-  const items = v.itemsOf(group).filter((i) => v.exists(i.id));
+  const name = group === ROOT_ID ? g.title || "ホーム" : labelOf(g);
+  const out: string[] = [`${h} ${only ? `${name}(選んだ ${only.size} 件)` : name}`, ""];
+  if (g.body.trim() && !only) out.push(g.body.trim(), "");
+  const items = v.itemsOf(group).filter((i) => v.exists(i.id) && (!only || only.has(i.id)));
   const ids = new Set(items.map((i) => i.id));
   const refSet = new Set(items.filter((i) => i.ref).map((i) => i.id));
   const pos = new Map(items.map((i) => [i.id, i]));

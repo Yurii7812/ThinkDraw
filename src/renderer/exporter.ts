@@ -11,11 +11,18 @@ function css(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
 }
 
-export function buildSvg(v: Vault, group: string, canvas: Canvas): { svg: string; w: number; h: number } {
+export interface ExportSel {
+  ids: string[];
+  strokes: string[];
+}
+
+export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSel): { svg: string; w: number; h: number } {
   const bg = css("--bg"), fg = css("--fg"), edge = css("--edge"), line = css("--line"), grp = css("--group"), card = css("--card");
   const col = (c: number) => (c ? css(`--c${c}`) : fg);
-  const items = v.itemsOf(group).filter((i) => v.exists(i.id) && canvas.rectOf(i.id));
-  const strokes = v.strokesOf(group);
+  const onlyIds = sel ? new Set(sel.ids) : null;
+  const onlyStrokes = sel ? new Set(sel.strokes) : null;
+  const items = v.itemsOf(group).filter((i) => v.exists(i.id) && canvas.rectOf(i.id) && (!onlyIds || onlyIds.has(i.id)));
+  const strokes = v.strokesOf(group).filter((s) => !onlyStrokes || onlyStrokes.has(s.id));
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const grow = (x: number, y: number, w: number, h: number) => {
     x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + w); y1 = Math.max(y1, y + h);
@@ -94,25 +101,28 @@ async function toPng(svg: string, w: number, h: number): Promise<Uint8Array> {
 
 export type ExportKind = "md" | "png" | "html" | "copy";
 
-export async function exportGroup(v: Vault, group: string, canvas: Canvas, kind: ExportKind): Promise<void> {
+/** sel を渡すと、選んでいる物(とペンの線)だけを書き出す */
+export async function exportGroup(v: Vault, group: string, canvas: Canvas, kind: ExportKind, sel?: ExportSel): Promise<void> {
   const g = v.get(group);
-  const name = ((group === ROOT_ID ? g?.title || "ホーム" : g ? labelOf(g) : "ThinkDraw") || "ThinkDraw").replace(/[\\/:*?"<>|\n]/g, "_").slice(0, 60);
+  const base = ((group === ROOT_ID ? g?.title || "ホーム" : g ? labelOf(g) : "ThinkDraw") || "ThinkDraw").replace(/[\\/:*?"<>|\n]/g, "_").slice(0, 60);
+  const name = sel ? `${base}-選択` : base;
+  const md = () => groupToMarkdown(v, group, 1, new Set(), sel ? new Set(sel.ids) : undefined);
   try {
     if (kind === "copy") {
-      await navigator.clipboard.writeText(groupToMarkdown(v, group));
+      await navigator.clipboard.writeText(md());
       toast("Markdown をコピーしました");
       return;
     }
     let path: string | null;
-    if (kind === "md") path = await api().exportSave(name + ".md", "Markdown", ["md"], groupToMarkdown(v, group));
+    if (kind === "md") path = await api().exportSave(name + ".md", "Markdown", ["md"], md());
     else {
-      const { svg, w, h } = buildSvg(v, group, canvas);
+      const { svg, w, h } = buildSvg(v, group, canvas, sel);
       if (kind === "png") path = await api().exportSave(name + ".png", "画像", ["png"], await toPng(svg, w, h));
       else {
         const html = `<!doctype html>\n<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(name)}</title>
 <style>body{margin:0;background:#888}.wrap{overflow:auto}details{padding:12px 16px;background:#fff;color:#222;font-family:sans-serif}pre{white-space:pre-wrap}</style></head><body>
 <div class="wrap">${svg}</div>
-<details><summary>文章で読む(Markdown)</summary><pre>${esc(groupToMarkdown(v, group))}</pre></details>
+<details><summary>文章で読む(Markdown)</summary><pre>${esc(md())}</pre></details>
 </body></html>\n`;
         path = await api().exportSave(name + ".html", "HTML", ["html"], html);
       }

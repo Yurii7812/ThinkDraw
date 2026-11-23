@@ -26,3 +26,12 @@ it("Markdown: リンクの木・ノート・中のグループが文章になる
   expect(md).toContain("## 箱");
   expect(md).toContain("- 中身");
 });
+
+it("Markdown: 選んだものだけ", () => {
+  const a = v.create({ type: "text", title: "残す", group: ROOT_ID, x: 0, y: 0 }).id;
+  v.create({ type: "text", title: "入れない", group: ROOT_ID, x: 0, y: 100 });
+  const md = groupToMarkdown(v, ROOT_ID, 1, new Set(), new Set([a]));
+  expect(md).toContain("選んだ 1 件");
+  expect(md).toContain("- 残す");
+  expect(md).not.toContain("入れない");
+});

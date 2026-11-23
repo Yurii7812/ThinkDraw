@@ -507,3 +507,16 @@ test("ショートカット一覧はカードの形", async () => {
   await expect(page.locator(".sc-card kbd").first()).toBeVisible();
   await shot("12-help");
 });
+
+test("書き出し: 選んでいるときは選んだ物だけ", async () => {
+  await write(300, 200, "選ぶ文字");
+  await write(300, 400, "選ばない文字");
+  await page.locator(".node", { hasText: /^選ぶ文字$/ }).click({ modifiers: ["Control"] });
+  await page.locator(".tbtn.export").click();
+  await expect(page.locator(".ctxmenu .item", { hasText: "選んでいる 1 件" })).toBeVisible();
+  await page.getByText("Markdown(.md)").first().click();
+  await expect.poll(() => readdirSync(exportDir)).toEqual(["ホーム-選択.md"]);
+  const md = readFileSync(path.join(exportDir, "ホーム-選択.md"), "utf8");
+  expect(md).toContain("選ぶ文字");
+  expect(md).not.toContain("選ばない文字");
+});

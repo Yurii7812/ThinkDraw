@@ -76,6 +76,8 @@ export const T = {
   exportPng: "画像(.png)",
   exportHtml: "HTML(.html)",
   exportCopy: "Markdown をコピー",
+  exportSelHead: (n: number) => `選んでいる ${n} 件を書き出す`,
+  exportWhole: "グループ全体を書き出す",
   fill: "背景色",
   fillNone: "背景なし",
   bundle: "束ねる(Ctrl+G)",

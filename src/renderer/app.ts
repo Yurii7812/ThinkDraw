@@ -852,14 +852,21 @@ class App {
   private openExport(): void {
     const el = document.querySelector(".tbtn.export") as HTMLElement | null;
     const r = el?.getBoundingClientRect();
-    const go = (k: ExportKind) => () => void exportGroup(this.vault, this.canvas.group, this.canvas, k);
-    showMenu(r?.left ?? 200, (r?.bottom ?? 40) + 2, [
-      { label: T.exportMd, action: go("md") },
-      { label: T.exportPng, action: go("png") },
-      { label: T.exportHtml, action: go("html") },
+    // 今使っている側の画面。選んでいる物があれば、その範囲だけ(グループ全体は下のメニューから)
+    const c = this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas;
+    const sel = c.selection.size || c.strokeSel.size ? { ids: [...c.selection], strokes: [...c.strokeSel] } : undefined;
+    const go = (k: ExportKind, s?: typeof sel) => () => void exportGroup(this.vault, c.group, c, k, s);
+    const formats = (s?: typeof sel): MenuItem[] => [
+      { label: T.exportMd, action: go("md", s) },
+      { label: T.exportPng, action: go("png", s) },
+      { label: T.exportHtml, action: go("html", s) },
       { separator: true, label: "" },
-      { label: T.exportCopy, action: go("copy") },
-    ]);
+      { label: T.exportCopy, action: go("copy", s) },
+    ];
+    const items: MenuItem[] = sel
+      ? [{ label: T.exportSelHead(sel.ids.length + sel.strokes.length), disabled: true }, ...formats(sel), { separator: true, label: "" }, { label: T.exportWhole, sub: formats() }]
+      : formats();
+    showMenu(r?.left ?? 200, (r?.bottom ?? 40) + 2, items);
   }
 
   // ---------- ペン ----------
