@@ -64,6 +64,9 @@ export interface CanvasHost {
   openTabBehind?(id: string): void;
   /** 引用の「飛ぶ」: 元の場所へ(同じボードなら、そこを見せる)。from = 押した引用 */
   jump?(target: string, from: string): void;
+  /** 線の種類ごとのいつもの色(0 = 決めていない) */
+  kindColor?(kind: LinkKind): number;
+  setKindColor?(kind: LinkKind, c: number): void;
   /** @ を打ったときの候補(時系列記録のしるし・種類と同じ) */
   tagCandidates?(): string[];
 }
@@ -468,7 +471,7 @@ export class Canvas {
       }
       // 島の中・島をまたぐ線も、種類(矢印・部分の括弧)と色は同じ(統合仕様 3)
       const e = edgeEnds(l.kind, p, q);
-      const g = svg("g", { class: `edge outer k-${l.kind}${l.color ? " c" + l.color : ""}` });
+      const g = svg("g", { class: `edge outer k-${l.kind}${this.linkColor(l) ? " c" + this.linkColor(l) : ""}` });
       g.append(svg("path", { class: "vis " + cls, d: `M${e.start.x},${e.start.y} L${e.end.x},${e.end.y}` }));
       if (e.fill) g.append(svg("path", { class: "end-fill", d: e.fill }));
       if (e.stroke) g.append(svg("path", { class: "end-stroke", d: e.stroke }));
@@ -735,7 +738,8 @@ export class Canvas {
       const sel = this.edgeSel.has(e.key);
       const route = routes.get(e.key) ?? null;
       const pl = route ?? [ends.start, ends.end];
-      const g = svg("g", { class: `edge k-${l.kind}${l.color ? " c" + l.color : ""}${sel ? " selected" : ""}`, "data-from": e.from, "data-to": e.to });
+      const lc = this.linkColor(l);
+      const g = svg("g", { class: `edge k-${l.kind}${lc ? " c" + lc : ""}${sel ? " selected" : ""}`, "data-from": e.from, "data-to": e.to });
       g.append(svg("path", { d: `M${p1.x},${p1.y} L${p2.x},${p2.y}`, class: "hit" }));
       g.append(svg("path", { d: polyPath(pl, pl.slice(1).map((_, i) => hops.get(e.key + "#" + i) ?? [])), class: "vis" }));
       if (ends.fill) g.append(svg("path", { d: ends.fill, class: "end-fill" }));
@@ -2467,6 +2471,11 @@ export class Canvas {
     }
     return out;
   }
+  /** 線の色: その線に付けた色、無ければその種類のいつもの色(2026-11-24 利用者) */
+  linkColor(l: Link): number {
+    return l.color || this.host.kindColor?.(l.kind) || 0;
+  }
+
   /** 選んだ線の向きを逆に(種類・色・文字はそのまま)。逆向きの線がもうある所はしない */
   reverseEdges(keys: string[]): void {
     let refused = 0;
@@ -2516,6 +2525,20 @@ export class Canvas {
     for (const k of NEW_LINK_KINDS) items.push({ label: T.kinds[k], preview: kindPreview(k), checked: kind === k, action: () => set({ kind: k }) });
     // 古い種類(太線・対立)の線は、そのまま見せる(選び直すと新しい種類になる)
     if (kind && !NEW_LINK_KINDS.includes(kind)) items.push({ label: T.kinds[kind] + T.oldKind, preview: kindPreview(kind), checked: true, disabled: true });
+    // この種類のいつもの色(色を付けていない線は、この色で描く。2026-11-24 利用者)
+    if (kind && this.host.setKindColor) {
+      const cur = this.host.kindColor?.(kind) ?? 0;
+      items.push({ separator: true, label: "" });
+      items.push({
+        label: T.kindDefaultColor(T.kinds[kind]),
+        sub: [
+          {
+            label: "",
+            swatches: Array.from({ length: PRESET_COLORS + 1 }, (_, c) => ({ color: c, title: c ? `${T.color} ${c}` : T.colorDefault, active: c === cur, action: () => this.host.setKindColor!(kind, c) })),
+          },
+        ],
+      });
+    }
     if (links.some((x) => x.l.label)) {
       const size = same((l) => l.size ?? 0);
       items.push({ separator: true, label: "" });

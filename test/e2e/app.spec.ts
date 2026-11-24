@@ -1176,7 +1176,7 @@ test("2026-11-24 統合仕様 3〜6: 線を選ぶ・R で反転・メニュー(�
   await menu.locator(".item", { hasText: "部分・全体" }).click();
   await expect(page.locator("g.edge.k-part .end-stroke")).toHaveCount(1);
   await page.mouse.click(m.x, m.y, { button: "right" });
-  await page.locator(".ctxmenu .sw.c3").click();
+  await page.locator(".ctxmenu > .swatches .sw.c3").click();
   await expect(page.locator("g.edge.c3")).toHaveCount(1);
   await settle();
   expect(mdFiles()[idOf("全体") + ".md"]).toMatch(/kind: part.*color: 3/);
@@ -1395,7 +1395,7 @@ test("2026-11-24 修正8: 括弧はノードの手前で欠けない・線は文
   const sel = await edgeMid(0);
   await page.mouse.click(sel.x, sel.y, { button: "right" });
   await expect(page.locator(".ctxmenu .menuhead", { hasText: "2 本の線" })).toBeVisible();
-  await page.locator(".ctxmenu .sw.c5").click();
+  await page.locator(".ctxmenu > .swatches .sw.c5").click();
   await expect(page.locator("g.edge.c5")).toHaveCount(2);
   await page.keyboard.press("Delete");
   await expect(page.locator("g.edge")).toHaveCount(0);
@@ -1543,4 +1543,36 @@ test("2026-11-24: グループをよける線は、上・横・下で同じく�
   expect(Math.max(...xs)).toBeGreaterThan(grp.x + grp.width);
   expect(Math.min(...xs)).toBeGreaterThan(grp.x - 2);
   await shot("36-around");
+});
+
+test("2026-11-24: 線の右クリックで、その種類のいつもの色を決める(色を付けていない線はその色・付けた線はそのまま)", async () => {
+  await write(250, 200, "甲");
+  await write(650, 200, "乙");
+  await write(250, 500, "丙");
+  await write(650, 500, "丁");
+  await linkTo("甲", "乙");
+  await linkTo("丙", "丁");
+  await expect(page.locator("g.edge")).toHaveCount(2);
+  // 下の線にだけ色を付ける
+  const ends = await page.locator("g.edge").evaluateAll((gs) => gs.map((g) => g.getAttribute("data-from")));
+  await settle();
+  const lower = ends.indexOf(idOf("丙"));
+  let m = await edgeMid(lower);
+  await page.mouse.click(m.x, m.y, { button: "right" });
+  await page.locator(".ctxmenu > .swatches .sw.c2").click();
+  // 上の線の右クリック → 「通常の線」のいつもの色 › 色 5
+  const upper = 1 - lower;
+  m = await edgeMid(upper);
+  await page.mouse.click(m.x, m.y, { button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "のいつもの色" }).click();
+  await page.locator(".ctxmenu .submenu .sw.c5").click();
+  await expect(page.locator(`g.edge[data-from='${idOf("甲")}'].c5`)).toHaveCount(1);
+  await expect(page.locator(`g.edge[data-from='${idOf("丙")}'].c2`)).toHaveCount(1);
+  // 新しく引いた線も、いつもの色
+  await write(450, 650, "戊");
+  await linkTo("丁", "戊");
+  await expect(page.locator(`g.edge[data-from='${idOf("丁")}'].c5`)).toHaveCount(1);
+  // 線のファイルには色を書かない(いつもの色はアプリの設定)
+  await settle();
+  expect(mdFiles()[idOf("甲") + ".md"]).not.toContain("color:");
 });

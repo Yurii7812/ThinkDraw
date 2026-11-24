@@ -231,6 +231,7 @@ export const T = {
   linkReverseShort: "反転",
   edgeDelete: "削除",
   colorDefault: "いつもの色",
+  kindDefaultColor: (k: string) => `「${k}」のいつもの色`,
   labelSize: "文字の大きさ",
   penSizeFine: "細かな太さ",
   penExitTip: "Esc か右上のペンのボタンで、ペンをやめる",

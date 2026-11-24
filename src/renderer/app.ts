@@ -56,6 +56,8 @@ interface Config {
   theme?: Theme;
   draw?: Partial<DrawConfig>;
   pen?: Partial<PenState>;
+  /** 線の種類ごとのいつもの色(2026-11-24) */
+  edgeColors?: Record<string, number>;
 }
 const STATE_FILE = "state.json";
 const HISTORY_MAX = 50; // 戻る・進むで覚える数
@@ -301,6 +303,7 @@ class App {
     this.canvas = new Canvas(
       {
         vault: this.vault,
+        kindColor: (k: string) => this.config.edgeColors?.[k] ?? 0,
         openGroup: (id) => this.openGroup(id),
         openBody: (id) => this.openBody(id),
         goToNode: (id) => this.goToNode(id, false, true),
@@ -322,6 +325,7 @@ class App {
         openTabBehind: (id) => this.openInTab(id, false),
         jump: (target, from) => this.jump(target, from),
         tagCandidates: () => this.tagCandidates(),
+        setKindColor: (k, c) => this.setKindColor(k, c),
         extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
         groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openGroup(g)),
         openFile: (rel) => void api().openAsset(rel),
@@ -728,6 +732,7 @@ class App {
       const pc: Canvas = new Canvas(
         {
           vault: this.vault,
+          kindColor: (k: string) => this.config.edgeColors?.[k] ?? 0,
           openGroup: (id) => open(id),
           openBody: (id) => open(pc.group, id),
           goToNode: (id) => open(pc.group, id),
@@ -878,6 +883,16 @@ class App {
     const sel = (loc.sel ?? []).filter((i) => this.canvas.rectOf(i));
     if (sel.length) this.canvas.setSelection(sel);
     this.updateBar();
+  }
+
+  /** 線の種類のいつもの色を変える(アプリの設定に覚える。開いている画面を描き直す) */
+  private setKindColor(kind: string, c: number): void {
+    const m = { ...(this.config.edgeColors ?? {}) };
+    if (c) m[kind] = c;
+    else delete m[kind];
+    this.config.edgeColors = m;
+    api().setConfig({ edgeColors: m });
+    for (const cv of [this.canvas, this.peek, this.whole]) cv?.requestRender();
   }
 
   /** @ の候補: 使ったしるし(マーカー・文字とノートの @)と、時系列記録の種類。よく使う順 */
@@ -1147,6 +1162,7 @@ class App {
       this.peek = new Canvas(
         {
           vault: this.vault,
+          kindColor: (k: string) => this.config.edgeColors?.[k] ?? 0,
           openGroup: (id) => this.openPeek(id),
           openBody: (id) => this.openBody(id),
           goToNode: (id) => this.openBeside(id),
@@ -1245,6 +1261,7 @@ class App {
     const w = new Canvas(
       {
         vault: this.vault,
+        kindColor: (k: string) => this.config.edgeColors?.[k] ?? 0,
         openGroup: (g) => {
           this.main.classList.remove("whole-full");
           this.openGroup(g);
