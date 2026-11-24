@@ -1,6 +1,6 @@
 // 書き出し(画像・HTML): いまの画面と同じ並びを、SVG にして PNG や HTML にする
 import { groupToMarkdown, labelOf } from "../core/export";
-import { edgeEnds } from "./edgeshape";
+import { edgeEnds, partEnd } from "./edgeshape";
 import { ROOT_ID } from "../core/types";
 import type { Vault } from "../core/vault";
 import { strokeD, type Canvas } from "./canvas";
@@ -58,7 +58,7 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
       const p1 = clip(a, b.x + b.w / 2, b.y + b.h / 2), p2 = clip(b, a.x + a.w / 2, a.y + a.h / 2);
       const dash = l.kind === "dashed" ? ' stroke-dasharray="6 5"' : "";
       const lc = l.color ? col(l.color) : l.kind === "oppose" ? css("--danger") : edge;
-      const e = edgeEnds(l.kind, p1, p2);
+      const e = edgeEnds(l.kind, p1, l.kind === "part" ? partEnd(b, p1, p2) : p2);
       parts.push(`<line x1="${e.start.x}" y1="${e.start.y}" x2="${e.end.x}" y2="${e.end.y}" stroke="${lc}" stroke-width="${l.kind === "thick" ? 4 : 1.5}"${dash}/>`);
       if (e.fill) parts.push(`<path d="${e.fill}" fill="${lc}"/>`);
       if (e.stroke) parts.push(`<path d="${e.stroke}" fill="none" stroke="${lc}" stroke-width="2"/>`);

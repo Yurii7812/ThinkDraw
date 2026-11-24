@@ -152,7 +152,7 @@ input, textarea { font: inherit; color: inherit; }
 /* 線の文字(2026-11-24 統合仕様 6): 文章と同じ大きさ・不透明な薄い灰色の背景・枠なし */
 .edgelabel { fill: var(--fg); font-size: 15px; cursor: grab; }
 .elabel-bg { fill: var(--label-bg); cursor: grab; }
-.edge.selected .elabel-bg { stroke: var(--accent); stroke-width: 1; }
+.elabel.selected .elabel-bg { stroke: var(--accent); stroke-width: 1; }
 .edgelabel-input { position: absolute; transform: translate(-50%, -50%); font: inherit; font-size: 15px; text-align: center; padding: 2px 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--canvas); color: var(--fg); outline: none; pointer-events: auto; z-index: 5; }
 .linkdrag { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .spreadframe { fill: none; stroke: var(--frame-line); stroke-width: 1; }
@@ -957,3 +957,17 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .img-h.nw { left: -6px; top: -6px; cursor: nwse-resize; } .img-h.se { right: -6px; bottom: -6px; cursor: nwse-resize; }
 .img-h.ne { right: -6px; top: -6px; cursor: nesw-resize; } .img-h.sw { left: -6px; bottom: -6px; cursor: nesw-resize; }
 .rec-time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* ノードの右クリック(2026-11-24 修正8) */
+.ctxmenu .mb-hint { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ctxmenu .menucards { display: flex; flex-direction: column; gap: 4px; padding: 2px 4px 4px; }
+.ctxmenu .mc { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px solid var(--line); background: none; color: var(--fg); border-radius: 8px; padding: 6px 10px 6px 6px; cursor: pointer; }
+.ctxmenu .mc:hover { background: var(--accent-soft); border-color: var(--accent); }
+.ctxmenu .mc-pic { flex: none; color: var(--muted); }
+.ctxmenu .mc:hover .mc-pic { color: var(--fg); }
+.ctxmenu .mc-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ctxmenu .mc-title { font-size: 13px; font-weight: 600; }
+.ctxmenu .mc-desc { font-size: 11px; color: var(--muted); }
+.ctxmenu .mc-hint { flex: none; font-size: 10.5px; color: var(--muted); font-family: inherit; align-self: flex-start; margin-top: 2px; }
+.ctxmenu .item.has-desc .mi-label { display: flex; flex-direction: column; gap: 1px; }
+.ctxmenu .mi-desc { font-size: 11px; color: var(--muted); }
+.rubber.edges { border-style: dashed; background: color-mix(in srgb, var(--accent) 6%, transparent); }

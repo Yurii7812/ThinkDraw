@@ -125,3 +125,32 @@ export function kindPreview(kind: LinkKind): string {
     (e.stroke ? `<path d="${e.stroke}" fill="none" stroke="currentColor" stroke-width="1.8"/>` : "")
   );
 }
+
+/**
+ * 部分・全体の括弧が、部分のノードに隠れないように線の終わりを手前へずらす(2026-11-24 修正8・利用者の見本)。
+ * 括弧の四隅がノードの箱(+ gap)の外に出るまで、線に沿って from の方へ下げる。ノードは動かさない
+ */
+export function partEnd(box: { x: number; y: number; w: number; h: number }, from: Pt, to: Pt, gap = 6): Pt {
+  const len = Math.hypot(to.x - from.x, to.y - from.y) || 1;
+  const ux = (to.x - from.x) / len, uy = (to.y - from.y) / len;
+  const nx = -uy, ny = ux;
+  const H = BR_H / 2, D = BR_D;
+  const L = box.x - gap, R = box.x + box.w + gap, T = box.y - gap, B = box.y + box.h + gap;
+  const inside = (x: number, y: number) => x > L && x < R && y > T && y < B;
+  let b = { x: to.x - ux * 4, y: to.y - uy * 4 }; // 見本のように少し手前から
+  for (let k = 0; k < 60; k++) {
+    const bk = { x: b.x - ux * D, y: b.y - uy * D };
+    const pts = [
+      [b.x + nx * H, b.y + ny * H],
+      [b.x - nx * H, b.y - ny * H],
+      [bk.x + nx * H, bk.y + ny * H],
+      [bk.x - nx * H, bk.y - ny * H],
+    ];
+    if (!pts.some(([x, y]) => inside(x, y))) break;
+    b = { x: b.x - ux, y: b.y - uy };
+  }
+  // 近すぎて線より手前に戻ってしまうときは、線の真ん中まで
+  const back = (b.x - from.x) * ux + (b.y - from.y) * uy;
+  if (back < len / 2) b = { x: from.x + ux * Math.max(len / 2, BR_D * 2), y: from.y + uy * Math.max(len / 2, BR_D * 2) };
+  return b;
+}

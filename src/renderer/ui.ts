@@ -58,7 +58,11 @@ export interface MenuItem {
   /** 赤い字(消すなど) */
   danger?: boolean;
   /** 一番上に横に並べる、絵と名前の大きなボタン(右クリックの「よく使う操作」) */
-  bar?: { icon: string; label: string; title?: string; action: () => void; danger?: boolean; keepOpen?: boolean; key?: string }[];
+  bar?: { icon: string; label: string; title?: string; action: () => void; danger?: boolean; keepOpen?: boolean; key?: string; hint?: string }[];
+  /** 小さな図・名前・説明・ショートカットの大きなボタンを縦に(束ねる・引用で新しいグループ・枠で囲む の違いを見せる) */
+  cards?: { diagram: string; title: string; desc: string; hint?: string; action: () => void }[];
+  /** 名前の下に小さく出す説明 */
+  desc?: string;
   /** 見出し(押せない小さな字) */
   heading?: boolean;
   /** メニューが開いている間、このキー 1 つで選べる(例: "r")。右に小さく出す */
@@ -76,6 +80,7 @@ export const MENU_ICONS: Record<string, string> = {
   color: '<circle cx="12" cy="12" r="8"/><circle cx="9" cy="10" r="1.2"/><circle cx="14" cy="9" r="1.2"/><circle cx="16" cy="13" r="1.2"/>',
   trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>',
   reverse: '<path d="M4 8h15l-4-4M20 16H5l4 4"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
   frame: '<rect x="3" y="4" width="18" height="16" rx="3" stroke-dasharray="3 2"/><path d="M8 10h8M8 14h5"/>',
   tab: '<path d="M3 19V7h7l2 3h9v9z"/><path d="M14 14h4M16 12v4"/>',
   beside: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/>',
@@ -117,7 +122,7 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
         for (const x of it.bar) {
           const ico = svg("svg", { viewBox: "0 0 24 24", width: 20, height: 20, "aria-hidden": "true" });
           ico.innerHTML = MENU_ICONS[x.icon] ?? "";
-          const bb = h("button", { class: "mb-btn" + (x.danger ? " danger" : ""), title: x.title ?? x.label, "aria-label": x.title ?? x.label }, ico, h("span", { text: x.label }));
+          const bb = h("button", { class: "mb-btn" + (x.danger ? " danger" : "") + (x.hint ? " has-hint" : ""), title: x.title ?? x.label, "aria-label": x.title ?? x.label }, ico, h("span", { text: x.label }), x.hint ? h("small", { class: "mb-hint", text: x.hint }) : null);
           bb.addEventListener("click", () => {
             if (!x.keepOpen) closeMenu();
             x.action();
@@ -131,13 +136,28 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
         parent.append(row);
         continue;
       }
+      if (it.cards) {
+        const col = h("div", { class: "menucards" });
+        for (const c of it.cards) {
+          const pic = svg("svg", { class: "mc-pic", viewBox: "0 0 48 32", width: 48, height: 32, "aria-hidden": "true" });
+          pic.innerHTML = c.diagram;
+          const b = h("button", { class: "mc", title: c.title + (c.hint ? ` (${c.hint})` : "") }, pic, h("span", { class: "mc-text" }, h("span", { class: "mc-title", text: c.title }), h("span", { class: "mc-desc", text: c.desc })), c.hint ? h("kbd", { class: "mc-hint", text: c.hint }) : null);
+          b.addEventListener("click", () => {
+            closeMenu();
+            c.action();
+          });
+          col.append(b);
+        }
+        parent.append(col);
+        continue;
+      }
       if (it.heading) {
         parent.append(h("div", { class: "menuhead", text: it.label }));
         continue;
       }
       const pv = it.preview ? svg("svg", { class: "mi-preview", viewBox: "0 0 64 14", width: 64, height: 14, "aria-hidden": "true" }) : null;
       if (pv) pv.innerHTML = it.preview!;
-      const b = h("button", { class: "item" + (it.checked ? " checked" : "") + (it.danger ? " danger" : "") + (pv ? " has-preview" : ""), role: "menuitem", disabled: it.disabled }, pv, h("span", { class: "mi-label", text: it.label }), it.hint || it.key ? h("span", { class: "mi-hint", text: it.hint ?? it.key!.toUpperCase() }) : null);
+      const b = h("button", { class: "item" + (it.checked ? " checked" : "") + (it.danger ? " danger" : "") + (pv ? " has-preview" : "") + (it.desc ? " has-desc" : ""), role: "menuitem", disabled: it.disabled }, pv, it.desc ? h("span", { class: "mi-label" }, h("span", { text: it.label }), h("small", { class: "mi-desc", text: it.desc })) : h("span", { class: "mi-label", text: it.label }), it.hint || it.key ? h("span", { class: "mi-hint", text: it.hint ?? it.key!.toUpperCase() }) : null);
       if (it.key && !it.disabled) menuKeys.set(it.key.toLowerCase(), () => b.click());
       if (it.sub) {
         b.classList.add("hassub");
@@ -178,6 +198,8 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
   };
   build(el, items);
   document.body.append(el);
+  // 窓より高いときだけ、メニューの中をスクロール(ふだんは横に出る小メニューを切らないよう、そのまま)
+  if (el.getBoundingClientRect().height > innerHeight - 8) Object.assign(el.style, { maxHeight: innerHeight - 8 + "px", overflowY: "auto" });
   const r = el.getBoundingClientRect();
   el.style.left = Math.min(x, innerWidth - r.width - 4) + "px";
   el.style.top = Math.min(y, innerHeight - r.height - 4) + "px";

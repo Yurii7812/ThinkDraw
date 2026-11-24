@@ -514,7 +514,7 @@ test("引用を Delete で消しても、元のノードは消えない(引用�
   const ref = page.locator(".node.ref", { hasText: "元の話" });
   await expect(ref).toHaveCount(1);
   await ref.click({ button: "right" });
-  await page.locator(".ctxmenu .mb-btn", { hasText: "消す" }).click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "引用を外す" }).click();
   await expect(ref).toHaveCount(0);
   await settle();
   expect(titles()).toContain("元の話");
@@ -765,8 +765,15 @@ test("分割: 右クリックの「反対側の画面に引用する」", async 
 test("右クリック: 一番上に絵付きのボタン(書き直す・つなぐ・束ねる・囲む・タブで開く・消す)、その下に色、グループの操作は見出しの下", async () => {
   await write(300, 200, "ひとつ");
   await page.locator(".node", { hasText: "ひとつ" }).click({ button: "right" });
-  await expect(page.locator(".ctxmenu .menubar .mb-btn")).toHaveCount(6); // 書き直す・つなぐ・束ねる・囲む・タブで開く・消す
-  await expect(page.locator(".ctxmenu .menuhead", { hasText: "グループ" })).toBeVisible();
+  // 2026-11-24 修正8: 上は 書き直す・リンク・コピー・削除(ショートカットつき)。束ねる・引用で新しいグループ・枠で囲む は図つきで別に
+  await expect(page.locator(".ctxmenu .menubar .mb-btn")).toHaveText([/書き直す/, /リンク.*Ctrl\+L/, /コピー.*Ctrl\+C/, /削除.*Delete/]);
+  await expect(page.locator(".ctxmenu .menucards .mc")).toHaveText([/束ねる.*Ctrl\+G/, /引用で新しいグループ.*Ctrl\+Shift\+G/, /枠で囲む.*Ctrl\+B/]);
+  await expect(page.locator(".ctxmenu .menuhead", { hasText: "グループ・構造" })).toBeVisible();
+  await expect(page.locator(".ctxmenu .menuhead", { hasText: "別のグループとの関係" })).toBeVisible();
+  await expect(page.locator(".ctxmenu .item", { hasText: "ほかのグループへ移す" })).toContainText("ここから外して");
+  await expect(page.locator(".ctxmenu .item", { hasText: "別のグループにも入れる" })).toContainText("ここにも残し");
+  const mb = (await page.locator(".ctxmenu").boundingBox())!;
+  expect(mb.y + mb.height).toBeLessThanOrEqual(800); // 画面からはみ出さない
   await shot("16-menu");
   await page.locator(".ctxmenu .swatches").first().locator(".sw.c1").click();
   await expect(page.locator(".node.t-text.c1", { hasText: "ひとつ" })).toHaveCount(1);
@@ -1326,4 +1333,75 @@ test("2026-11-24 統合仕様 8〜10・15: 画像の大きさ(置いた場所ご
   await expect(page.locator(".group-title")).toHaveText("新しい名前");
   await page.locator(".group-title").click(); // 名前を押すと上のグループ(前と同じ)
   await expect(page.locator(".ctxmenu .item", { hasText: "ホーム" })).toHaveCount(1);
+});
+
+test("2026-11-24 修正8: 括弧はノードの手前で欠けない・線は文字とラベルの所を通らない(ラベルは線より手前の層)・Shift+ドラッグで線だけ範囲選択", async () => {
+  await write(250, 200, "全体のノード");
+  await write(700, 520, "部分のノード");
+  await linkTo("全体のノード", "部分のノード");
+  await expect(page.locator("g.edge")).toHaveCount(1);
+  const m = await edgeMid();
+  await page.mouse.click(m.x, m.y, { button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "部分・全体" }).click();
+  await expect(page.locator("g.edge.k-part .end-stroke")).toHaveCount(1);
+  // 括弧の四隅が、部分のノードの箱の外(余白つき)にある
+  const clear = async () =>
+    page.evaluate(() => {
+      const br = (document.querySelector("g.edge.k-part .end-stroke") as SVGPathElement).getBoundingClientRect();
+      const nodes = [...document.querySelectorAll(".node")].filter((n) => n.textContent?.includes("部分のノード"));
+      const nr = nodes[0].getBoundingClientRect();
+      const overlap = br.left < nr.right && nr.left < br.right && br.top < nr.bottom && nr.top < br.bottom;
+      return !overlap;
+    });
+  expect(await clear()).toBe(true);
+  // 水平・垂直・近い所でも
+  for (const [dx, dy] of [[350, 0], [0, 220], [150, 70]]) {
+    const n = page.locator(".node", { hasText: "部分のノード" });
+    const b = (await n.boundingBox())!;
+    const a = (await page.locator(".node", { hasText: "全体のノード" }).boundingBox())!;
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await page.mouse.down({ button: "right" });
+    await page.mouse.move(a.x + a.width / 2 + dx, a.y + a.height / 2 + dy, { steps: 6 });
+    await page.mouse.up({ button: "right" });
+    await expect(page.locator("g.edge.k-part")).toHaveCount(1);
+    expect(await clear(), `${dx},${dy}`).toBe(true);
+  }
+  // 線は文字の所を描かない(マスク)、ラベルは線より手前の層
+  await expect(page.locator("mask#edge-mask rect[fill=black]")).not.toHaveCount(0);
+  const order = await page.evaluate(() => [...document.querySelector(".edges")!.children].map((c) => c.getAttribute("class") ?? c.tagName));
+  expect(order.indexOf("edge-lines")).toBeLessThan(order.indexOf("edge-labels"));
+  // Shift+ドラッグ: 線だけを範囲で選ぶ(両端のノードは範囲の外でも)。右クリックで色をまとめて・Delete で線だけ消す
+  await write(250, 650, "左下");
+  await write(800, 650, "右下");
+  await linkTo("左下", "右下");
+  await expect(page.locator("g.edge")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await page.keyboard.down("Shift");
+  await page.mouse.move(480, 600);
+  await page.mouse.down();
+  await page.mouse.move(560, 700, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  await expect(page.locator("g.edge.selected")).toHaveCount(1);
+  await expect(page.locator(".node.selected")).toHaveCount(0);
+  await page.keyboard.down("Shift");
+  await page.keyboard.down("Control");
+  await page.mouse.move(100, 100);
+  await page.mouse.down();
+  await page.mouse.move(1000, 760, { steps: 5 });
+  await page.mouse.up();
+  await page.keyboard.up("Control");
+  await page.keyboard.up("Shift");
+  await expect(page.locator("g.edge.selected")).toHaveCount(2);
+  const sel = await edgeMid(0);
+  await page.mouse.click(sel.x, sel.y, { button: "right" });
+  await expect(page.locator(".ctxmenu .menuhead", { hasText: "2 本の線" })).toBeVisible();
+  await page.locator(".ctxmenu .sw.c5").click();
+  await expect(page.locator("g.edge.c5")).toHaveCount(2);
+  await page.keyboard.press("Delete");
+  await expect(page.locator("g.edge")).toHaveCount(0);
+  await expect(page.locator(".node", { hasText: "左下" })).toHaveCount(1); // ノードは残る
+  await page.keyboard.press("Control+z");
+  await expect(page.locator("g.edge")).toHaveCount(2);
+  await shot("32-fix8");
 });

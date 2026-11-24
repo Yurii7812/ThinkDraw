@@ -3,7 +3,7 @@ import { gap, placeAround, segHitsRect, type Rect } from "../core/placement";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
 import { NEW_LINK_KINDS, ROOT_ID, type Link, type LinkKind, type Stroke, type TDNode } from "../core/types";
-import { edgeEnds, findHops, hopPath, kindPreview, type Pt } from "./edgeshape";
+import { edgeEnds, findHops, hopPath, kindPreview, partEnd, type Pt } from "./edgeshape";
 import { cardName, spreadDef } from "../decks";
 import { PROMPT_BY_ID } from "../decks/prompts";
 import { cardFace, faceHeight } from "./cardface";
@@ -78,12 +78,12 @@ interface Draft {
 type Drag =
   | { kind: "node-press"; id: string; sx: number; sy: number; ctrl: boolean; target: Element; wasSelected: boolean }
   | { kind: "stroke-press"; id: string; sx: number; sy: number; ctrl: boolean }
-  | { kind: "empty-press"; sx: number; sy: number; ctrl: boolean }
+  | { kind: "empty-press"; sx: number; sy: number; ctrl: boolean; shift?: boolean }
   | { kind: "right-node"; id: string; sx: number; sy: number }
   | { kind: "right-stroke"; id: string; sx: number; sy: number }
   | { kind: "right-empty"; sx: number; sy: number }
   | { kind: "link"; from: string; line: SVGLineElement }
-  | { kind: "rubber"; sx: number; sy: number; box: HTMLElement; base: Set<string>; baseStrokes: Set<string> }
+  | { kind: "rubber"; sx: number; sy: number; box: HTMLElement; base: Set<string>; baseStrokes: Set<string>; edges?: Set<string> }
   | { kind: "move"; ids: string[]; strokes: string[]; sx: number; sy: number; start: Map<string, { x: number; y: number }>; dx: number; dy: number }
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "draw"; pts: number[]; path: SVGPathElement }
@@ -95,6 +95,15 @@ type Drag =
   | { kind: "img-resize"; id: string; corner: string; sx: number; sy: number; x0: number; y0: number; w0: number; h0: number; w?: number };
 
 const DRAG_START = 4;
+/** 右クリックの「グループ・構造」の小さな図(幅 48・高さ 32) */
+const DIAGRAMS = {
+  // 束ねる: 選んだ物が 1 つの箱(グループ)の中へ
+  bundle: '<rect x="4" y="3" width="40" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="10" y="9" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="27" y="9" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="18" y="18" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/>',
+  // 引用で新しいグループ: 元(左)はそのまま、引用した新しい箱(右)
+  quote: '<rect x="2" y="6" width="9" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="2" y="14" width="9" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="2" y="22" width="9" height="5" rx="1.5" fill="currentColor" opacity=".6"/><path d="M14 16h10M21 13l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="28" y="3" width="17" height="26" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="31.5" y="8" width="10" height="4" rx="1" fill="none" stroke="currentColor" stroke-dasharray="2 1.5"/><rect x="31.5" y="14.5" width="10" height="4" rx="1" fill="none" stroke="currentColor" stroke-dasharray="2 1.5"/><rect x="31.5" y="21" width="10" height="4" rx="1" fill="none" stroke="currentColor" stroke-dasharray="2 1.5"/>',
+  // 枠で囲む: 点線の枠。中身は動かない
+  frame: '<rect x="4" y="3" width="40" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 3"/><rect x="10" y="9" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="27" y="9" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="18" y="18" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/>',
+};
 /** 線の文字の大きさ(0 = 文章と同じ) */
 const LABEL_SIZES: [string, number][] = [["小", 12], ["ふつう(文章と同じ)", 0], ["大", 19], ["特大", 24]];
 /** Tab・Enter で次の文字を置くときに見込む幅 */
@@ -273,7 +282,7 @@ export class Canvas {
   setSelection(ids: Iterable<string>, strokes: Iterable<string> = []): void {
     if (this.edgeSel.size) {
       this.edgeSel.clear();
-      for (const g of this.edgesSvg.querySelectorAll("g.edge.selected")) g.classList.remove("selected");
+      for (const g of this.edgesSvg.querySelectorAll(".edge.selected, .elabel.selected")) g.classList.remove("selected");
     }
     this.selection = new Set(ids);
     this.strokeSel = new Set(strokes);
@@ -669,7 +678,8 @@ export class Canvas {
         const b = this.rects.get(l.to);
         if (!b) continue; // 両端が同じキャンバスの中にあるときだけ描く
         const p1 = this.clip(a, b.x + b.w / 2, b.y + b.h / 2);
-        const p2 = this.clip(b, a.x + a.w / 2, a.y + a.h / 2);
+        let p2 = this.clip(b, a.x + a.w / 2, a.y + a.h / 2);
+        if (l.kind === "part") p2 = partEnd(b, p1, p2); // 括弧が部分のノードに隠れないように
         out.push({ from: id, to: l.to, key: id + ">" + l.to, l, p1, p2, ends: edgeEnds(l.kind, p1, p2) });
       }
     }
@@ -691,10 +701,15 @@ export class Canvas {
     for (const k of [...this.edgeSel]) if (!alive.has(k)) this.edgeSel.delete(k);
     // 交差: 一方が小さな弧で乗り越える(2026-11-24 統合仕様 5)
     const hops = findHops(geom.map((g) => ({ key: g.key, a: g.ends.start, b: g.ends.end, ends: [g.from, g.to] as [string, string] })));
+    // 線の本体・終わりの印(下)と、線の文字(上)を別の層に。ノードと線の文字の所は線を描かない(マスク。2026-11-24 修正8)
+    const linesG = svg("g", { class: "edge-lines", mask: "url(#edge-mask)" });
+    const labelsG = svg("g", { class: "edge-labels" });
+    this.edgesSvg.append(linesG, labelsG);
     const labels: SVGGElement[] = [];
     for (const e of geom) {
       const { l, p1, p2, ends } = e;
-      const g = svg("g", { class: `edge k-${l.kind}${l.color ? " c" + l.color : ""}${this.edgeSel.has(e.key) ? " selected" : ""}`, "data-from": e.from, "data-to": e.to });
+      const sel = this.edgeSel.has(e.key);
+      const g = svg("g", { class: `edge k-${l.kind}${l.color ? " c" + l.color : ""}${sel ? " selected" : ""}`, "data-from": e.from, "data-to": e.to });
       g.append(svg("path", { d: `M${p1.x},${p1.y} L${p2.x},${p2.y}`, class: "hit" }));
       g.append(svg("path", { d: hopPath(ends.start, ends.end, hops.get(e.key) ?? []), class: "vis" }));
       if (ends.fill) g.append(svg("path", { d: ends.fill, class: "end-fill" }));
@@ -708,33 +723,44 @@ export class Canvas {
           g.append(svg("line", { class: "oppose-tick", x1: cx - uy * 8, y1: cy + ux * 8, x2: cx + uy * 8, y2: cy - ux * 8 }));
         }
       }
-      this.edgesSvg.append(g);
+      linesG.append(g);
       if (l.label) {
         // 線の上の文字(2026-11-24 統合仕様 6): 文章と同じ大きさ・不透明な薄い灰色の背景・いつも水平。ドラッグで線に沿って動く
         const at = this.labelAt(e.key, l);
-        const x = p1.x + (p2.x - p1.x) * at, y = p1.y + (p2.y - p1.y) * at;
-        const lg = svg("g", { class: "elabel", transform: `translate(${Math.round(x * 10) / 10},${Math.round(y * 10) / 10})` }) as SVGGElement;
+        const x = Math.round((p1.x + (p2.x - p1.x) * at) * 10) / 10, y = Math.round((p1.y + (p2.y - p1.y) * at) * 10) / 10;
+        const lg = svg("g", { class: `elabel${sel ? " selected" : ""}`, "data-from": e.from, "data-to": e.to, transform: `translate(${x},${y})` }) as SVGGElement;
         const bg = svg("rect", { class: "elabel-bg", rx: 4 });
         const t = svg("text", { class: "edgelabel", "text-anchor": "middle", "dominant-baseline": "central" });
         if (l.size) t.style.fontSize = l.size + "px";
         t.textContent = l.label;
         lg.append(bg, t);
-        g.append(lg);
+        labelsG.append(lg);
         labels.push(lg);
+        (lg as unknown as { _at: Pt })._at = { x, y };
       }
     }
-    // 文字の背景を、文字の大きさに合わせる(線の上に重ねて、後ろの線を隠す)
+    // 文字の背景を、文字の大きさに合わせる
+    const holes: Rect[] = [];
     for (const lg of labels) {
-      const t = lg.querySelector("text")!;
-      const bb = t.getBBox();
+      const bb = lg.querySelector("text")!.getBBox();
       const bg = lg.querySelector("rect")!;
-      bg.setAttribute("x", String(bb.x - 7));
-      bg.setAttribute("y", String(bb.y - 3));
-      bg.setAttribute("width", String(bb.width + 14));
-      bg.setAttribute("height", String(bb.height + 6));
+      const r = { x: bb.x - 7, y: bb.y - 3, w: bb.width + 14, h: bb.height + 6 };
+      bg.setAttribute("x", String(r.x));
+      bg.setAttribute("y", String(r.y));
+      bg.setAttribute("width", String(r.w));
+      bg.setAttribute("height", String(r.h));
+      const at = (lg as unknown as { _at: Pt })._at;
+      holes.push({ x: r.x + at.x, y: r.y + at.y, w: r.w, h: r.h });
     }
-    // 文字は線より前に
-    for (const lg of labels) this.edgesSvg.append(lg.parentElement!);
+    // マスク: ノード(枠は除く)と線の文字の所は、線を描かない。線の端・矢印・括弧はノードの少し外なので消えない
+    const fr = this.frameIds();
+    for (const [id, r] of this.rects) if (!fr.has(id)) holes.push({ x: r.x - 2, y: r.y - 2, w: r.w + 4, h: r.h + 4 });
+    const big = { x: -1e6, y: -1e6, width: 2e6, height: 2e6 };
+    const mask = svg("mask", { id: "edge-mask", maskUnits: "userSpaceOnUse", ...big });
+    mask.append(svg("rect", { ...big, fill: "white" }));
+    for (const r of holes) mask.append(svg("rect", { x: r.x, y: r.y, width: r.w, height: r.h, rx: 3, fill: "black" }));
+    defs.querySelector("#edge-mask")?.remove();
+    defs.append(mask);
     this.drawOuterEdges();
     this.draftLine();
   }
@@ -1001,7 +1027,7 @@ export class Canvas {
         e.preventDefault();
         return this.host.openGroup(isl.dataset.ig);
       }
-      const edgeEl = (e.target as Element).closest?.(".edge");
+      const edgeEl = (e.target as Element).closest?.(".edge, .elabel");
       if (edgeEl && !this.readOnly && edgeEl.getAttribute("data-from")) {
         e.preventDefault();
         return this.editLinkLabel(edgeEl.getAttribute("data-from")!, edgeEl.getAttribute("data-to")!);
@@ -1059,7 +1085,7 @@ export class Canvas {
       this.el.focus({ preventScroll: true });
       return;
     }
-    const edge = (e.target as Element).closest?.(".edge");
+    const edge = (e.target as Element).closest?.(".edge, .elabel");
     const id = this.nodeAt(e.target);
     const sid = id ? null : this.strokeAt(e.target);
     const ctrl = e.ctrlKey;
@@ -1104,7 +1130,7 @@ export class Canvas {
       }
       if (id) this.drag = { kind: "node-press", id, sx: e.clientX, sy: e.clientY, ctrl, target: e.target as Element, wasSelected: this.selection.size === 1 && this.selection.has(id) };
       else if (sid) this.drag = { kind: "stroke-press", id: sid, sx: e.clientX, sy: e.clientY, ctrl };
-      else this.drag = { kind: "empty-press", sx: e.clientX, sy: e.clientY, ctrl };
+      else this.drag = { kind: "empty-press", sx: e.clientX, sy: e.clientY, ctrl, shift: e.shiftKey };
     } else {
       if (id) this.drag = { kind: "right-node", id, sx: e.clientX, sy: e.clientY };
       else if (sid) this.drag = { kind: "right-stroke", id: sid, sx: e.clientX, sy: e.clientY };
@@ -1202,9 +1228,11 @@ export class Canvas {
       case "empty-press": {
         if (!far) return;
         this.commitDraft("esc");
-        const box = h("div", { class: "rubber" });
+        // Shift+ドラッグ: 線だけを範囲で選ぶ(一部でも通っていれば。Ctrl も押すと足す。2026-11-24 修正8)
+        const edgeMode = d.kind === "empty-press" && !!d.shift;
+        const box = h("div", { class: "rubber" + (edgeMode ? " edges" : "") });
         this.el.append(box);
-        this.drag = { kind: "rubber", sx: d.sx, sy: d.sy, box, base: d.ctrl ? new Set(this.selection) : new Set(), baseStrokes: d.ctrl ? new Set(this.strokeSel) : new Set() };
+        this.drag = { kind: "rubber", sx: d.sx, sy: d.sy, box, base: d.ctrl ? new Set(this.selection) : new Set(), baseStrokes: d.ctrl ? new Set(this.strokeSel) : new Set(), edges: edgeMode ? (d.ctrl ? new Set(this.edgeSel) : new Set()) : undefined };
         this.onMove(e);
         return;
       }
@@ -1262,6 +1290,13 @@ export class Canvas {
         const x1 = Math.max(d.sx, e.clientX), y1 = Math.max(d.sy, e.clientY);
         Object.assign(d.box.style, { left: x0 - r.left + "px", top: y0 - r.top + "px", width: x1 - x0 + "px", height: y1 - y0 + "px" });
         const a = this.toWorld(x0, y0), b = this.toWorld(x1, y1);
+        if (d.edges) {
+          const box = { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
+          const sel = new Set(d.edges);
+          for (const g of this.edgeGeom()) if (segHitsRect(g.p1.x, g.p1.y, g.p2.x, g.p2.y, box, 0)) sel.add(g.key);
+          this.setEdgeSel(sel);
+          return;
+        }
         const hit = (q: Rect) => q.x < b.x && q.x + q.w > a.x && q.y < b.y && q.y + q.h > a.y;
         const sel = new Set(d.base);
         for (const [i, q] of this.rects) if (hit(q)) sel.add(i);
@@ -1408,7 +1443,7 @@ export class Canvas {
         const om = (d as { outerMenu?: string }).outerMenu;
         if (om) return this.outerMenu(om, e.clientX, e.clientY);
         if (this.readOnly) return;
-        const edge = (e.target as Element).closest?.(".edge");
+        const edge = (e.target as Element).closest?.(".edge, .elabel");
         if (edge) return this.edgeMenu(edge.getAttribute("data-from")!, edge.getAttribute("data-to")!, e.clientX, e.clientY);
         return this.emptyMenu(e.clientX, e.clientY);
       }
@@ -2028,8 +2063,11 @@ export class Canvas {
     };
   }
 
-  /** ノードの右クリック(2026-11-23 利用者と決めた): 一番上に、よく使う操作を絵と名前の大きなボタンで横に並べ、
-   * その下に色の見本、そのあと「グループ」の操作を見出し付きで。ショートカットは右に小さく */
+  /**
+   * ノードの右クリック(2026-11-24 修正8 で作り直し。線のメニューとそろえる):
+   * 上によく使う操作(開く・リンク・コピー・削除。ショートカットつき)→ グループ・構造(束ねる・引用で新しいグループ・枠で囲む を図で区別)
+   * → 文字色・背景色 → このノードだけのこと → 別のグループとの関係(移す・入れる・引用する・外す の違いを一言で)
+   */
   private nodeMenu(id: string, x: number, y: number): void {
     const n = this.v.get(id);
     if (!n) return;
@@ -2037,10 +2075,13 @@ export class Canvas {
     const isRef = this.isQuote(id);
     const allRefs = ids.every((i) => this.v.isRefIn(this.group, i));
     const many = ids.length > 1;
-    // よく使う操作(横に並べる)
+    // よく使う操作
     const bar: NonNullable<MenuItem["bar"]> = [];
-    if (!many && isRef) bar.push({ icon: "open", label: T.mOrigin, title: T.jumpTip + " (↗・ダブルクリック)", action: () => this.jump(id) });
-    else if (!many) {
+    if (!many && isRef) {
+      const g = this.quotedGroup(id);
+      if (g) bar.push({ icon: "open", label: T.mOpen, title: T.openGroup, action: () => this.host.openGroup(g) });
+      else bar.push({ icon: "open", label: T.mOrigin, title: T.jumpTip + " (↗・ダブルクリック)", action: () => this.jump(id) });
+    } else if (!many) {
       if (n.type === "group") bar.push({ icon: "open", label: T.mOpen, title: T.openGroup, action: () => this.host.openGroup(id) });
       else if (n.type === "text" && n.paper) bar.push({ icon: "open", label: T.mOpen, title: PT.title, action: () => this.host.openPaper?.(n.paper!) });
       else if (n.type === "text" && n.file) bar.push({ icon: "open", label: T.mOpen, title: T.openFile, action: () => this.host.openFile?.(n.file!) });
@@ -2048,20 +2089,32 @@ export class Canvas {
       else if (n.type === "note") bar.push({ icon: "open", label: T.mOpen, title: T.openNote, action: () => this.host.openBody(id) });
       else bar.push({ icon: "open", label: T.mOpen, action: () => this.open(id) });
     }
-    bar.push({ icon: "link", label: T.linkShort, title: T.linkSearch + " (Ctrl+L)", action: () => this.linkBySearch() });
-    bar.push({ icon: "bundle", label: T.bundleShort, title: T.bundle + " (Ctrl+G)", action: () => this.bundleSelection() });
-    bar.push({ icon: "frame", label: T.frameShort, title: T.frameTip, action: () => this.frameSelection() });
-    if (this.host.openBeside && !many) bar.push({ icon: "tab", label: T.mBeside, title: T.openBeside, action: () => this.host.openBeside!(id) });
-    bar.push({ icon: "trash", label: T.deleteShort, title: (allRefs ? T.deleteRef : T.delete) + " (Delete)", danger: true, action: () => this.deleteItems(ids, true) });
+    bar.push({ icon: "link", label: T.linkShort, hint: "Ctrl+L", title: T.linkSearch, action: () => this.linkBySearch() });
+    bar.push({ icon: "copy", label: T.copyShort, hint: "Ctrl+C", title: T.copyTip, action: () => this.copySelection(ids) });
+    // 原本を消す(ゴミ箱)と、引用を外すだけ を分ける
+    bar.push({ icon: "trash", label: allRefs ? T.removeRef : T.deleteShort, hint: "Delete", title: allRefs ? T.deleteRef : T.delete, danger: true, action: () => this.deleteItems(ids, true) });
 
-    const items: MenuItem[] = [{ label: "", bar }];
-    if (many) items.unshift({ label: T.selCount(ids.length), heading: true });
+    const items: MenuItem[] = [];
+    if (many) items.push({ label: T.selCount(ids.length), heading: true });
+    items.push({ label: "", bar });
+    // グループ・構造: 3 つの違いを図で
+    items.push({ label: T.mStructHead, heading: true });
+    items.push({
+      label: "",
+      cards: [
+        { diagram: DIAGRAMS.bundle, title: T.bundleShort, desc: T.bundleDesc, hint: "Ctrl+G", action: () => this.bundleSelection() },
+        { diagram: DIAGRAMS.quote, title: T.quoteGroup, desc: T.quoteGroupDesc, hint: "Ctrl+Shift+G", action: () => this.quoteGroupSelection() },
+        { diagram: DIAGRAMS.frame, title: T.frameShort2, desc: T.frameDesc, hint: "Ctrl+B", action: () => this.frameSelection() },
+      ],
+    });
     // 色
-    items.push(this.colorItem(ids));
-    if (ids.every((i) => this.v.get(i)?.type === "text" && !this.v.get(i)?.file && !this.v.get(i)?.paper)) items.push(this.fillItem(ids));
+    items.push({ separator: true, label: "" });
+    const texts = ids.every((i) => this.v.get(i)?.type === "text" && !this.v.get(i)?.file && !this.v.get(i)?.paper);
+    items.push({ ...this.colorItem(ids), label: texts ? T.textColor : T.color });
+    if (texts) items.push(this.fillItem(ids));
     // このノードだけのこと
     const own: MenuItem[] = [];
-    if (!many && !isRef && n.type === "group") own.push({ label: T.rename, key: "r", action: () => this.renameGroup(id) }, { label: T.unbundle, action: () => this.v.unbundle(id) });
+    if (!many && !isRef && n.type === "group") own.push({ label: T.rename, key: "r", action: () => this.renameGroup(id) }, { label: T.unbundle, desc: T.unbundleDesc, action: () => this.v.unbundle(id) });
     if (!many && !isRef && n.type === "frame") own.push({ label: T.rename, key: "r", action: () => void this.renameFrame(id) });
     if (!many && !isRef && n.type === "text" && n.file) own.push({ label: T.rename, key: "r", action: () => this.editText(id) });
     if (!many && !isRef && n.type === "note")
@@ -2074,14 +2127,17 @@ export class Canvas {
         },
       });
     if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") own.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
+    if (this.host.openBeside && !many) own.push({ label: T.mBeside, hint: n.type === "group" ? "中ボタン" : undefined, action: () => this.host.openBeside!(id) });
+    if (!many) own.push({ label: T.cutShort, hint: "Ctrl+X", desc: T.cutDesc, action: () => this.copySelection(ids, true) });
     if (own.length) items.push({ separator: true, label: "" }, ...own);
-    // グループ(入れる・引用する・外す)
-    items.push({ label: T.mGroupHead, heading: true });
+    // 別のグループとの関係
+    items.push({ separator: true, label: "" }, { label: T.mRelHead, heading: true });
     items.push(...this.groupMenuItems(ids));
-    if (allRefs) items.push({ label: T.removeRef, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
+    if (allRefs) items.push({ label: T.removeRef, desc: T.removeRefDesc, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
     else
       items.push({
         label: T.removeFromGroup,
+        desc: T.removeFromGroupDesc,
         action: () => {
           let refused = false;
           this.v.tx(() => ids.forEach((i) => (refused = !this.v.removeFromGroup(this.group, i) || refused)));
@@ -2094,9 +2150,9 @@ export class Canvas {
   /** ほかのグループへ入れる・引用する(選んだときのバーの「グループへ」) */
   private groupMenuItems(ids: string[]): MenuItem[] {
     const items: MenuItem[] = [
-      { label: T.quoteGroup, key: "q", hint: "Ctrl+Shift+G", action: () => this.quoteGroupSelection() },
       {
         label: T.moveTo,
+        desc: T.moveToDesc,
         key: "m",
         action: async () => {
           const g = await this.host.pickGroup(T.pickMoveTitle);
@@ -2112,6 +2168,7 @@ export class Canvas {
       },
       {
         label: T.addToGroup,
+        desc: T.addToGroupDesc,
         action: async () => {
           const g = await this.host.pickGroup(T.pickGroupTitle);
           if (!g) return;
@@ -2126,6 +2183,7 @@ export class Canvas {
       },
       {
         label: T.quoteInto,
+        desc: T.quoteIntoDesc,
         action: async () => {
           const g = await this.host.pickGroup(T.pickQuoteTitle);
           if (!g) return;
@@ -2262,7 +2320,7 @@ export class Canvas {
     fit();
     inp.style.left = mx + "px";
     inp.style.top = my + "px";
-    this.edgesSvg.querySelector(`g.edge[data-from="${from}"][data-to="${to}"] .elabel`)?.setAttribute("visibility", "hidden");
+    this.edgesSvg.querySelector(`.elabel[data-from="${from}"][data-to="${to}"]`)?.setAttribute("visibility", "hidden");
     let done = false;
     const finish = (ok: boolean) => {
       if (done) return;
@@ -2291,7 +2349,7 @@ export class Canvas {
     const ks = new Set(keys);
     if (ks.size && (this.selection.size || this.strokeSel.size)) this.setSelection([]);
     this.edgeSel = ks;
-    for (const g of this.edgesSvg.querySelectorAll<SVGGElement>("g.edge")) g.classList.toggle("selected", ks.has(g.getAttribute("data-from") + ">" + g.getAttribute("data-to")));
+    for (const g of this.edgesSvg.querySelectorAll<SVGGElement>("g.edge, g.elabel")) g.classList.toggle("selected", ks.has(g.getAttribute("data-from") + ">" + g.getAttribute("data-to")));
   }
   private edgeLinks(keys: Iterable<string>): { from: string; to: string; l: Link }[] {
     const out: { from: string; to: string; l: Link }[] = [];
