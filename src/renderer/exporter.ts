@@ -42,6 +42,14 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
     const s = Math.min(dx ? r.w / 2 / Math.abs(dx) : Infinity, dy ? r.h / 2 / Math.abs(dy) : Infinity);
     return { x: cx + dx * s, y: cy + dy * s };
   };
+  // 枠は一番下に
+  for (const i of items) {
+    const n = v.get(i.id)!;
+    if (n.type !== "frame") continue;
+    const r = canvas.rectOf(i.id)!;
+    parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="12" fill="none" stroke="${n.color ? col(n.color) : edge}" stroke-width="1.5"/>`);
+    if (n.title) parts.push(`<text x="${r.x + 18}" y="${r.y + 4}" font-size="12" fill="${edge}" paint-order="stroke" stroke="${bg}" stroke-width="6">${esc(n.title)}</text>`);
+  }
   for (const i of items) {
     const a = canvas.rectOf(i.id)!;
     for (const l of v.get(i.id)!.links) {
@@ -51,7 +59,7 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
       const dash = l.kind === "dashed" ? ' stroke-dasharray="6 5"' : "";
       const mk = (l.kind === "arrow" || l.kind === "double" ? ' marker-end="url(#ah)"' : "") + (l.kind === "double" ? ' marker-start="url(#ah)"' : "");
       parts.push(`<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="${edge}" stroke-width="1.5"${dash}${mk}/>`);
-      if (l.label) parts.push(`<text x="${(p1.x + p2.x) / 2}" y="${(p1.y + p2.y) / 2 - 6}" text-anchor="middle" font-size="12" fill="${edge}">${esc(l.label)}</text>`);
+      if (l.label) parts.push(`<text x="${(p1.x + p2.x) / 2}" y="${(p1.y + p2.y) / 2 + 4}" text-anchor="middle" font-size="12" fill="${fg}" paint-order="stroke" stroke="${bg}" stroke-width="8">${esc(l.label)}</text>`);
     }
   }
   for (const s of strokes) {

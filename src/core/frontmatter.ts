@@ -5,8 +5,8 @@
 import YAML from "yaml";
 import { LINK_KINDS, type Link, type LinkKind, type Member, type NodeType, type Stroke, type TDNode } from "./types";
 
-const KNOWN = new Set(["id", "title", "type", "color", "fill", "file", "paper", "created", "updated", "members", "refs", "strokes", "links", "card", "spread"]);
-const TYPES: NodeType[] = ["text", "note", "group", "card"];
+const KNOWN = new Set(["id", "title", "type", "color", "fill", "file", "paper", "created", "updated", "members", "refs", "strokes", "links", "card", "spread", "size"]);
+const TYPES: NodeType[] = ["text", "note", "group", "card", "frame"];
 
 export class ParseError extends Error {}
 
@@ -35,6 +35,12 @@ function str(v: unknown, d = ""): string {
   if (v === null || v === undefined) return d;
   if (v instanceof Date) return v.toISOString();
   return String(v);
+}
+
+/** 枠の大きさ(無い・壊れているときは仮の大きさ) */
+function frameSize(v: unknown): { w: number; h: number } {
+  const o = v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  return { w: Math.max(40, num(o.w, 240)), h: Math.max(30, num(o.h, 160)) };
 }
 
 /** ファイルの中身を読む。fallbackId はファイル名から取った ID */
@@ -90,6 +96,7 @@ export function parseNode(src: string, fallbackId: string): TDNode {
     ...(num(data.fill) > 0 ? { fill: Math.trunc(num(data.fill)) } : {}),
     ...(/^assets\/[^\n]+$/.test(str(data.file)) ? { file: str(data.file) } : {}),
     ...(/^p[0-9a-f]{12}$/.test(str(data.paper)) ? { paper: str(data.paper) } : {}),
+    ...(type === "frame" ? { size: frameSize(data.size) } : {}),
     created: str(data.created),
     updated: str(data.updated),
     members,
@@ -155,6 +162,7 @@ export function serializeNode(n: TDNode): string {
   if (n.fill) L.push(`fill: ${n.fill}`);
   if (n.file) L.push(`file: ${scalar(n.file)}`);
   if (n.paper) L.push(`paper: ${scalar(n.paper)}`);
+  if (n.type === "frame" && n.size) L.push(`size: { w: ${Math.round(n.size.w)}, h: ${Math.round(n.size.h)} }`);
   if (n.created) L.push(`created: ${scalar(n.created)}`);
   if (n.updated) L.push(`updated: ${scalar(n.updated)}`);
   if (n.type === "group") {

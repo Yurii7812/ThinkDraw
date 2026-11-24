@@ -233,7 +233,7 @@ test("引用: Ctrl+L でほかのグループの物を引用して線でつな�
   await page.locator(".node", { hasText: "こちら" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+l");
   await page.keyboard.type("遠い話");
-  await page.keyboard.press("Enter");
+  await page.locator(".picker-row", { hasText: "遠い話" }).last().click(); // グループの中身 → ノード の順なので、ノードは下
   await expect(page.locator(".node.ref", { hasText: "遠い話" })).toHaveCount(1);
   await expect(page.locator(".edge")).toHaveCount(1);
   await settle();
@@ -494,7 +494,7 @@ test("引用を Delete で消しても、元のノードは消えない(引用�
   await page.locator(".node", { hasText: "ここ" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+l");
   await page.keyboard.type("元の話");
-  await page.keyboard.press("Enter");
+  await page.locator(".picker-row", { hasText: "元の話" }).last().click(); // グループの中身 → ノード の順なので、ノードは下
   const ref = page.locator(".node.ref", { hasText: "元の話" });
   await expect(ref).toHaveCount(1);
   await ref.click({ button: "right" });
@@ -722,10 +722,10 @@ test("分割: 右クリックの「反対側の画面に引用する」", async 
   await expect(page.locator(".left-pane .node.ref", { hasText: "向こうの物" })).toHaveCount(1);
 });
 
-test("右クリック: 一番上に絵付きのボタン(書き直す・つなぐ・束ねる・横に開く・消す)、その下に色、グループの操作は見出しの下", async () => {
+test("右クリック: 一番上に絵付きのボタン(書き直す・つなぐ・束ねる・囲む・横に開く・消す)、その下に色、グループの操作は見出しの下", async () => {
   await write(300, 200, "ひとつ");
   await page.locator(".node", { hasText: "ひとつ" }).click({ button: "right" });
-  await expect(page.locator(".ctxmenu .menubar .mb-btn")).toHaveCount(5); // 書き直す・つなぐ・束ねる・横に開く・消す
+  await expect(page.locator(".ctxmenu .menubar .mb-btn")).toHaveCount(6); // 書き直す・つなぐ・束ねる・囲む・横に開く・消す
   await expect(page.locator(".ctxmenu .menuhead", { hasText: "グループ" })).toBeVisible();
   await shot("16-menu");
   await page.locator(".ctxmenu .swatches").first().locator(".sw.c1").click();
@@ -748,4 +748,90 @@ test("ボードにも添付: 空きの右クリックの「添付 › ファイ�
   await settle();
   const files = Object.values(mdFiles());
   expect(files.some((t) => /title: 資料\.html\n/.test(t) && /file: "?assets\/\d{8}-[0-9a-f]{6}-資料\.html/.test(t))).toBe(true);
+});
+
+test("2026-11-24: グループは 1 回クリックで中へ・引用で新しいグループ(元はそのまま)・移す", async () => {
+  await write(300, 200, "りんご");
+  await write(300, 300, "みかん");
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+Shift+g");
+  await page.keyboard.type("果物の引用");
+  await page.keyboard.press("Escape");
+  await settle();
+  // 元の 2 つはホームにそのまま
+  await expect(page.locator(".node.t-text", { hasText: "りんご" })).toHaveCount(1);
+  await expect(page.locator(".node.t-text", { hasText: "みかん" })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await page.locator(".node.t-group", { hasText: "果物の引用" }).click();
+  await expect(page.locator(".group-title")).toHaveText("果物の引用");
+  await expect(page.locator(".node.ref")).toHaveCount(2);
+  await shot("24-quotegroup");
+  await page.locator(".i-back").click();
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+  // 別のグループを作って、右クリックの「ほかのグループへ移す…」で検索して移す
+  await page.mouse.click(700, 500, { button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "グループを作る" }).click();
+  await page.keyboard.type("箱");
+  await page.keyboard.press("Enter");
+  await settle();
+  await page.locator(".node.t-group", { hasText: "果物の引用" }).click({ button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "ほかのグループへ移す" }).click();
+  await page.keyboard.type("箱");
+  await expect(page.locator(".picker-sec").first()).toHaveText("グループの名前");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".node.t-group", { hasText: "果物の引用" })).toHaveCount(0);
+});
+
+test("2026-11-24: 検索は グループの名前 → 中身 → ノード の順", async () => {
+  await write(300, 200, "青いりんご");
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("果物");
+  await page.keyboard.press("Escape");
+  await settle();
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("りんご");
+  await expect(page.locator(".picker-sec")).toHaveText(["中身に当たったグループ", "ノード"]);
+  await expect(page.locator(".picker-row .pr-inside")).toHaveText("中: 青いりんご");
+  await shot("24-search");
+  await page.keyboard.press("Escape");
+});
+
+test("2026-11-24: 枠で囲む・枠から線・枠を動かすと中も動く・線の文字をダブルクリックで書く", async () => {
+  await write(300, 200, "あ");
+  await write(300, 280, "い");
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+b");
+  await expect(page.locator(".node.t-frame")).toHaveCount(1);
+  await settle();
+  expect(Object.values(mdFiles()).some((s) => /type: frame/.test(s) && /size: \{ w: \d+, h: \d+ \}/.test(s))).toBe(true);
+  // 選んだ枠から Tab で、つながった文字
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("枠から");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".node.t-text", { hasText: "枠から" })).toHaveCount(1);
+  await expect(page.locator(".edge")).toHaveCount(1);
+  // 枠を右ドラッグで動かすと、中の「あ」も動く
+  const before = await page.locator(".node.t-text", { hasText: "あ" }).boundingBox();
+  const fb = (await page.locator(".node.t-frame .e-t").boundingBox())!;
+  await page.mouse.move(fb.x + fb.width / 2, fb.y + fb.height / 2);
+  await page.mouse.down({ button: "right" });
+  await page.mouse.move(fb.x + fb.width / 2 + 60, fb.y + fb.height / 2 + 40, { steps: 5 });
+  await page.mouse.up({ button: "right" });
+  const after = await page.locator(".node.t-text", { hasText: "あ" }).boundingBox();
+  expect(Math.round(after!.x - before!.x)).toBe(60);
+  // 線をダブルクリックして文字
+  const mid = await page.evaluate(() => {
+    const p = document.querySelector(".edge .vis") as SVGPathElement;
+    const m = p.getPointAtLength(p.getTotalLength() / 2);
+    const pt = p.getScreenCTM()!;
+    return { x: pt.a * m.x + pt.c * m.y + pt.e, y: pt.b * m.x + pt.d * m.y + pt.f };
+  });
+  await page.mouse.dblclick(mid.x, mid.y);
+  await page.keyboard.type("なぜ");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".edgelabel")).toHaveText("なぜ");
+  await settle();
+  expect(Object.values(mdFiles()).some((s) => /label: "?なぜ"?/.test(s))).toBe(true);
+  await shot("24-frame");
 });

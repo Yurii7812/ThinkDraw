@@ -3,6 +3,7 @@ import type { Vault } from "../core/vault";
 import { ROOT_ID, type TDNode } from "../core/types";
 import { T } from "./strings";
 import { h } from "./ui";
+import { searchTiered } from "../core/search";
 
 export type PickResult = { id: string } | { url: string } | null;
 
@@ -44,24 +45,19 @@ export function openPicker(v: Vault, o: Opts): Promise<PickResult> {
       const q = input.value.trim();
       list.replaceChildren();
       rows = [];
-      let ids: string[];
-      if (q) ids = v.index.search(q, 80);
-      else if (o.mode === "group")
-        ids = [...v.nodes.values()]
-          .filter((n) => n.type === "group")
-          .sort((a, b) => (a.id === ROOT_ID ? -1 : b.id === ROOT_ID ? 1 : a.title.localeCompare(b.title, "ja")))
-          .map((n) => n.id);
-      else ids = [];
       if (/^https?:\/\/\S+$/.test(q) && o.mode === "link") {
         const el = h("div", { class: "picker-row" }, h("span", { class: "ico ico-url" }), h("div", { class: "pr-main" }, h("div", { class: "pr-title", text: q })));
         rows.push({ el, res: { url: q } });
       }
-      for (const id of ids) {
+      const heads: HTMLElement[] = [];
+      const addRow = (id: string, inside?: string[]) => {
         const n = v.get(id);
-        if (!n) continue;
-        if (o.mode === "group" && n.type !== "group") continue;
-        if (o.exclude?.(n)) continue;
+        if (!n) return;
+        if (o.exclude?.(n)) return;
         const parents = v.parentsOf(id).map(nameOf).join("、");
+        const insideText = inside?.length
+          ? inside.map((c) => v.get(c)?.title || T.untitled).map((t) => ([...t].length > 20 ? [...t].slice(0, 20).join("") + "…" : t)).join("・")
+          : "";
         const el = h(
           "div",
           { class: "picker-row", role: "option" },
@@ -70,13 +66,36 @@ export function openPicker(v: Vault, o: Opts): Promise<PickResult> {
             "div",
             { class: "pr-main" },
             h("div", { class: "pr-title", text: id === ROOT_ID ? T.home : n.title || (n.type === "group" ? T.untitledGroup : T.untitled) }),
-            n.body.trim() ? h("div", { class: "pr-sub", text: snippet(n.body, q) }) : null,
+            insideText ? h("div", { class: "pr-sub pr-inside", text: T.inside(insideText) }) : null,
+            !inside && n.type !== "group" && n.body.trim() ? h("div", { class: "pr-sub", text: snippet(n.body, q) }) : null,
             parents ? h("div", { class: "pr-sub pr-parents", text: T.inGroups(parents) }) : null,
           ),
         );
         rows.push({ el, res: { id } });
-      }
+      };
+      /** 見出しを付けて、その後に行を足す(行が 1 つも無ければ見出しも出さない) */
+      const section = (title: string, fill: () => void) => {
+        const before = rows.length;
+        fill();
+        if (rows.length > before) {
+          const hd = h("div", { class: "picker-sec", text: title });
+          hd.dataset.at = String(before);
+          heads.push(hd);
+        }
+      };
+      if (q) {
+        const r = searchTiered(v, q, 80);
+        section(T.secGroups, () => r.groups.forEach((id) => addRow(id)));
+        section(T.secContents, () => r.contents.forEach((c) => addRow(c.id, c.hits)));
+        if (o.mode !== "group") section(T.secNodes, () => r.nodes.forEach((id) => addRow(id)));
+      } else if (o.mode === "group")
+        [...v.nodes.values()]
+          .filter((n) => n.type === "group")
+          .sort((a, b) => (a.id === ROOT_ID ? -1 : b.id === ROOT_ID ? 1 : a.title.localeCompare(b.title, "ja")))
+          .forEach((n) => addRow(n.id));
       rows.forEach((r, i) => {
+        const hd = heads.find((x) => x.dataset.at === String(i));
+        if (hd) list.append(hd);
         r.el.addEventListener("mousemove", () => {
           if (sel !== i) {
             sel = i;

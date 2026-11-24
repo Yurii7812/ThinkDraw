@@ -132,7 +132,8 @@ input, textarea { font: inherit; color: inherit; }
 .edge.k-oppose .vis { stroke: var(--danger); }
 .oppose-tick { stroke: var(--danger); stroke-width: 2; }
 .marker { fill: var(--edge); }
-.edgelabel { fill: var(--muted); font-size: 12px; paint-order: stroke; stroke: var(--canvas); stroke-width: 4px; }
+.edgelabel { fill: var(--fg); font-size: 13px; paint-order: stroke; stroke: var(--canvas); stroke-width: 10px; stroke-linejoin: round; cursor: text; }
+.edgelabel-input { position: absolute; transform: translate(-50%, -50%); font: inherit; font-size: 13px; text-align: center; padding: 2px 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--canvas); color: var(--fg); outline: none; pointer-events: auto; z-index: 5; }
 .linkdrag { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .spreadframe { fill: none; stroke: var(--frame-line); stroke-width: 1; }
 
@@ -272,6 +273,9 @@ input, textarea { font: inherit; color: inherit; }
 .pr-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pr-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker-empty { color: var(--muted); padding: 8px; }
+.picker-sec { font-size: 11px; color: var(--muted); padding: 8px 8px 2px; letter-spacing: 0.04em; border-top: 1px solid var(--line); margin-top: 4px; }
+.picker-sec:first-child { border-top: none; margin-top: 0; }
+.pr-inside { color: var(--accent); }
 .spread-list { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
 .spread-row { display: flex; flex-direction: column; align-items: flex-start; text-align: left; border: 1px solid transparent; background: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
 .spread-row.active { background: var(--accent-soft); border-color: var(--accent); }
@@ -721,3 +725,19 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 /* キャンバスの「紙」ノード */
 .node.paper-node .paper-img { width: 120px; height: 90px; object-fit: cover; object-position: top left; background: #fff; }
 .paper [hidden] { display: none !important; }
+
+/* 枠(2026-11-24): 見た目だけの囲み。中は素通しで、縁・名前・右下の角だけ押せる */
+.node.t-frame { pointer-events: none; border: 1.5px solid color-mix(in srgb, var(--edge) 70%, transparent); border-radius: 12px; box-sizing: border-box; cursor: default; --fc: var(--edge); }
+.node.t-frame.selected { outline: none; border-color: var(--accent); border-width: 2px; }
+.node.t-frame .frame-edge { position: absolute; pointer-events: auto; cursor: pointer; }
+.node.t-frame .e-t { left: 0; right: 0; top: -6px; height: 12px; }
+.node.t-frame .e-b { left: 0; right: 0; bottom: -6px; height: 12px; }
+.node.t-frame .e-l { top: 0; bottom: 0; left: -6px; width: 12px; }
+.node.t-frame .e-r { top: 0; bottom: 0; right: -6px; width: 12px; }
+.node.t-frame .frame-name { position: absolute; left: 12px; top: -10px; padding: 0 6px; font-size: 12px; line-height: 18px; color: var(--muted); background: var(--canvas); pointer-events: auto; cursor: pointer; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
+.node.t-frame .frame-name.empty { opacity: 0; }
+.node.t-frame:hover .frame-name.empty, .node.t-frame.selected .frame-name.empty { opacity: 0.5; }
+.node.t-frame .frame-resize { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; pointer-events: auto; cursor: nwse-resize; border-radius: 3px; opacity: 0; background: var(--accent); }
+.node.t-frame:hover .frame-resize, .node.t-frame.selected .frame-resize { opacity: 0.6; }
+.node.t-frame.c1 { border-color: var(--c1); } .node.t-frame.c2 { border-color: var(--c2); } .node.t-frame.c3 { border-color: var(--c3); } .node.t-frame.c4 { border-color: var(--c4); }
+.node.t-frame.c5 { border-color: var(--c5); } .node.t-frame.c6 { border-color: var(--c6); } .node.t-frame.c7 { border-color: var(--c7); } .node.t-frame.c8 { border-color: var(--c8); }

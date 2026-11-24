@@ -42,6 +42,7 @@ export interface CreateOptions {
   paper?: string;
   card?: CardRef;
   spread?: SpreadRef;
+  size?: { w: number; h: number };
   id?: string;
 }
 
@@ -319,6 +320,7 @@ export class Vault {
       if (o.file) n.file = o.file;
       if (o.paper) n.paper = o.paper;
       if (o.spread) n.spread = { ...o.spread };
+      if (o.type === "frame") n.size = { ...(o.size ?? { w: 240, h: 160 }) };
       this.touch(id);
       this.nodes.set(id, n);
       this.index.update(id, n);
@@ -334,6 +336,15 @@ export class Vault {
       if (patch.body !== undefined) n.body = patch.body;
       if (patch.color !== undefined) n.color = patch.color;
       if (patch.fill !== undefined) n.fill = patch.fill || undefined;
+    });
+  }
+
+  /** 枠の大きさを変える */
+  setFrameSize(id: string, w: number, h: number): void {
+    this.tx(() => {
+      const n = this.mut(id);
+      if (n.type !== "frame") return;
+      n.size = { w: Math.max(40, Math.round(w)), h: Math.max(30, Math.round(h)) };
     });
   }
 
@@ -600,6 +611,28 @@ export class Vault {
       parent.refs = parent.refs.filter((m) => !picked.includes(m.id));
       parent.strokes = parent.strokes.filter((s) => !strokeIds.includes(s.id));
       this.index.update(group, parent);
+      return gm;
+    });
+  }
+
+  /**
+   * 引用で新しいグループ(2026-11-24 利用者): 選んだ物はこの画面のまま何も変えず、それを引用した新しいグループを作る。
+   * 新しいグループはこの画面の (x, y) に置く。中は元の並びのまま。ペンの線は写しを入れる
+   */
+  quoteGroup(group: string, ids: string[], x: number, y: number, title = "", strokeIds: string[] = []): TDNode {
+    const picked = ids.filter((id) => id !== ROOT_ID && this.itemPos(group, id));
+    const strokes = this.strokesOf(group).filter((s) => strokeIds.includes(s.id));
+    if (!picked.length && !strokes.length) throw new Error("引用するノードがありません");
+    return this.tx(() => {
+      const pos = picked.map((id) => ({ id, ...this.itemPos(group, id)! }));
+      const xs = [...pos.map((p) => p.x), ...strokes.flatMap((s) => s.p.filter((_, i) => i % 2 === 0))];
+      const ys = [...pos.map((p) => p.y), ...strokes.flatMap((s) => s.p.filter((_, i) => i % 2 === 1))];
+      const x0 = Math.min(...xs), y0 = Math.min(...ys);
+      const g = this.create({ type: "group", title, group, x: Math.round(x), y: Math.round(y) });
+      const gm = this.mut(g.id);
+      for (const p of pos) gm.refs.push({ id: p.id, x: Math.round(p.x - x0), y: Math.round(p.y - y0) });
+      for (const s of strokes) gm.strokes.push({ ...s, id: randomId().slice(0, 8), p: s.p.map((v, i) => Math.round(i % 2 ? v - y0 : v - x0)) });
+      this.index.update(g.id, gm);
       return gm;
     });
   }

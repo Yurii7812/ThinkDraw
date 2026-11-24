@@ -6,6 +6,22 @@ export const T = {
   untitledGroup: "(名前なし)",
   home: "ホーム",
 
+  // 2026-11-24: 検索の並び・引用で新しいグループ・移す・枠
+  secGroups: "グループの名前",
+  secContents: "中身に当たったグループ",
+  secNodes: "ノード",
+  inside: (s: string) => `中: ${s}`,
+  quoteGroup: "引用で新しいグループ",
+  quoteGroupTip: "選んだ物はそのまま。それを引用した新しいグループを作る (Ctrl+Shift+G)",
+  moveTo: "ほかのグループへ移す…",
+  pickMoveTitle: "移す先のグループを選ぶ",
+  movedTo: (s: string) => `「${s}」へ移しました`,
+  frame: "枠で囲む",
+  frameShort: "囲む",
+  frameTip: "選んだ物を枠で囲む (Ctrl+B)",
+  frameName: "枠の名前",
+  frameResize: "ドラッグで大きさを変える",
+
   // 上部バー
   back: "戻る",
   forward: "進む",
@@ -286,7 +302,7 @@ export const T = {
 
   // 検索
   searchTitle: "検索",
-  searchHint: "題と本文で探す。↑↓で選んで Enter",
+  searchHint: "グループの名前 → 中身 → ノード の順に出ます。↑↓で選んで Enter",
   pickLinkTitle: "リンク先を選ぶ",
   pickGroupTitle: "入れる先のグループを選ぶ",
   noResults: "見つかりません",

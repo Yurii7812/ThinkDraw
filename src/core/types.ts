@@ -1,6 +1,7 @@
 // データモデル(SPEC 第 3 章)。画面にも Electron にも依存しない。
 
-export type NodeType = "text" | "note" | "group" | "card";
+// frame = 枠(2026-11-24): 見た目だけの囲み。所属は変えない。枠そのものは 1 つの物で、線を引ける
+export type NodeType = "text" | "note" | "group" | "card" | "frame";
 export type LinkKind = "line" | "arrow" | "double" | "dashed" | "thick" | "oppose";
 export const LINK_KINDS: LinkKind[] = ["line", "arrow", "double", "dashed", "thick", "oppose"];
 
@@ -55,6 +56,8 @@ export interface TDNode {
   links: Link[];
   card?: CardRef;
   spread?: SpreadRef;
+  /** type: frame のみ。枠の大きさ(位置は所属の x, y = 左上) */
+  size?: { w: number; h: number };
   body: string;
   /** 知らない frontmatter のキー(外部のエディタで足されたもの)。書き戻すときに残す */
   extra: Record<string, unknown>;
@@ -77,6 +80,7 @@ export function cloneNode(n: TDNode): TDNode {
     links: n.links.map((l) => ({ ...l })),
     card: n.card ? { ...n.card, moving: n.card.moving ? [...n.card.moving] : undefined } : undefined,
     spread: n.spread ? { ...n.spread } : undefined,
+    size: n.size ? { ...n.size } : undefined,
     extra: JSON.parse(JSON.stringify(n.extra)),
   };
 }
