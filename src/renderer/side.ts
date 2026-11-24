@@ -23,6 +23,10 @@ export interface SideHost extends GraphHost {
   onTabChange(t: SideTab): void;
 }
 
+type TarotTab = "read" | "pic" | "ask";
+/** タロットの詳しい欄で、最後に開いていた切り替え(次のカードでも同じ所を開く) */
+let tarotTab: TarotTab = "read";
+
 export class SidePanel {
   readonly el: HTMLElement;
   readonly graph: GraphPanel;
@@ -333,31 +337,66 @@ export class SidePanel {
         ...this.relations(n),
       ].filter((x): x is HTMLElement => !!x);
     }
-    // 2026-11-24(利用者「絵の中にあるものも象徴も全部・意味もいろいろ・問いをたくさん」)
+    // 2026-11-24 見本 B: 大きなカード → 「読み｜絵｜問い」の切り替え(覚える)。意味は出た向きのものだけ
     const meaningList = (list: string[]) =>
       h("ul", { class: "d-meanings" }, ...list.map((m) => {
         const i = m.indexOf(": ");
-        return i > 0 && i < 8 ? h("li", {}, h("b", { text: m.slice(0, i) }), " " + m.slice(i + 2)) : h("li", { text: m });
+        return i > 0 && i < 8 ? h("li", {}, h("span", { class: "d-mk", text: m.slice(0, i) }), m.slice(i + 2)) : h("li", { text: m });
       }));
-    const otherList = h("details", { class: "d-other-list" }, h("summary", { text: (rv ? T.upright : T.reversedLabel) + T.ifOther }), meaningList(rv ? dp.up : dp.rv));
-    // 絵の中のもの: 名前と象徴の意味を 1 行ずつ。押すと「名前: 」をつないで書き始める
+    const words = rv ? dp.words.rv : dp.words.up;
+    const wordsEl = h("div", { class: "d-words" });
+    for (const w of words) {
+      const b = h("button", { class: "d-word", text: w, title: T.wordTip });
+      b.addEventListener("click", () => this.host.addConnected(n.id, w, true));
+      wordsEl.append(b);
+    }
     const items = h("div", { class: "d-items" });
     for (const [name, mean] of dp.items) {
       const row = h("button", { class: "d-item", title: T.itemTip }, h("span", { class: "d-item-n", text: name }), h("span", { class: "d-item-m", text: mean }));
       row.addEventListener("click", () => this.host.addConnected(n.id, name + ": ", true));
       items.append(row);
     }
-    const qs = h("div", { class: "chips d-qs" });
-    for (const q of [...(def.question ? [def.question] : []), ...dp.questions.filter((x) => x !== def.question)])
-      qs.append(this.chip(q, () => this.host.addConnected(n.id, q, false), "ask"));
-    return [
-      head,
-      this.section(T.readingHere, h("div", { class: "d-reading", text: reading })),
-      this.section(rv ? T.meaningsRv : T.meaningsUp, meaningList(rv ? dp.rv : dp.up), otherList),
-      this.section(T.itemsTitle(dp.items.length), items),
-      this.section(T.questionsTitle(qs.childElementCount), qs),
-      ...this.relations(n),
-    ].filter((x): x is HTMLElement => !!x);
+    const qs = h("div", { class: "d-qlist" });
+    for (const q of [...(def.question ? [def.question] : []), ...dp.questions.filter((x) => x !== def.question)]) {
+      const b = h("button", { class: "d-q", text: q, title: T.questionTip });
+      b.addEventListener("click", () => this.host.addConnected(n.id, q, false));
+      qs.append(b);
+    }
+    const panes: Record<TarotTab, HTMLElement[]> = {
+      read: [
+        h("div", { class: "d-kwline", text: (rv ? def.kwRv : def.kwUp) ?? "" }),
+        h("div", { class: "d-reading", text: reading }),
+        h("div", { class: "d-sep" }),
+        meaningList(rv ? dp.rv : dp.up),
+        h("div", { class: "d-h", text: T.wordsTitle(rv) }),
+        wordsEl,
+        ...this.relations(n),
+      ],
+      pic: [items],
+      ask: [qs],
+    };
+    const body = h("div", { class: "d-tabbody" });
+    const tabs = h("div", { class: "d-tabs", role: "tablist" });
+    const show = (t: TarotTab) => {
+      tarotTab = t;
+      for (const b of tabs.querySelectorAll<HTMLElement>("button")) b.classList.toggle("on", b.dataset.t === t);
+      body.replaceChildren(...panes[t]);
+    };
+    for (const [t, label] of [["read", T.tabRead], ["pic", T.tabPic(dp.items.length)], ["ask", T.tabAsk(qs.childElementCount)]] as [TarotTab, string][]) {
+      const b = h("button", { role: "tab", text: label });
+      b.dataset.t = t;
+      b.addEventListener("click", () => show(t));
+      tabs.append(b);
+    }
+    show(tarotTab);
+    const top = h(
+      "div",
+      { class: "d-tarot-top" },
+      h("div", { class: "d-face big" }, cardFace(c, 200)),
+      h("div", { class: "d-title" }, def.ja, h("small", { text: " " + def.en })),
+      h("div", { class: "d-sub", text: orient + (pos ? " · " + pos.name : "") }),
+    );
+    return [top, tabs, body];
   }
 
   private ichingDetail(n: TDNode): HTMLElement[] {

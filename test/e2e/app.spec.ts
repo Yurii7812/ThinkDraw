@@ -159,10 +159,15 @@ test("タロット: 引くメニューから置き、右の欄に解説、押す
   await page.locator(".node.t-card").first().click();
   await expect(page.locator(".side-panel .d-reading")).toBeVisible();
   // 2026-11-24: 絵の中のもの全部と象徴・いろいろな意味・たくさんの問い(右の欄はスクロールしてよい)
-  expect(await page.locator(".side-panel .d-item").count()).toBeGreaterThanOrEqual(6);
-  expect(await page.locator(".side-panel .d-qs .chip").count()).toBeGreaterThanOrEqual(8);
+  // 2026-11-24 見本 B: 読み|絵|問い の切り替え。読みには出た向きの意味と、意味の言葉 30 語
+  await expect(page.locator(".side-panel .d-tabs button")).toHaveCount(3);
   await expect(page.locator(".side-panel .d-meanings").first()).toBeVisible();
+  expect(await page.locator(".side-panel .d-word").count()).toBe(30);
   await shot("05-tarot");
+  await page.locator(".side-panel .d-tabs button", { hasText: "問い" }).click();
+  expect(await page.locator(".side-panel .d-q").count()).toBeGreaterThanOrEqual(8);
+  await page.locator(".side-panel .d-tabs button", { hasText: "絵" }).click();
+  expect(await page.locator(".side-panel .d-item").count()).toBeGreaterThanOrEqual(6);
   const item = page.locator(".side-panel .d-item").first();
   const word = (await item.locator(".d-item-n").textContent())!;
   await item.click();
@@ -825,15 +830,6 @@ test("2026-11-24: 枠で囲む・枠から線・枠を動かすと中も動く�
   await page.keyboard.press("Escape");
   await expect(page.locator(".node.t-text", { hasText: "枠から" })).toHaveCount(1);
   await expect(page.locator(".edge")).toHaveCount(1);
-  // 枠を右ドラッグで動かすと、中の「あ」も動く
-  const before = await page.locator(".node.t-text", { hasText: "あ" }).boundingBox();
-  const fb = (await page.locator(".node.t-frame .e-t").boundingBox())!;
-  await page.mouse.move(fb.x + fb.width / 2, fb.y + fb.height / 2);
-  await page.mouse.down({ button: "right" });
-  await page.mouse.move(fb.x + fb.width / 2 + 60, fb.y + fb.height / 2 + 40, { steps: 5 });
-  await page.mouse.up({ button: "right" });
-  const after = await page.locator(".node.t-text", { hasText: "あ" }).boundingBox();
-  expect(Math.round(after!.x - before!.x)).toBe(60);
   // 線をダブルクリックして文字
   const mid = await page.evaluate(() => {
     const p = document.querySelector(".edge .vis") as SVGPathElement;
@@ -847,6 +843,15 @@ test("2026-11-24: 枠で囲む・枠から線・枠を動かすと中も動く�
   await expect(page.locator(".edgelabel")).toHaveText("なぜ");
   await settle();
   expect(Object.values(mdFiles()).some((s) => /label: "?なぜ"?/.test(s))).toBe(true);
+  // (線の文字の後で)枠を右ドラッグで動かすと、中の「あ」も動く
+  const before = await page.locator(".node.t-text", { hasText: "あ" }).boundingBox();
+  const fb = (await page.locator(".node.t-frame .e-t").boundingBox())!;
+  await page.mouse.move(fb.x + fb.width / 2, fb.y + fb.height / 2);
+  await page.mouse.down({ button: "right" });
+  await page.mouse.move(fb.x + fb.width / 2 + 60, fb.y + fb.height / 2 + 40, { steps: 5 });
+  await page.mouse.up({ button: "right" });
+  const after = await page.locator(".node.t-text", { hasText: "あ" }).boundingBox();
+  expect(Math.round(after!.x - before!.x)).toBe(60);
   await shot("24-frame");
 });
 

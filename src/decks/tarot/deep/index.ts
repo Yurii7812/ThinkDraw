@@ -19,6 +19,12 @@ import swords3 from "./swords3.json";
 import pents1 from "./pents1.json";
 import pents2 from "./pents2.json";
 import pents3 from "./pents3.json";
+import kwMajor1 from "./kw-major1.json";
+import kwMajor2 from "./kw-major2.json";
+import kwWands from "./kw-wands.json";
+import kwCups from "./kw-cups.json";
+import kwSwords from "./kw-swords.json";
+import kwPents from "./kw-pents.json";
 
 export interface DeepCard {
   /** 絵の中にあるもの: [名前, 象徴の意味] */
@@ -28,11 +34,18 @@ export interface DeepCard {
   /** 逆位置のいろいろな意味 */
   rv: string[];
   questions: string[];
+  /** 意味の言葉(冊子のように 1 つの向きに 30 語ほど。2026-11-24。文は自作) */
+  words: { up: string[]; rv: string[] };
 }
 
-export const TAROT_DEEP: Record<string, DeepCard> = Object.assign(
+const BASE = Object.assign(
   {},
   major1, major2, major3, major4, major5, major6,
   wands1, wands2, wands3, cups1, cups2, cups3,
   swords1, swords2, swords3, pents1, pents2, pents3,
-) as Record<string, DeepCard>;
+) as Record<string, Omit<DeepCard, "words">>;
+const WORDS = Object.assign({}, kwMajor1, kwMajor2, kwWands, kwCups, kwSwords, kwPents) as Record<string, { up: string[]; rv: string[] }>;
+
+export const TAROT_DEEP: Record<string, DeepCard> = Object.fromEntries(
+  Object.entries(BASE).map(([id, d]) => [id, { ...d, words: WORDS[id] ?? { up: [], rv: [] } }]),
+);
