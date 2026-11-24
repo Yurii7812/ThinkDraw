@@ -158,19 +158,21 @@ test("タロット: 引くメニューから置き、右の欄に解説、押す
   await expect.poll(() => page.locator(".node.t-card img").first().evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth > 0)).toBe(true);
   await page.locator(".node.t-card").first().click();
   await expect(page.locator(".side-panel .d-reading")).toBeVisible();
-  // 右の欄が、スクロールしなくても見える(1280×800)
-  const over = await page.locator(".side-panel .detail").evaluate((e) => e.scrollHeight - e.clientHeight);
-  expect(over).toBeLessThanOrEqual(0);
+  // 2026-11-24: 絵の中のもの全部と象徴・いろいろな意味・たくさんの問い(右の欄はスクロールしてよい)
+  expect(await page.locator(".side-panel .d-item").count()).toBeGreaterThanOrEqual(6);
+  expect(await page.locator(".side-panel .d-qs .chip").count()).toBeGreaterThanOrEqual(8);
+  await expect(page.locator(".side-panel .d-meanings").first()).toBeVisible();
   await shot("05-tarot");
-  const chip = page.locator(".side-panel .d-sec .chip").first();
-  const word = (await chip.textContent())!;
-  await chip.click();
-  await expect(page.locator("textarea.draft")).toHaveValue(word);
+  const item = page.locator(".side-panel .d-item").first();
+  const word = (await item.locator(".d-item-n").textContent())!;
+  await item.click();
+  await expect(page.locator("textarea.draft")).toHaveValue(word + ": ");
+  await page.keyboard.type("崖");
   await page.keyboard.press("Escape");
   await settle();
   const cards = Object.values(mdFiles()).filter((s) => s.includes("type: card"));
   expect(cards.length).toBe(10);
-  expect(titles()).toContain(word);
+  expect(Object.values(mdFiles()).some((s) => s.includes(word + ": 崖"))).toBe(true); // 「: 」入りの題は引用符で書かれる
 });
 
 test("易と発想カード", async () => {

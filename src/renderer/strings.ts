@@ -235,6 +235,12 @@ export const T = {
   selectedCount: (n: number) => `${n} 件を選んでいます`,
   readingHere: "この位置での読み",
   sceneTitle: "絵の中にあるもの(押すと、つないで書く)",
+  meaningsUp: "意味(正位置)",
+  meaningsRv: "意味(逆位置)",
+  ifOther: "なら",
+  itemsTitle: (n: number) => `絵の中にあるものと象徴(${n})— 押すと、つないで書く`,
+  itemTip: "押すと、このカードにつないで「名前: 」から書き始める",
+  questionsTitle: (n: number) => `問い(${n})— 押すと、つないで置く`,
 
   // 易・発想カード・引く
   deckTarot: "タロット",
@@ -261,8 +267,8 @@ export const T = {
   promptConnect: "。選んでいるものにつなぐ",
   promptRandom: "完全にランダム",
   promptRandomSub: "全部の種類から(ランダムな言葉も)",
-  promptAll: "全部並べる",
-  promptAllNear: "全部並べる(選んでいるもののそばに)",
+  promptAll: "押すと、その種類を全部並べる",
+  promptAllNear: "押すと、その種類を全部、選んでいるもののそばに並べる",
   poolLabel: "使うカード(タロット)",
   poolAll: "78 枚すべて",
   poolMajor: "大アルカナだけ",

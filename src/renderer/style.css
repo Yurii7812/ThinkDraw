@@ -789,3 +789,16 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .dm-dot.c5 { background: var(--c5); } .dm-dot.c6 { background: var(--c6); } .dm-dot.c7 { background: var(--c7); } .dm-dot.c8 { background: var(--c8); }
 .drawmenu.narrow .dm-body { gap: 4px; }
 .node.t-card.pchip { white-space: nowrap; text-align: left; } .node.t-card.pchip .label { font-size: 15px; margin-top: 0; line-height: 1.4; }
+.dm-note { font-size: 11px; color: var(--muted); } .drawmenu.narrow .dm-h { margin-top: 8px; }
+/* タロットの詳しい読み(2026-11-24): 意味の一覧・絵の中のもの・たくさんの問い */
+.d-meanings { margin: 0; padding-left: 18px; line-height: 1.6; font-size: 13px; }
+.d-meanings b { font-weight: 600; margin-right: 2px; }
+.d-other-list { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.d-other-list summary { cursor: pointer; }
+.d-other-list .d-meanings { font-size: 12px; }
+.d-items { display: flex; flex-direction: column; gap: 1px; }
+.d-item { display: grid; grid-template-columns: minmax(80px, 38%) 1fr; gap: 8px; align-items: baseline; text-align: left; border: 0; background: none; color: var(--fg); padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 12.5px; line-height: 1.5; }
+.d-item:hover { background: var(--accent-soft); }
+.d-item-n { font-weight: 600; }
+.d-item-m { color: var(--muted); }
+.d-qs .chip { white-space: normal; text-align: left; border-radius: 10px; padding: 3px 10px; line-height: 1.45; }

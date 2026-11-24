@@ -321,13 +321,41 @@ export class SidePanel {
       ? `「${pos.name}」(${pos.hint})に、${def.ja}の${orient}。${(rv ? def.rv : def.up) ?? ""}`
       : `${def.ja}の${orient}。${(rv ? def.rv : def.up) ?? ""}`;
     const other = h("div", { class: "d-other" }, h("b", { text: (rv ? T.upright : T.reversedLabel) + "なら: " }), (rv ? def.up : def.rv) ?? "");
-    const scene = h("div", { class: "chips" });
-    for (const s of def.scene ?? []) scene.append(this.chip(s, () => this.host.addConnected(n.id, s, true)));
+    const dp = def.deep;
+    if (!dp) {
+      const scene = h("div", { class: "chips" });
+      for (const s of def.scene ?? []) scene.append(this.chip(s, () => this.host.addConnected(n.id, s, true)));
+      return [
+        head,
+        this.section(T.readingHere, h("div", { class: "d-reading", text: reading }), other),
+        this.section(T.sceneTitle, scene),
+        def.question ? this.section(T.question, this.chip(def.question, () => this.host.addConnected(n.id, def.question!, false), "ask")) : null,
+        ...this.relations(n),
+      ].filter((x): x is HTMLElement => !!x);
+    }
+    // 2026-11-24(利用者「絵の中にあるものも象徴も全部・意味もいろいろ・問いをたくさん」)
+    const meaningList = (list: string[]) =>
+      h("ul", { class: "d-meanings" }, ...list.map((m) => {
+        const i = m.indexOf(": ");
+        return i > 0 && i < 8 ? h("li", {}, h("b", { text: m.slice(0, i) }), " " + m.slice(i + 2)) : h("li", { text: m });
+      }));
+    const otherList = h("details", { class: "d-other-list" }, h("summary", { text: (rv ? T.upright : T.reversedLabel) + T.ifOther }), meaningList(rv ? dp.up : dp.rv));
+    // 絵の中のもの: 名前と象徴の意味を 1 行ずつ。押すと「名前: 」をつないで書き始める
+    const items = h("div", { class: "d-items" });
+    for (const [name, mean] of dp.items) {
+      const row = h("button", { class: "d-item", title: T.itemTip }, h("span", { class: "d-item-n", text: name }), h("span", { class: "d-item-m", text: mean }));
+      row.addEventListener("click", () => this.host.addConnected(n.id, name + ": ", true));
+      items.append(row);
+    }
+    const qs = h("div", { class: "chips d-qs" });
+    for (const q of [...(def.question ? [def.question] : []), ...dp.questions.filter((x) => x !== def.question)])
+      qs.append(this.chip(q, () => this.host.addConnected(n.id, q, false), "ask"));
     return [
       head,
-      this.section(T.readingHere, h("div", { class: "d-reading", text: reading }), other),
-      this.section(T.sceneTitle, scene),
-      def.question ? this.section(T.question, this.chip(def.question, () => this.host.addConnected(n.id, def.question!, false), "ask")) : null,
+      this.section(T.readingHere, h("div", { class: "d-reading", text: reading })),
+      this.section(rv ? T.meaningsRv : T.meaningsUp, meaningList(rv ? dp.rv : dp.up), otherList),
+      this.section(T.itemsTitle(dp.items.length), items),
+      this.section(T.questionsTitle(qs.childElementCount), qs),
       ...this.relations(n),
     ].filter((x): x is HTMLElement => !!x);
   }

@@ -4,6 +4,7 @@
 import type { SpreadDef } from "../core/spreadLayout";
 import tarotCards from "./tarot/cards.json";
 import tarotSpreads from "./tarot/spreads.json";
+import { TAROT_DEEP, type DeepCard } from "./tarot/deep";
 
 export interface CardDef {
   id: string;
@@ -18,6 +19,8 @@ export interface CardDef {
   scene?: string[];
   question?: string;
   facts?: string[];
+  /** 2026-11-24: 絵の中のもの全部と象徴・いろいろな意味・たくさんの問い(タロットだけ) */
+  deep?: DeepCard;
 }
 
 export interface Deck {
@@ -35,7 +38,7 @@ export const DECKS: Record<string, Deck> = {
   tarot: {
     id: "tarot",
     name: "タロット",
-    cards: tarotCards as CardDef[],
+    cards: (tarotCards as CardDef[]).map((c) => ({ ...c, deep: TAROT_DEEP[c.id] })),
     spreads: tarotSpreads as SpreadDef[],
     canReverse: true,
     // 2026-11-22 利用者の希望: 解釈はブレストの文字で書くので、カードの本文に初期の見出しは入れない

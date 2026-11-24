@@ -30,7 +30,12 @@ describe("易", () => {
 
 describe("発想カードと混ぜ方", () => {
   it("種類と枚数", () => {
-    expect(PROMPT_SETS.length).toBe(7);
+    expect(PROMPT_SETS.length).toBe(20); // 2026-11-24 に 13 種類を足した
+    // 前からある種類の ID は変えない(保存済みのカードが読めるように)
+    expect(PROMPT_SETS.slice(0, 7).map((s) => s.id)).toEqual(["w5h1", "scamper", "hats", "roles", "next", "ask", "word"]);
+    // まとまりは続けて並ぶ(メニューの見出し)
+    const groups = PROMPT_SETS.map((s) => s.group).filter((g, i, a) => g !== a[i - 1]);
+    expect(new Set(groups).size).toBe(groups.length);
     expect(new Set(PROMPT_ITEMS.map((p) => p.id)).size).toBe(PROMPT_ITEMS.length);
   });
   it("言葉から: 同じ言葉なら同じ結果", () => {
@@ -56,5 +61,20 @@ describe("タロットを配る", () => {
     expect(r.every((x) => x.def.major && !x.reversed)).toBe(true);
     const m = drawTarot(5, { ...DEFAULT_DRAW, pool: "minor", shuffle: "riffle", reversed: true }, seededRand("b"));
     expect(m.every((x) => !x.def.major)).toBe(true);
+  });
+});
+
+describe("タロットの詳しい読み(2026-11-24)", () => {
+  it("78 枚すべてに、絵の中のもの・意味・問いがある", async () => {
+    const { DECKS } = await import("../src/decks");
+    const cards = DECKS.tarot.cards;
+    expect(cards.length).toBe(78);
+    for (const c of cards) {
+      expect(c.deep, c.id).toBeTruthy();
+      expect(c.deep!.items.length, c.id).toBeGreaterThanOrEqual(6);
+      expect(c.deep!.up.length, c.id).toBeGreaterThanOrEqual(4);
+      expect(c.deep!.rv.length, c.id).toBeGreaterThanOrEqual(4);
+      expect(c.deep!.questions.length, c.id).toBeGreaterThanOrEqual(8);
+    }
   });
 });

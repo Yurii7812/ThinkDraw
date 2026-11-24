@@ -241,9 +241,14 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
         h("div", { class: "dm-btns" },
           btn(T.promptOne, T.promptOneSub + (hasAnchor ? T.promptConnect : ""), () => go({ k: "prompt", mode: "one" }, "")),
           btn(T.promptRandomShort, T.promptRandomSub, () => go({ k: "prompt", mode: "random" }, ""))),
-        h("div", { class: "dm-h", text: hasAnchor ? T.promptAllNear : T.promptAll }),
+        h("div", { class: "dm-note", text: hasAnchor ? T.promptAllNear : T.promptAll }),
       );
+      let lastGroup = "";
       for (const s of PROMPT_SETS.filter((x) => x.id !== "word" && x.id !== "ask")) {
+        if (s.group !== lastGroup) {
+          lastGroup = s.group;
+          body.append(h("div", { class: "dm-h", text: s.group }));
+        }
         const row = h("button", { class: "dm-row", title: s.desc + "\n" + s.items.map((i) => i.name).join("・") }, h("span", { class: `dm-dot c${s.color}` }), h("span", { class: "dm-row-t", text: s.name }), h("span", { class: "dm-row-n", text: `${s.items.length}枚` }));
         row.addEventListener("click", () => {
           closeDrawMenu();
