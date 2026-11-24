@@ -9,6 +9,7 @@ import { askText, h, toast } from "./ui";
 
 export { cleanKind, DEFAULT_KINDS, KINDS_FILE, parseKinds, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
 import { cleanKind, parseDayGroup, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
+import { allTags, tagged, tagsIn } from "../core/tags";
 
 export interface RecordEntry {
   date: string;
@@ -131,10 +132,13 @@ export class RecordsView {
   private day: HTMLElement;
   private month: string; // 2026-11
   private sel: string; // 2026-11-24
+  /** 右: その日 / 選んだしるしの記録の一覧 */
+  private mode: "day" | "list" = "day";
   constructor(private host: RecordsHost) {
     const today = todayStr();
     this.sel = today;
     this.month = today.slice(0, 7);
+    if (host.marker) this.mode = "list";
     this.cal = h("div", { class: "rec-cal" });
     this.day = h("div", { class: "rec-dayview" });
     const close = h("button", { class: "rec-close", title: T.recordsClose + " (Esc・Ctrl+J)", "aria-label": T.recordsClose, text: "×" });
@@ -192,8 +196,12 @@ export class RecordsView {
       if (!d.title && !markers.length && !v.itemsOf(d.id).some((i) => v.exists(i.id))) continue;
       (days.get(d.date) ?? days.set(d.date, []).get(d.date)!).push({ id: d.id, markers });
     }
-    const filter = this.host.marker && allMarkers.has(this.host.marker) ? this.host.marker : null;
-    const shown = (date: string) => !!days.get(date)?.some((d) => !filter || d.markers.includes(filter));
+    // しるし: マーカー・文字とノートの @・記録の種類(同じ名前の集まり。2026-11-24 利用者)
+    const tags = allTags(v, this.host.kinds.map((k) => k.name));
+    const filter = this.host.marker && tags.some((t) => t.tag === this.host.marker) ? this.host.marker : null;
+    const hits = filter ? tagged(v, filter) : [];
+    const hitDates = new Set(hits.map((x) => x.date));
+    const shown = (date: string) => (filter ? hitDates.has(date) : days.has(date));
 
     // ---- 左: 月のカレンダーとマーカー
     const [y, m] = this.month.split("-").map(Number);
@@ -218,7 +226,10 @@ export class RecordsView {
         h("span", { class: "rec-num", text: String(d) }),
         h("span", { class: "rec-mark" }),
       );
-      b.addEventListener("click", () => this.pick(date));
+      b.addEventListener("click", () => {
+        this.mode = "day";
+        this.pick(date);
+      });
       b.addEventListener("dblclick", () => {
         const g = this.dayId(date);
         if (g) this.openDay(g);
@@ -226,17 +237,19 @@ export class RecordsView {
       grid.append(b);
     }
     const mk = h("div", { class: "rec-markers" }, h("div", { class: "rec-h", text: T.recordsMarkers }));
-    const mrow = (label: string, val: string | null) => {
-      const b = h("button", { class: "rec-mk" + (filter === val ? " on" : ""), text: label, "data-marker": val ?? "" });
+    const mrow = (label: string, val: string | null, count?: number) => {
+      const b = h("button", { class: "rec-mk" + (filter === val ? " on" : ""), "data-marker": val ?? "" }, h("span", { text: label }), h("span", { class: "rec-gap" }), count ? h("span", { class: "rec-count", text: String(count) }) : null);
       b.addEventListener("click", () => {
         this.host.onMarker(val);
+        // しるしを選ぶと、そのしるしの記録の一覧(日付の新しい順)
+        this.mode = val ? "list" : "day";
         this.render();
       });
       return b;
     };
     mk.append(mrow(T.recordsAll, null));
-    for (const x of [...allMarkers].sort((a, b) => a.localeCompare(b, "ja"))) mk.append(mrow("@" + x, x));
-    if (!allMarkers.size) mk.append(h("div", { class: "rec-none small", text: T.recordsNoMarkers }));
+    for (const t of tags) mk.append(mrow("@" + t.tag, t.tag, t.n));
+    if (!tags.length) mk.append(h("div", { class: "rec-none small", text: T.recordsNoMarkers }));
     const kindsBtn = h("button", { class: "rec-kinds-btn", text: T.recordsKindsBtn });
     kindsBtn.addEventListener("click", () => this.kindsDialog());
     this.cal.replaceChildren(
@@ -272,9 +285,17 @@ export class RecordsView {
     title.addEventListener("change", saveTitle);
     const openBtn = h("button", { class: "btn rec-open-day", text: T.recordsOpenBoard, disabled: !g });
     if (g) openBtn.addEventListener("click", () => this.openDay(g));
-    // マーカー
+    // マーカー(付けたもの)と、その日のボードに書いた @(ボードの文字から。ここでは外せない)
     const markers = gNode?.markers ?? [];
     const chips = h("div", { class: "rec-chips" });
+    const written = new Set<string>();
+    if (g)
+      for (const it of v.itemsOf(g)) {
+        const c = v.get(it.id);
+        if (c?.type === "text") tagsIn(c.title).forEach((x) => written.add(x));
+        if (c?.type === "note") [...tagsIn(c.title), ...tagsIn(c.body)].forEach((x) => written.add(x));
+      }
+    for (const x of written) if (!markers.includes(x)) chips.append(h("span", { class: "rec-chip written", "data-marker": x, title: T.recordsWrittenTag }, "@" + x));
     for (const x of markers) {
       const del = h("button", { class: "rec-chip-x", title: T.recordsMarkerRemove, "aria-label": T.recordsMarkerRemove, text: "×" });
       del.addEventListener("click", () => {
@@ -285,7 +306,7 @@ export class RecordsView {
     }
     const add = h("button", { class: "rec-chip add", title: T.recordsMarkerAdd, "aria-label": T.recordsMarkerAdd, text: "＋ @" });
     add.addEventListener("click", async () => {
-      const t = await askText(T.recordsMarkerAsk, "", [...allMarkers].filter((x) => !markers.includes(x)));
+      const t = await askText(T.recordsMarkerAsk, "", tags.map((x) => x.tag).filter((x) => !markers.includes(x)));
       const name = (t ?? "").replace(/^@/, "").trim();
       if (!name) return;
       if (markers.includes(name)) return toast(T.recordsMarkerDup);
@@ -318,8 +339,8 @@ export class RecordsView {
     if (!entries.length) list.append(h("div", { class: "rec-none", text: T.recordsNoNotes }));
     const newBtn = h("button", { class: "rec-new", text: T.recordsNewNote });
     newBtn.addEventListener("click", async () => {
-      const kinds = this.host.kinds.map((k) => k.name);
-      const t = await askText(T.recordsNewNoteAsk, kinds[0] ?? "", kinds);
+      const kinds = tags.map((x) => x.tag); // 種類と @しるし は同じ候補
+      const t = await askText(T.recordsNewNoteAsk, this.host.kinds[0]?.name ?? "", kinds);
       const kind = cleanKind(t ?? "");
       if (!kind) return;
       if (!this.host.kinds.some((k) => k.name === kind)) this.host.saveKinds([...this.host.kinds, { name: kind, parents: [] }]);
@@ -332,8 +353,29 @@ export class RecordsView {
           return b;
         }))
       : null;
+    // 切り替え: この日 / @しるし の記録
+    const sw = filter
+      ? h(
+          "div",
+          { class: "rec-switch", role: "tablist" },
+          ...(["day", "list"] as const).map((md) => {
+            const b = h("button", { class: "rec-sw" + (this.mode === md ? " on" : ""), role: "tab", text: md === "day" ? T.recordsThisDay : T.recordsTagList(filter) });
+            b.addEventListener("click", () => {
+              this.mode = md;
+              this.render();
+            });
+            return b;
+          }),
+        )
+      : null;
+    if (filter && this.mode === "list") {
+      this.day.replaceChildren(...[sw, this.tagList(filter, hits)].filter((x): x is HTMLElement => !!x));
+      this.host.preview(pv, null);
+      return;
+    }
     this.day.replaceChildren(
       ...([
+        sw,
         h("div", { class: "rec-day-head" }, h("div", { class: "rec-day-main" }, dateLine, title), openBtn),
         chips,
         h("div", { class: "rec-h", text: T.recordsBrainstorm }),
@@ -344,6 +386,40 @@ export class RecordsView {
       ] as (HTMLElement | null)[]).filter((x): x is HTMLElement => !!x),
     );
     this.host.preview(pv, g && v.itemsOf(g).length ? g : null);
+  }
+
+  /** そのしるしの記録を、日付の新しい順に(日ごとに見出し。文字・ノート・マーカーだけの日) */
+  private tagList(tag: string, hits: { id: string; date: string; how: "text" | "note" | "marker" }[]): HTMLElement {
+    const v = this.host.vault;
+    const box = h("div", { class: "rec-taglist" }, h("div", { class: "rec-day-name static", text: "@" + tag }), h("div", { class: "rec-day-date", text: T.recordsTagCount(hits.length) }));
+    let cur = "";
+    let ul: HTMLElement | null = null;
+    for (const x of hits) {
+      if (x.date !== cur) {
+        cur = x.date;
+        const d = new Date(x.date + "T00:00:00");
+        const g = findDayGroup(v, x.date);
+        const dt = g ? isDayGroup(v, g)?.title : "";
+        const head = h("button", { class: "rec-tl-date", "data-date": x.date }, h("span", { text: isNaN(+d) ? x.date : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日(${WEEK[d.getDay()]})` }), dt ? h("span", { class: "rec-tl-title", text: dt }) : null);
+        head.addEventListener("click", () => {
+          this.mode = "day";
+          this.pick(x.date);
+        });
+        ul = h("div", { class: "rec-items" });
+        box.append(head, ul);
+      }
+      const n = v.get(x.id);
+      const label = x.how === "marker" ? T.recordsMarkerOnly : n?.type === "note" ? (() => { const p = parseRecordTitle(n.title); return p ? (p.sub ? `${p.kind} — ${p.sub}` : p.kind) : n.title || T.untitled; })() : (n?.title ?? "").replace(/\s+/g, " ");
+      const row = h("button", { class: "rec-item" + (x.how === "note" ? " note" : x.how === "marker" ? " group" : ""), "data-id": x.id }, h("span", { class: "rec-ico" }), h("span", { class: "rec-item-t", text: label }));
+      row.addEventListener("click", () => {
+        if (x.how === "marker") return this.openDay(x.id);
+        const day = v.parentsOf(x.id).find((p) => isDayGroup(v, p)) ?? v.parentsOf(x.id)[0] ?? ROOT_ID;
+        this.host.open({ date: x.date, day, id: x.id, kind: "", sub: "", type: x.how === "note" ? "note" : "day", preview: "" });
+      });
+      ul!.append(row);
+    }
+    if (!hits.length) box.append(h("div", { class: "rec-none", text: T.recordsNoNotes }));
+    return box;
   }
 
   /** 種類の一覧(足す・押すと設定)。カレンダーの下の「種類…」から */

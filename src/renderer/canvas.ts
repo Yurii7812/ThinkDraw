@@ -3,7 +3,7 @@ import { gap, placeAround, segHitsRect, type Rect } from "../core/placement";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
 import { NEW_LINK_KINDS, ROOT_ID, type Link, type LinkKind, type Stroke, type TDNode } from "../core/types";
-import { edgeEnds, findHops, hopPath, kindPreview, partEnd, type Pt } from "./edgeshape";
+import { edgeEnds, findHops, hopPath, kindPreview, partEnd, pointAlong, roundedPath, routeAround, type Pt } from "./edgeshape";
 import { cardName, spreadDef } from "../decks";
 import { PROMPT_BY_ID } from "../decks/prompts";
 import { cardFace, faceHeight } from "./cardface";
@@ -14,6 +14,7 @@ import { makeChecklist, makeTable, schema as mdSchema, serializeMarkdown } from 
 import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
 import { pickIslands, placeIslands } from "../core/islands";
 import { selectionToMarkdown } from "../core/export";
+import { allTags, splitTags } from "../core/tags";
 
 export interface View {
   x: number; // 画面 = 世界 * z + (x, y)
@@ -63,6 +64,8 @@ export interface CanvasHost {
   openTabBehind?(id: string): void;
   /** 引用の「飛ぶ」: 元の場所へ(同じボードなら、そこを見せる)。from = 押した引用 */
   jump?(target: string, from: string): void;
+  /** @ を打ったときの候補(時系列記録のしるし・種類と同じ) */
+  tagCandidates?(): string[];
 }
 
 interface Draft {
@@ -95,15 +98,6 @@ type Drag =
   | { kind: "img-resize"; id: string; corner: string; sx: number; sy: number; x0: number; y0: number; w0: number; h0: number; w?: number };
 
 const DRAG_START = 4;
-/** 右クリックの「グループ・構造」の小さな図(幅 48・高さ 32) */
-const DIAGRAMS = {
-  // 束ねる: 選んだ物が 1 つの箱(グループ)の中へ
-  bundle: '<rect x="4" y="3" width="40" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="10" y="9" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="27" y="9" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="18" y="18" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/>',
-  // 引用で新しいグループ: 元(左)はそのまま、引用した新しい箱(右)
-  quote: '<rect x="2" y="6" width="9" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="2" y="14" width="9" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="2" y="22" width="9" height="5" rx="1.5" fill="currentColor" opacity=".6"/><path d="M14 16h10M21 13l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="28" y="3" width="17" height="26" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="31.5" y="8" width="10" height="4" rx="1" fill="none" stroke="currentColor" stroke-dasharray="2 1.5"/><rect x="31.5" y="14.5" width="10" height="4" rx="1" fill="none" stroke="currentColor" stroke-dasharray="2 1.5"/><rect x="31.5" y="21" width="10" height="4" rx="1" fill="none" stroke="currentColor" stroke-dasharray="2 1.5"/>',
-  // 枠で囲む: 点線の枠。中身は動かない
-  frame: '<rect x="4" y="3" width="40" height="26" rx="4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="4 3"/><rect x="10" y="9" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="27" y="9" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/><rect x="18" y="18" width="10" height="5" rx="1.5" fill="currentColor" opacity=".6"/>',
-};
 /** 線の文字の大きさ(0 = 文章と同じ) */
 const LABEL_SIZES: [string, number][] = [["小", 12], ["ふつう(文章と同じ)", 0], ["大", 19], ["特大", 24]];
 /** Tab・Enter で次の文字を置くときに見込む幅 */
@@ -602,7 +596,9 @@ export class Canvas {
         for (const c of ["nw", "ne", "sw", "se"]) el.append(h("div", { class: `img-h ${c}`, "data-act": "imgresize", "data-corner": c, title: T.imgResize }));
       } else el.append(h("span", { class: "label" }, h("span", { class: "clip", text: "📎 " }), n.title || T.untitled));
     } else if (n.type === "text") {
-      el.append(h("span", { class: "label", text: n.title || T.untitled }));
+      // @しるしは、しるしの見た目に(2026-11-24 利用者)
+      const parts = splitTags(n.title || T.untitled);
+      el.append(h("span", { class: "label" }, ...parts.map((p) => (p.tag ? h("span", { class: "tag", "data-tag": p.tag, text: p.text }) : p.text))));
       if (n.body.trim()) el.append(h("span", { class: "bodymark", title: T.hasBody, "data-act": "body" }, "¶"));
     } else if (n.type === "note") {
       // ノートはタイトルだけ。中身はクリックして開いたときにだけ見せる(2026-11-23 利用者)
@@ -706,12 +702,16 @@ export class Canvas {
     const labelsG = svg("g", { class: "edge-labels" });
     this.edgesSvg.append(linesG, labelsG);
     const labels: SVGGElement[] = [];
+    // 文字(ノード)をよける: 枠は除く。線の両端のノードも除く(2026-11-24 利用者「文字の枠に沿う感じ」)
+    const frs = this.frameIds();
+    const obstacles = [...this.rects.entries()].filter(([i]) => !frs.has(i));
     for (const e of geom) {
       const { l, p1, p2, ends } = e;
       const sel = this.edgeSel.has(e.key);
+      const route = routeAround(ends.start, ends.end, obstacles.filter(([i]) => i !== e.from && i !== e.to).map(([, r]) => r));
       const g = svg("g", { class: `edge k-${l.kind}${l.color ? " c" + l.color : ""}${sel ? " selected" : ""}`, "data-from": e.from, "data-to": e.to });
       g.append(svg("path", { d: `M${p1.x},${p1.y} L${p2.x},${p2.y}`, class: "hit" }));
-      g.append(svg("path", { d: hopPath(ends.start, ends.end, hops.get(e.key) ?? []), class: "vis" }));
+      g.append(svg("path", { d: route ? roundedPath(route) : hopPath(ends.start, ends.end, hops.get(e.key) ?? []), class: "vis" }));
       if (ends.fill) g.append(svg("path", { d: ends.fill, class: "end-fill" }));
       if (ends.stroke) g.append(svg("path", { d: ends.stroke, class: "end-stroke" }));
       const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
@@ -727,7 +727,8 @@ export class Canvas {
       if (l.label) {
         // 線の上の文字(2026-11-24 統合仕様 6): 文章と同じ大きさ・不透明な薄い灰色の背景・いつも水平。ドラッグで線に沿って動く
         const at = this.labelAt(e.key, l);
-        const x = Math.round((p1.x + (p2.x - p1.x) * at) * 10) / 10, y = Math.round((p1.y + (p2.y - p1.y) * at) * 10) / 10;
+        const lp = route ? pointAlong(route, at) : { x: p1.x + (p2.x - p1.x) * at, y: p1.y + (p2.y - p1.y) * at };
+        const x = Math.round(lp.x * 10) / 10, y = Math.round(lp.y * 10) / 10;
         const lg = svg("g", { class: `elabel${sel ? " selected" : ""}`, "data-from": e.from, "data-to": e.to, transform: `translate(${x},${y})` }) as SVGGElement;
         const bg = svg("rect", { class: "elabel-bg", rx: 4 });
         const t = svg("text", { class: "edgelabel", "text-anchor": "middle", "dominant-baseline": "central" });
@@ -795,7 +796,9 @@ export class Canvas {
     ta.addEventListener("input", () => {
       this.keepDraftClear();
       this.draftLine();
+      this.updateTagPop();
     });
+    ta.addEventListener("compositionend", () => this.updateTagPop());
     ta.addEventListener("blur", () => {
       if (this.draft?.ta === ta) this.commitDraft("esc");
     });
@@ -851,6 +854,7 @@ export class Canvas {
   private onDraftKey(e: KeyboardEvent): void {
     e.stopPropagation();
     if (e.isComposing || e.keyCode === 229) return; // 日本語入力の変換中は何もしない
+    if (this.tagPop && this.tagPopKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       this.commitDraft("enter");
@@ -872,11 +876,83 @@ export class Canvas {
     }
   }
 
+  // ---------- @ の候補(2026-11-24 利用者: これまでのしるし・時系列記録の種類から) ----------
+  private tagPop: { el: HTMLElement; items: string[]; sel: number; start: number } | null = null;
+  private closeTagPop(): void {
+    this.tagPop?.el.remove();
+    this.tagPop = null;
+  }
+  private updateTagPop(): void {
+    const d = this.draft;
+    if (!d) return this.closeTagPop();
+    const ta = d.ta;
+    const before = ta.value.slice(0, ta.selectionStart);
+    const m = /(^|[\s\u3000(（「『、。,，])@([^\s\u3000@#、。,，.．!?！？()（）「」『』]*)$/.exec(before);
+    if (!m) return this.closeTagPop();
+    const q = m[2].toLowerCase();
+    const all = this.host.tagCandidates?.() ?? allTags(this.v).map((t) => t.tag);
+    const items = [...all.filter((t) => t.toLowerCase().startsWith(q)), ...all.filter((t) => !t.toLowerCase().startsWith(q) && t.toLowerCase().includes(q))].filter((t) => t !== m[2]).slice(0, 8);
+    if (!items.length) return this.closeTagPop();
+    const start = before.length - m[2].length - 1;
+    const el = this.tagPop?.el ?? h("div", { class: "tag-pop", role: "listbox" });
+    el.replaceChildren(
+      ...items.map((t, i) => {
+        const b = h("button", { class: "tag-opt" + (i === 0 ? " on" : ""), role: "option", text: "@" + t });
+        b.addEventListener("pointerdown", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.pickTag(t);
+        });
+        return b;
+      }),
+    );
+    el.style.left = d.x + "px";
+    el.style.top = d.y + d.ta.offsetHeight + 4 + "px";
+    if (!el.parentElement) this.draftLayer.append(el);
+    this.tagPop = { el, items, sel: 0, start };
+  }
+  /** 候補を選んで入れる(打ちかけの所を置き換え、後ろに空白) */
+  private pickTag(t: string): void {
+    const p = this.tagPop, d = this.draft;
+    if (!p || !d) return;
+    const ta = d.ta;
+    const end = ta.selectionStart;
+    ta.value = ta.value.slice(0, p.start) + "@" + t + " " + ta.value.slice(end);
+    const at = p.start + t.length + 2;
+    ta.setSelectionRange(at, at);
+    this.closeTagPop();
+    ta.focus();
+    this.keepDraftClear();
+    this.draftLine();
+  }
+  /** 候補が出ている間のキー: ↑↓ で選ぶ・Enter / Tab で入れる・Esc で候補だけ閉じる */
+  private tagPopKey(e: KeyboardEvent): boolean {
+    const p = this.tagPop!;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      p.sel = (p.sel + (e.key === "ArrowDown" ? 1 : -1) + p.items.length) % p.items.length;
+      p.el.querySelectorAll(".tag-opt").forEach((b, i) => b.classList.toggle("on", i === p.sel));
+      return true;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      this.pickTag(p.items[p.sel]);
+      return true;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      this.closeTagPop();
+      return true;
+    }
+    return false;
+  }
+
   /** 書いている文字を確定する。Enter は同じ親のまわりに次、Tab はこのノードのまわりに子 */
   commitDraft(mode: "enter" | "tab" | "esc"): string | null {
     const d = this.draft;
     if (!d) return null;
     this.draft = null;
+    this.closeTagPop();
     d.ta.remove();
     queueMicrotask(() => this.updateSelBar());
     this.edgesSvg.querySelector(".draftline")?.remove();
@@ -1299,9 +1375,19 @@ export class Canvas {
         }
         const hit = (q: Rect) => q.x < b.x && q.x + q.w > a.x && q.y < b.y && q.y + q.h > a.y;
         const sel = new Set(d.base);
-        for (const [i, q] of this.rects) if (hit(q)) sel.add(i);
+        let got = 0;
+        for (const [i, q] of this.rects) if (hit(q)) sel.add(i), got++;
         const ss = new Set(d.baseStrokes);
-        for (const s of this.v.strokesOf(this.group)) if (hit(strokeBox(s))) ss.add(s.id);
+        for (const s of this.v.strokesOf(this.group)) if (hit(strokeBox(s))) ss.add(s.id), got++;
+        // 囲んだ所にノードもペンの線も無く、つなぎの線だけなら、その線を選ぶ(2026-11-24 利用者)
+        if (!got && !d.base.size && !d.baseStrokes.size) {
+          const box = { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
+          const es = this.edgeGeom().filter((g) => segHitsRect(g.p1.x, g.p1.y, g.p2.x, g.p2.y, box, 0)).map((g) => g.key);
+          if (es.length) {
+            this.setEdgeSel(es);
+            return;
+          }
+        }
         this.setSelection(sel, ss);
         return;
       }
@@ -2064,9 +2150,9 @@ export class Canvas {
   }
 
   /**
-   * ノードの右クリック(2026-11-24 修正8 で作り直し。線のメニューとそろえる):
-   * 上によく使う操作(開く・リンク・コピー・削除。ショートカットつき)→ グループ・構造(束ねる・引用で新しいグループ・枠で囲む を図で区別)
-   * → 文字色・背景色 → このノードだけのこと → 別のグループとの関係(移す・入れる・引用する・外す の違いを一言で)
+   * ノードの右クリック(2026-11-24 利用者が見本 X を選んだ。線のメニューくらい小さく):
+   * 絵のボタン 1 段(開く/書き直す・リンク・束ねる・引用で新しいグループ・枠・削除)→ 文字色・背景色 →「別のグループへ ›」「その他 ›」。
+   * 前からある操作は、小メニューの中に全部ある
    */
   private nodeMenu(id: string, x: number, y: number): void {
     const n = this.v.get(id);
@@ -2075,7 +2161,6 @@ export class Canvas {
     const isRef = this.isQuote(id);
     const allRefs = ids.every((i) => this.v.isRefIn(this.group, i));
     const many = ids.length > 1;
-    // よく使う操作
     const bar: NonNullable<MenuItem["bar"]> = [];
     if (!many && isRef) {
       const g = this.quotedGroup(id);
@@ -2089,53 +2174,26 @@ export class Canvas {
       else if (n.type === "note") bar.push({ icon: "open", label: T.mOpen, title: T.openNote, action: () => this.host.openBody(id) });
       else bar.push({ icon: "open", label: T.mOpen, action: () => this.open(id) });
     }
-    bar.push({ icon: "link", label: T.linkShort, hint: "Ctrl+L", title: T.linkSearch, action: () => this.linkBySearch() });
-    bar.push({ icon: "copy", label: T.copyShort, hint: "Ctrl+C", title: T.copyTip, action: () => this.copySelection(ids) });
+    bar.push({ icon: "link", label: T.linkShort, title: T.linkSearch, action: () => this.linkBySearch() });
+    bar.push({ icon: "bundle", label: T.bundleShort, title: `${T.bundleShort}: ${T.bundleDesc} (Ctrl+G)`, action: () => this.bundleSelection() });
+    bar.push({ icon: "quotegroup", label: T.quoteGroupShort, title: `${T.quoteGroup}: ${T.quoteGroupDesc} (Ctrl+Shift+G)`, action: () => this.quoteGroupSelection() });
+    bar.push({ icon: "frame", label: T.frameShort, title: `${T.frameShort2}: ${T.frameDesc} (Ctrl+B)`, action: () => this.frameSelection() });
     // 原本を消す(ゴミ箱)と、引用を外すだけ を分ける
-    bar.push({ icon: "trash", label: allRefs ? T.removeRef : T.deleteShort, hint: "Delete", title: allRefs ? T.deleteRef : T.delete, danger: true, action: () => this.deleteItems(ids, true) });
+    bar.push({ icon: "trash", label: allRefs ? T.removeRefShort : T.deleteShort, title: (allRefs ? T.deleteRef : T.delete) + " (Delete)", danger: true, action: () => this.deleteItems(ids, true) });
 
     const items: MenuItem[] = [];
     if (many) items.push({ label: T.selCount(ids.length), heading: true });
     items.push({ label: "", bar });
-    // グループ・構造: 3 つの違いを図で
-    items.push({ label: T.mStructHead, heading: true });
-    items.push({
-      label: "",
-      cards: [
-        { diagram: DIAGRAMS.bundle, title: T.bundleShort, desc: T.bundleDesc, hint: "Ctrl+G", action: () => this.bundleSelection() },
-        { diagram: DIAGRAMS.quote, title: T.quoteGroup, desc: T.quoteGroupDesc, hint: "Ctrl+Shift+G", action: () => this.quoteGroupSelection() },
-        { diagram: DIAGRAMS.frame, title: T.frameShort2, desc: T.frameDesc, hint: "Ctrl+B", action: () => this.frameSelection() },
-      ],
-    });
-    // 色
-    items.push({ separator: true, label: "" });
     const texts = ids.every((i) => this.v.get(i)?.type === "text" && !this.v.get(i)?.file && !this.v.get(i)?.paper);
-    items.push({ ...this.colorItem(ids), label: texts ? T.textColor : T.color });
-    if (texts) items.push(this.fillItem(ids));
-    // このノードだけのこと
-    const own: MenuItem[] = [];
-    if (!many && !isRef && n.type === "group") own.push({ label: T.rename, key: "r", action: () => this.renameGroup(id) }, { label: T.unbundle, desc: T.unbundleDesc, action: () => this.v.unbundle(id) });
-    if (!many && !isRef && n.type === "frame") own.push({ label: T.rename, key: "r", action: () => void this.renameFrame(id) });
-    if (!many && !isRef && n.type === "text" && n.file) own.push({ label: T.rename, key: "r", action: () => this.editText(id) });
-    if (!many && !isRef && n.type === "note")
-      own.push({
-        label: T.rename,
-        key: "r",
-        action: async () => {
-          const t = await askText(T.rename, n.title);
-          if (t !== null) this.v.update(id, { title: t.trim() });
-        },
-      });
-    if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") own.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
-    if (this.host.openBeside && !many) own.push({ label: T.mBeside, hint: n.type === "group" ? "中ボタン" : undefined, action: () => this.host.openBeside!(id) });
-    if (!many) own.push({ label: T.cutShort, hint: "Ctrl+X", desc: T.cutDesc, action: () => this.copySelection(ids, true) });
-    if (own.length) items.push({ separator: true, label: "" }, ...own);
-    // 別のグループとの関係
-    items.push({ separator: true, label: "" }, { label: T.mRelHead, heading: true });
-    items.push(...this.groupMenuItems(ids));
-    if (allRefs) items.push({ label: T.removeRef, desc: T.removeRefDesc, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
+    items.push({ ...this.colorItem(ids), label: texts ? T.textColorShort : T.color });
+    if (texts) items.push({ ...this.fillItem(ids), label: T.fillShort });
+    items.push({ separator: true, label: "" });
+    // 別のグループへ(移す・入れる・引用・外す)
+    const rel: MenuItem[] = [...this.groupMenuItems(ids)];
+    rel.push({ separator: true, label: "" });
+    if (allRefs) rel.push({ label: T.removeRef, desc: T.removeRefDesc, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
     else
-      items.push({
+      rel.push({
         label: T.removeFromGroup,
         desc: T.removeFromGroupDesc,
         action: () => {
@@ -2144,6 +2202,26 @@ export class Canvas {
           if (refused && this.group === ROOT_ID) toast(T.rootLastParent);
         },
       });
+    items.push({ label: T.mRelMenu, sub: rel });
+    // その他
+    const more: MenuItem[] = [
+      { label: T.copyShort, hint: "Ctrl+C", desc: T.copyDesc, action: () => this.copySelection(ids) },
+      { label: T.cutShort, hint: "Ctrl+X", desc: T.cutDesc, action: () => this.copySelection(ids, true) },
+    ];
+    if (this.host.openBeside && !many) more.push({ label: T.mBeside, hint: n.type === "group" ? "中ボタン" : undefined, action: () => this.host.openBeside!(id) });
+    if (!many && !isRef && n.type === "group") more.push({ label: T.rename, action: () => this.renameGroup(id) }, { label: T.unbundle, desc: T.unbundleDesc, action: () => this.v.unbundle(id) });
+    if (!many && !isRef && n.type === "frame") more.push({ label: T.rename, action: () => void this.renameFrame(id) });
+    if (!many && !isRef && n.type === "text" && n.file) more.push({ label: T.rename, action: () => this.editText(id) });
+    if (!many && !isRef && n.type === "note")
+      more.push({
+        label: T.rename,
+        action: async () => {
+          const t = await askText(T.rename, n.title);
+          if (t !== null) this.v.update(id, { title: t.trim() });
+        },
+      });
+    if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") more.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
+    items.push({ label: T.mMoreMenu, sub: more });
     showMenu(x, y, items);
   }
 
@@ -2312,7 +2390,10 @@ export class Canvas {
     const p1 = this.clip(a, b.x + b.w / 2, b.y + b.h / 2);
     const p2 = this.clip(b, a.x + a.w / 2, a.y + a.h / 2);
     const at = this.labelAt(from + ">" + to, l);
-    const mx = p1.x + (p2.x - p1.x) * at, my = p1.y + (p2.y - p1.y) * at;
+    let mx = p1.x + (p2.x - p1.x) * at, my = p1.y + (p2.y - p1.y) * at;
+    // 文字がもうあるなら、その場所で(よけて曲がった線では、まっすぐの線の上とは違う)
+    const m0 = /translate\(([-\d.]+),([-\d.]+)\)/.exec(this.edgesSvg.querySelector(`.elabel[data-from="${from}"][data-to="${to}"]`)?.getAttribute("transform") ?? "");
+    if (m0) (mx = +m0[1]), (my = +m0[2]);
     const inp = h("input", { class: "edgelabel-input", type: "text", spellcheck: "false", placeholder: T.labelPrompt }) as HTMLInputElement;
     inp.value = l.label ?? "";
     if (l.size) inp.style.fontSize = l.size + "px";

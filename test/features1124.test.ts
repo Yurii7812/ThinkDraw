@@ -152,3 +152,23 @@ describe("統合仕様(2026-11-24)のデータ", () => {
     expect(selectionToMarkdown(v, ROOT_ID, [a, b, c]).trim()).toBe("- 親\n  - 子\n- 別");
   });
 });
+
+describe("@しるし(2026-11-24)", () => {
+  it("文の中の @ を拾う(メールアドレスは拾わない)・分けて見せる", async () => {
+    const { tagsIn, splitTags } = await import("../src/core/tags");
+    expect(tagsIn("今日は @読書 と @夢。 mail@example.com @読書")).toEqual(["読書", "夢"]);
+    expect(tagsIn("@開発 から")).toEqual(["開発"]);
+    expect(splitTags("本 @読書 です")).toEqual([{ text: "本 " }, { text: "@読書", tag: "読書" }, { text: " です" }]);
+  });
+  it("しるしの付いた物を日付の新しい順に・使ったしるしと記録の種類が候補", async () => {
+    const { tagged, allTags } = await import("../src/core/tags");
+    const d1 = v.create({ type: "group", title: "2026-11-20", group: ROOT_ID, x: 0, y: 0 }).id;
+    const d2 = v.create({ type: "group", title: "2026-11-24", group: ROOT_ID, x: 0, y: 100 }).id;
+    const a = text("プラトン @読書", d1, 0, 0);
+    const n = v.create({ type: "note", title: "2026-11-24-読書", group: d2, x: 0, y: 0 }).id;
+    v.setMarkers(d2, ["夢"]);
+    expect(tagged(v, "読書").map((x) => [x.id, x.date, x.how])).toEqual([[n, "2026-11-24", "note"], [a, "2026-11-20", "text"]]);
+    expect(tagged(v, "夢").map((x) => x.how)).toEqual(["marker"]);
+    expect(allTags(v, ["日記"]).map((t) => t.tag)).toEqual(["読書", "夢", "日記"]);
+  });
+});

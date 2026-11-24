@@ -154,3 +154,91 @@ export function partEnd(box: { x: number; y: number; w: number; h: number }, fro
   if (back < len / 2) b = { x: from.x + ux * Math.max(len / 2, BR_D * 2), y: from.y + uy * Math.max(len / 2, BR_D * 2) };
   return b;
 }
+
+/**
+ * 文字(ノード)をよける道(2026-11-24 利用者「文字の枠に沿う感じ」): 線がノードの箱(+ pad)を通るなら、
+ * 箱に入る所から出る所まで、箱の縁に沿って短い方を回る。よける物が無ければ null(まっすぐ)
+ */
+export function routeAround(a: Pt, b: Pt, boxes: { x: number; y: number; w: number; h: number }[], pad = 7): Pt[] | null {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const hits: { t0: number; t1: number; L: number; T: number; R: number; B: number }[] = [];
+  for (const bx of boxes) {
+    const L = bx.x - pad, T = bx.y - pad, R = bx.x + bx.w + pad, B = bx.y + bx.h + pad;
+    let t0 = 0, t1 = 1, ok = true;
+    for (const [p, q] of [[-dx, a.x - L], [dx, R - a.x], [-dy, a.y - T], [dy, B - a.y]] as [number, number][]) {
+      if (p === 0) {
+        if (q < 0) ok = false;
+        continue;
+      }
+      const t = q / p;
+      if (p < 0) t0 = Math.max(t0, t);
+      else t1 = Math.min(t1, t);
+    }
+    if (!ok || t0 >= t1 || t0 <= 0.001 || t1 >= 0.999) continue; // 端がこの箱の中・かすりもしない
+    hits.push({ t0, t1, L, T, R, B });
+  }
+  if (!hits.length) return null;
+  hits.sort((p, q) => p.t0 - q.t0);
+  const pts: Pt[] = [a];
+  let last = 0;
+  for (const h of hits) {
+    if (h.t0 < last) continue; // 重なった箱は、先のものだけ
+    const E = { x: a.x + dx * h.t0, y: a.y + dy * h.t0 }, X = { x: a.x + dx * h.t1, y: a.y + dy * h.t1 };
+    const w = h.R - h.L, hh = h.B - h.T, P = 2 * (w + hh);
+    const s = (p: Pt) => {
+      const d = [Math.abs(p.y - h.T), Math.abs(p.x - h.R), Math.abs(p.y - h.B), Math.abs(p.x - h.L)];
+      const side = d.indexOf(Math.min(...d));
+      return side === 0 ? p.x - h.L : side === 1 ? w + (p.y - h.T) : side === 2 ? w + hh + (h.R - p.x) : 2 * w + hh + (h.B - p.y);
+    };
+    const corners: [number, Pt][] = [[0, { x: h.L, y: h.T }], [w, { x: h.R, y: h.T }], [w + hh, { x: h.R, y: h.B }], [2 * w + hh, { x: h.L, y: h.B }]];
+    const se = s(E), sx = s(X);
+    const cw = (sx - se + P) % P;
+    const goCw = cw <= P - cw;
+    const pass: Pt[] = [];
+    if (goCw) {
+      for (const [cs, c] of [...corners, ...corners.map(([k, c]) => [k + P, c] as [number, Pt])]) if (cs > se && cs < se + cw) pass.push(c);
+    } else {
+      for (const [cs, c] of [...corners, ...corners.map(([k, c]) => [k + P, c] as [number, Pt])].reverse()) if (cs < se + P && cs > se + P - (P - cw)) pass.push(c);
+    }
+    pts.push(E, ...pass, X);
+    last = h.t1;
+  }
+  pts.push(b);
+  return pts;
+}
+
+/** 折れ線を、角を半径 r で丸めた道に */
+export function roundedPath(pts: Pt[], r = 7): string {
+  let d = `M${rr(pts[0].x)},${rr(pts[0].y)}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i - 1], c = pts[i], n = pts[i + 1];
+    const l1 = Math.hypot(c.x - p.x, c.y - p.y), l2 = Math.hypot(n.x - c.x, n.y - c.y);
+    const k = Math.min(r, l1 / 2, l2 / 2);
+    if (k < 0.5) {
+      d += ` L${rr(c.x)},${rr(c.y)}`;
+      continue;
+    }
+    const pin = { x: c.x - ((c.x - p.x) / l1) * k, y: c.y - ((c.y - p.y) / l1) * k };
+    const pout = { x: c.x + ((n.x - c.x) / l2) * k, y: c.y + ((n.y - c.y) / l2) * k };
+    d += ` L${rr(pin.x)},${rr(pin.y)} Q${rr(c.x)},${rr(c.y)} ${rr(pout.x)},${rr(pout.y)}`;
+  }
+  const z = pts[pts.length - 1];
+  return d + ` L${rr(z.x)},${rr(z.y)}`;
+}
+function rr(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+/** 折れ線の上の、長さの割合 f の所 */
+export function pointAlong(pts: Pt[], f: number): Pt {
+  const seg = pts.slice(1).map((q, i) => Math.hypot(q.x - pts[i].x, q.y - pts[i].y));
+  let want = seg.reduce((x, y) => x + y, 0) * f;
+  for (let i = 0; i < seg.length; i++) {
+    if (want <= seg[i] || i === seg.length - 1) {
+      const t = seg[i] ? Math.min(1, want / seg[i]) : 0;
+      return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t };
+    }
+    want -= seg[i];
+  }
+  return pts[pts.length - 1];
+}

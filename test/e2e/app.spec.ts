@@ -514,7 +514,7 @@ test("引用を Delete で消しても、元のノードは消えない(引用�
   const ref = page.locator(".node.ref", { hasText: "元の話" });
   await expect(ref).toHaveCount(1);
   await ref.click({ button: "right" });
-  await page.locator(".ctxmenu .mb-btn", { hasText: "引用を外す" }).click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "外す" }).click();
   await expect(ref).toHaveCount(0);
   await settle();
   expect(titles()).toContain("元の話");
@@ -575,8 +575,10 @@ test("2026-11-24 統合仕様 10〜15: 日付グループの題・Ctrl+D は題�
   await page.locator(".rec-mk[data-marker='読書']").click();
   await expect(page.locator(`.rec-cell.has[data-date='${ymd}']`)).toHaveCount(1);
   // 題をここで直すと、グループの名前に入る
-  await page.locator(".rec-day-name").fill("ThinkDraw-設計");
-  await page.locator(".rec-day-name").press("Enter");
+  await page.locator(".rec-sw", { hasText: "この日" }).click(); // しるしを選ぶと一覧になるので、この日へ
+  await page.locator("input.rec-day-name").fill("ThinkDraw-設計");
+  await page.locator("input.rec-day-name").press("Enter");
+  await page.locator(".rec-mk[data-marker='']").click(); // 絞り込みをやめる(次に開いたときも この日 から)
   await settle();
   expect(titles()).toContain(`${ymd}-ThinkDraw-設計`);
   // 同じ日・同じ種類のノートを 2 枚
@@ -758,6 +760,7 @@ test("分割: 右クリックの「反対側の画面に引用する」", async 
   await page.keyboard.type("向こう");
   await page.keyboard.press("Enter");
   await page.locator(".peek .node", { hasText: "向こうの物" }).click({ button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "別のグループへ" }).click();
   await page.locator(".ctxmenu .item", { hasText: "反対側の画面に引用する" }).click();
   await expect(page.locator(".left-pane .node.ref", { hasText: "向こうの物" })).toHaveCount(1);
 });
@@ -765,13 +768,8 @@ test("分割: 右クリックの「反対側の画面に引用する」", async 
 test("右クリック: 一番上に絵付きのボタン(書き直す・つなぐ・束ねる・囲む・タブで開く・消す)、その下に色、グループの操作は見出しの下", async () => {
   await write(300, 200, "ひとつ");
   await page.locator(".node", { hasText: "ひとつ" }).click({ button: "right" });
-  // 2026-11-24 修正8: 上は 書き直す・リンク・コピー・削除(ショートカットつき)。束ねる・引用で新しいグループ・枠で囲む は図つきで別に
-  await expect(page.locator(".ctxmenu .menubar .mb-btn")).toHaveText([/書き直す/, /リンク.*Ctrl\+L/, /コピー.*Ctrl\+C/, /削除.*Delete/]);
-  await expect(page.locator(".ctxmenu .menucards .mc")).toHaveText([/束ねる.*Ctrl\+G/, /引用で新しいグループ.*Ctrl\+Shift\+G/, /枠で囲む.*Ctrl\+B/]);
-  await expect(page.locator(".ctxmenu .menuhead", { hasText: "グループ・構造" })).toBeVisible();
-  await expect(page.locator(".ctxmenu .menuhead", { hasText: "別のグループとの関係" })).toBeVisible();
-  await expect(page.locator(".ctxmenu .item", { hasText: "ほかのグループへ移す" })).toContainText("ここから外して");
-  await expect(page.locator(".ctxmenu .item", { hasText: "別のグループにも入れる" })).toContainText("ここにも残し");
+  // 2026-11-24 見本 X: 絵のボタン 1 段(書き直す・リンク・束ねる・引用で・囲む・削除)。ほかは「別のグループへ ›」「その他 ›」
+  await expect(page.locator(".ctxmenu .menubar .mb-btn")).toHaveCount(6);
   const mb = (await page.locator(".ctxmenu").boundingBox())!;
   expect(mb.y + mb.height).toBeLessThanOrEqual(800); // 画面からはみ出さない
   await shot("16-menu");
@@ -822,6 +820,7 @@ test("2026-11-24: グループは 1 回クリックで中へ・引用で新し�
   await page.keyboard.press("Enter");
   await settle();
   await page.locator(".node.t-group", { hasText: "果物の引用" }).click({ button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "別のグループへ" }).click();
   await page.locator(".ctxmenu .item", { hasText: "ほかのグループへ移す" }).click();
   await page.keyboard.type("箱");
   await expect(page.locator(".picker-sec").first()).toHaveText("グループの名前");
@@ -1404,4 +1403,86 @@ test("2026-11-24 修正8: 括弧はノードの手前で欠けない・線は文
   await page.keyboard.press("Control+z");
   await expect(page.locator("g.edge")).toHaveCount(2);
   await shot("32-fix8");
+});
+
+test("2026-11-24: 線は文字の枠に沿ってよける・線だけを囲むと(ふつうのドラッグでも)線を選ぶ・右クリックは見本 X", async () => {
+  await write(300, 150, "上の端");
+  await write(300, 560, "下の端");
+  await write(300, 360, "まんなかの文字");
+  await linkTo("上の端", "下の端");
+  await expect(page.locator("g.edge")).toHaveCount(1);
+  await page.waitForTimeout(200);
+  // 線のどの点も、まんなかの文字の箱に入らない
+  const inside = await page.evaluate(() => {
+    const p = document.querySelector("g.edge .vis") as SVGPathElement;
+    const ctm = p.getScreenCTM()!;
+    const n = [...document.querySelectorAll(".node")].find((e) => e.textContent?.includes("まんなかの文字"))!.getBoundingClientRect();
+    const L = p.getTotalLength();
+    for (let i = 0; i <= 200; i++) {
+      const m = p.getPointAtLength((L * i) / 200);
+      const x = ctm.a * m.x + ctm.c * m.y + ctm.e, y = ctm.b * m.x + ctm.d * m.y + ctm.f;
+      if (x > n.left && x < n.right && y > n.top && y < n.bottom) return true;
+    }
+    return false;
+  });
+  expect(inside).toBe(false);
+  await shot("33-route");
+  // ふつうのドラッグで線だけを囲む
+  await page.keyboard.press("Escape");
+  const m = await edgeMid();
+  await page.mouse.move(m.x - 120, m.y - 60);
+  await page.mouse.down();
+  await page.mouse.move(m.x - 60, m.y - 20, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator(".node.selected")).toHaveCount(0);
+  const b0 = await page.evaluate(() => (document.querySelector("g.edge .vis") as SVGPathElement).getBoundingClientRect().toJSON());
+  await page.mouse.move(b0.x - 20, b0.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(b0.x + b0.width + 20, b0.y + 80, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator("g.edge.selected")).toHaveCount(1);
+  // 右クリック(見本 X): 絵のボタン 1 段・文字/背景の色・別のグループへ ›・その他 ›
+  await page.keyboard.press("Escape");
+  await page.locator(".node", { hasText: "まんなかの文字" }).click({ button: "right" });
+  await expect(page.locator(".ctxmenu .menubar .mb-btn")).toHaveText([/書き直す/, /リンク/, /束ねる/, /引用で/, /囲む/, /削除/]);
+  await expect(page.locator(".ctxmenu > .subwrap")).toHaveCount(2);
+  const mb = (await page.locator(".ctxmenu").boundingBox())!;
+  expect(mb.height).toBeLessThan(260);
+  await page.locator(".ctxmenu .item", { hasText: "別のグループへ" }).click();
+  await expect(page.locator(".ctxmenu .submenu .item", { hasText: "ほかのグループへ移す" })).toBeVisible();
+  await shot("34-menu-x");
+});
+
+test("2026-11-24: @ を打つと候補(これまでのしるし・記録の種類)・@ はしるしの見た目・Ctrl+J でしるしごとの記録", async () => {
+  await page.keyboard.press("Control+d");
+  await write(300, 200, "プラトンを読んだ @読書");
+  await expect(page.locator(".node .tag", { hasText: "@読書" })).toHaveCount(1);
+  // @ を打つと、これまでのしるしが候補に出る。Enter で入る
+  await page.mouse.click(300, 400);
+  await page.keyboard.type("アリストテレス @");
+  await expect(page.locator(".tag-pop .tag-opt", { hasText: "@読書" })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("textarea.draft")).toHaveValue("アリストテレス @読書 ");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".node .tag", { hasText: "@読書" })).toHaveCount(2);
+  // 打ちかけで絞る・Esc は候補だけ閉じる
+  await page.mouse.click(300, 550);
+  await page.keyboard.type("空を飛ぶ @読");
+  await expect(page.locator(".tag-pop .tag-opt")).toHaveText(["@読書"]);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".tag-pop")).toHaveCount(0);
+  await expect(page.locator("textarea.draft")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  // Ctrl+J: 左に @読書(2 件)。押すと @読書 の記録の一覧。その日のチップにも出る
+  await page.keyboard.press("Control+j");
+  await expect(page.locator(".rec-chip.written[data-marker='読書']")).toHaveCount(1);
+  const row = page.locator(".rec-mk[data-marker='読書']");
+  await expect(row).toContainText("2");
+  await row.click();
+  await expect(page.locator(".rec-sw.on")).toHaveText("@読書 の記録");
+  await expect(page.locator(".rec-taglist .rec-item")).toHaveCount(2);
+  await shot("35-taglist");
+  await page.locator(".rec-taglist .rec-item", { hasText: "アリストテレス" }).click();
+  await expect(page.locator(".records")).toHaveCount(0);
+  await expect(page.locator(".node.selected", { hasText: "アリストテレス" })).toHaveCount(1);
 });

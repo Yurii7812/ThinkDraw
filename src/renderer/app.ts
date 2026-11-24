@@ -6,6 +6,7 @@ import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
 import { exportGroup, type ExportKind } from "./exporter";
 import { cleanKind, dayGroupTitle } from "../core/records";
+import { allTags } from "../core/tags";
 import { CUSTOM_FILE, parseCustomSets, setCustomPromptSets, type CustomPromptSet } from "../decks/prompts";
 import { findDayGroup, findRecordNote, isDayGroup, KINDS_FILE, parseKinds, RecordsView, type RecordEntry, type RecordKind } from "./records";
 import { showGroupTree } from "./grouptree";
@@ -320,6 +321,7 @@ class App {
         openBeside: (id) => this.openInTab(id),
         openTabBehind: (id) => this.openInTab(id, false),
         jump: (target, from) => this.jump(target, from),
+        tagCandidates: () => this.tagCandidates(),
         extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
         groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openGroup(g)),
         openFile: (rel) => void api().openAsset(rel),
@@ -752,6 +754,11 @@ class App {
       this.canvas.renderNow();
       this.canvas.setSelection([e.id]);
       this.openBody(e.id);
+    } else if (e.type === "day" && e.id !== e.day && this.vault.exists(e.id)) {
+      // しるしの一覧から: その文字のあるグループを開いて、その文字を見せる
+      this.openGroup(e.day);
+      this.canvas.renderNow();
+      this.canvas.centerOn(e.id);
     } else this.openGroup(e.type === "group" ? e.id : e.day);
   }
   /** 今日のその種類の記録(ノート「2026-11-23-種類」)を開く。なければ作り、上位・下位の記録と線でつなぐ */
@@ -871,6 +878,11 @@ class App {
     const sel = (loc.sel ?? []).filter((i) => this.canvas.rectOf(i));
     if (sel.length) this.canvas.setSelection(sel);
     this.updateBar();
+  }
+
+  /** @ の候補: 使ったしるし(マーカー・文字とノートの @)と、時系列記録の種類。よく使う順 */
+  tagCandidates(): string[] {
+    return allTags(this.vault, this.kinds.map((k) => k.name)).map((t) => t.tag);
   }
 
   // ---------- 引用から飛ぶ・戻る(2026-11-24 利用者・統合仕様 1) ----------
