@@ -797,7 +797,7 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .d-other-list summary { cursor: pointer; }
 .d-other-list .d-meanings { font-size: 12px; }
 .d-items { display: flex; flex-direction: column; gap: 1px; }
-.d-item { display: grid; grid-template-columns: minmax(80px, 38%) 1fr; gap: 8px; align-items: baseline; text-align: left; border: 0; background: none; color: var(--fg); padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 12.5px; line-height: 1.5; }
+.d-item { display: grid; grid-template-columns: minmax(80px, 34%) 1fr; gap: 8px; align-items: baseline; text-align: left; border: 0; background: none; color: var(--fg); padding: 2px 6px; border-radius: 6px; cursor: pointer; font-size: 12px; line-height: 1.4; }
 .d-item:hover { background: var(--accent-soft); }
 .d-item-n { font-weight: 600; }
 .d-item-m { color: var(--muted); }
@@ -810,24 +810,60 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .modal.custom-set { width: min(520px, 92vw); }
 .custom-lines { resize: vertical; font: inherit; line-height: 1.6; }
 /* タロットの右の欄(2026-11-24 見本 B): 大きなカード → 読み｜絵｜問い */
-.d-tarot-top { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 0 12px; text-align: center; }
-.d-tarot-top .d-face.big { width: 120px; }
-.d-tarot-top .d-face.big .face { width: 120px; border-radius: 6px; overflow: hidden; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14); }
-.d-tarot-top .d-title { font-size: 18px; font-weight: 600; margin-top: 8px; }
+/* 2026-11-24: スクロールせずに全部見えるよう、カードは左に小さく・名前とキーワードは右に */
+.d-tarot-top { display: flex; align-items: center; gap: 14px; padding: 2px 0 8px; }
+.d-tarot-top .d-face.big { flex: none; }
+.d-tarot-top .d-face.big .face { border-radius: 5px; overflow: hidden; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.14); }
+.d-tarot-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.d-tarot-top .d-title { font-size: 17px; font-weight: 600; }
 .d-tarot-top .d-title small { font-weight: 400; color: var(--muted); font-size: 12px; }
 .d-sub { font-size: 12px; color: var(--muted); }
-.d-tabs { display: flex; gap: 2px; padding: 3px; background: var(--line); border-radius: 8px; margin: 0 0 12px; position: sticky; top: 0; z-index: 1; }
+.d-tabs { display: flex; gap: 2px; padding: 3px; background: var(--line); border-radius: 8px; margin: 0 0 4px; position: sticky; top: 0; z-index: 1; }
 .d-tabs button { flex: 1; border: 0; background: none; color: var(--muted); font-size: 13px; padding: 5px 4px; border-radius: 6px; cursor: pointer; }
 .d-tabs button.on { background: var(--bg); color: var(--fg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
-.d-tabbody { display: flex; flex-direction: column; gap: 10px; }
-.d-kwline { font-size: 15px; }
+.d-tabbody { display: flex; flex-direction: column; gap: 7px; }
+.d-tabbody .d-reading { line-height: 1.55; }
+.d-tabbody .d-meanings { line-height: 1.5; }
+.d-tabbody .d-rel { padding-top: 4px; gap: 2px; }
+.d-kwline { font-size: 14px; line-height: 1.45; }
 .d-sep { height: 1px; background: var(--line); }
 .d-meanings { list-style: none; padding: 0; }
 .d-meanings li { display: flex; gap: 10px; }
 .d-mk { width: 76px; flex: none; color: var(--muted); white-space: nowrap; }
 .d-words { display: flex; flex-wrap: wrap; gap: 2px 4px; }
-.d-word { border: 0; background: none; color: var(--fg); font-size: 13px; padding: 2px 5px; border-radius: 5px; cursor: pointer; line-height: 1.5; }
+.d-word { border: 0; background: none; color: var(--fg); font-size: 12.5px; padding: 1px 4px; border-radius: 5px; cursor: pointer; line-height: 1.45; }
 .d-word:hover { background: var(--accent-soft); }
 .d-qlist { display: flex; flex-direction: column; gap: 2px; }
-.d-q { border: 0; background: none; color: var(--fg); text-align: left; font-size: 13.5px; line-height: 1.55; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.d-q { border: 0; background: none; color: var(--fg); text-align: left; font-size: 13px; line-height: 1.45; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 .d-q:hover { background: var(--accent-soft); }
+
+/* 引用の ↗(元の場所へ飛ぶ)・ボードの中の引用・切り取り・ボードの中の検索・戻る(2026-11-24) */
+.jump-btn {
+  position: absolute; top: -11px; right: -11px; width: 20px; height: 20px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; z-index: 2;
+  display: flex; align-items: center; justify-content: center; opacity: 0.75; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.jump-btn::before { content: ""; width: 10px; height: 10px; background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 1.5h5.5V7M8.5 1.5 1.5 8.5'/%3E%3C/svg%3E") center/contain no-repeat; }
+.node:hover > .jump-btn, .node.selected > .jump-btn { opacity: 1; }
+.jump-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.node.outer .jump-btn { display: none; }
+.node.alias { outline-style: dotted; }
+.node.alias.missing { color: var(--muted); font-size: 12px; }
+.node.cut { opacity: 0.35; }
+.node.found { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 6px; }
+.find-box {
+  position: absolute; top: 10px; right: 12px; z-index: 20; display: flex; align-items: center; gap: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+.find-input { border: 0; outline: none; background: none; color: var(--fg); font: inherit; font-size: 13px; width: 200px; }
+.find-count { font-size: 12px; color: var(--muted); min-width: 2.5em; text-align: right; }
+.return-btn {
+  position: absolute; left: 14px; bottom: 14px; z-index: 20; border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+  border-radius: 18px; padding: 6px 14px; font-size: 13px; cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+.return-btn:hover { border-color: var(--accent); color: var(--accent); }
+/* 書いている途中の文字は、下の線が透けないように(2026-11-24) */
+.draft { background: var(--canvas); }
+/* 矢印は大きく・はっきり(2026-11-24) */
+.edge.k-arrow .vis, .edge.k-double .vis { stroke-width: 1.8; }
+.marker { fill: color-mix(in srgb, var(--fg) 70%, var(--edge)); }

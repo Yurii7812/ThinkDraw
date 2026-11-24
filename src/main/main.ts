@@ -152,9 +152,14 @@ function registerIpc(): void {
     let file: string;
     if (forced) file = path.join(forced, path.basename(name));
     else {
-      const r = await dialog.showSaveDialog(win!, { title: "書き出す", defaultPath: path.join(app.getPath("documents"), name), filters: [{ name: label, extensions: exts }] });
+      // 最後に書き出した場所を覚えておき、次もそこから(2026-11-24 利用者)
+      const memo = path.join(app.getPath("userData"), "last-export-dir.txt");
+      const last = await fs.readFile(memo, "utf8").then((t) => t.trim()).catch(() => "");
+      const dir = last && existsSync(last) ? last : app.getPath("documents");
+      const r = await dialog.showSaveDialog(win!, { title: "書き出す", defaultPath: path.join(dir, name), filters: [{ name: label, extensions: exts }] });
       if (r.canceled || !r.filePath) return null;
       file = r.filePath;
+      await fs.writeFile(memo, path.dirname(file)).catch(() => {});
     }
     await fs.writeFile(file, typeof data === "string" ? data : Buffer.from(data));
     return file;
@@ -197,8 +202,11 @@ function registerIpc(): void {
   });
   ipcMain.handle("paper:export", async () => {
     if (process.env.THINKDRAW_EXPORT_DIR) return { dir: process.env.THINKDRAW_EXPORT_DIR, n: await needPaper().exportTo(path.join(process.env.THINKDRAW_EXPORT_DIR, "紙PKM")) };
-    const r = await dialog.showOpenDialog(win!, { title: "紙PKM の書き出し先", properties: ["openDirectory", "createDirectory"] });
+    const memo = path.join(app.getPath("userData"), "last-export-dir.txt");
+    const last = await fs.readFile(memo, "utf8").then((t) => t.trim()).catch(() => "");
+    const r = await dialog.showOpenDialog(win!, { title: "紙PKM の書き出し先", properties: ["openDirectory", "createDirectory"], ...(last && existsSync(last) ? { defaultPath: last } : {}) });
     if (r.canceled || !r.filePaths[0]) return null;
+    await fs.writeFile(memo, r.filePaths[0]).catch(() => {});
     const dir = path.join(r.filePaths[0], "紙PKM-" + new Date().toISOString().slice(0, 10));
     return { dir, n: await needPaper().exportTo(dir) };
   });

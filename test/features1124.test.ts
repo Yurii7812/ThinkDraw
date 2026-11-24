@@ -97,3 +97,17 @@ describe("枠", () => {
     expect(v.membersOf(f)).toEqual([]);
   });
 });
+
+describe("ボードの中の引用(alias)", () => {
+  it("元を指す小さなノード。ファイルに書いて読み直せる・検索には出ない", async () => {
+    const a = text("りんごの話", ROOT_ID, 0, 0);
+    const al = v.create({ type: "alias", target: a, group: ROOT_ID, x: 300, y: 0 }).id;
+    await v.flush();
+    const src = readFileSync(path.join(dir, `${al}.md`), "utf8");
+    expect(src).toContain("type: alias");
+    expect(src).toContain(`target: ${a}`);
+    const { v: v2 } = await openVault(dir);
+    expect(v2.get(al)?.target).toBe(a);
+    expect(searchTiered(v2, "りんご").nodes).toEqual([a]);
+  });
+});

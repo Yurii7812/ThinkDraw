@@ -950,3 +950,142 @@ test("2026-11-24: 自分の種類を作って、並べる・直す", async () =>
   expect(readFileSync(path.join(vault, ".thinkdraw", "prompt-sets.json"), "utf8")).toContain("朝の問い");
   await shot("27-custom");
 });
+
+test("2026-11-24: 引用の右上の ↗ で元の場所へ・戻るボタンで戻る・ふつうのクリックは選ぶだけ", async () => {
+  await write(300, 200, "元の文");
+  await page.locator(".node", { hasText: "元の文" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("元の箱");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+l");
+  await page.keyboard.type("元の文");
+  await page.locator(".picker-row", { hasText: "元の文" }).last().click();
+  const ref = page.locator(".node.ref", { hasText: "元の文" });
+  await expect(ref).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await ref.click();
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+  await expect(page.locator(".node.ref.selected")).toHaveCount(1);
+  await ref.locator(".jump-btn").click();
+  await expect(page.locator(".group-title")).toHaveText("元の箱");
+  await expect(page.locator(".return-btn")).toHaveCount(1);
+  await page.locator(".return-btn").click();
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+  await expect(page.locator(".node.ref.selected", { hasText: "元の文" })).toHaveCount(1);
+  await expect(page.locator(".return-btn")).toHaveCount(0);
+});
+
+test("2026-11-24: 同じボードに Ctrl+C → Ctrl+V でボードの中の引用・↗ でその場所へ・Ctrl+[ で戻る", async () => {
+  await write(200, 150, "ここの元");
+  await write(700, 600, "遠く");
+  await page.locator(".node", { hasText: "ここの元" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+c");
+  await page.keyboard.press("Escape");
+  await page.locator(".node", { hasText: "遠く" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+v");
+  const alias = page.locator(".node.alias", { hasText: "ここの元" });
+  await expect(alias).toHaveCount(1);
+  await settle();
+  expect(Object.values(mdFiles()).some((s) => s.includes("type: alias") && s.includes(`target: ${idOf("ここの元")}`))).toBe(true);
+  // ふつうのクリックは選ぶだけ(書き直しにならない)
+  await alias.click();
+  await expect(page.locator("textarea.draft")).toHaveCount(0);
+  await expect(page.locator(".node.alias.selected")).toHaveCount(1);
+  await alias.locator(".jump-btn").click();
+  await expect(page.locator(".node.selected:not(.alias)", { hasText: "ここの元" })).toHaveCount(1);
+  await expect(page.locator(".return-btn")).toHaveCount(1);
+  await page.keyboard.press("Control+[");
+  await expect(page.locator(".node.alias.selected")).toHaveCount(1);
+  await expect(page.locator(".return-btn")).toHaveCount(0);
+  await shot("28-alias");
+});
+
+test("2026-11-24: Ctrl+X で切り取って、別のグループで Ctrl+V すると移る", async () => {
+  await write(300, 200, "移す物");
+  await write(300, 400, "箱の中");
+  await page.locator(".node", { hasText: "箱の中" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("行き先");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.locator(".node", { hasText: "移す物" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+x");
+  await expect(page.locator(".node.cut", { hasText: "移す物" })).toHaveCount(1);
+  await page.locator(".node.t-group", { hasText: "行き先" }).click();
+  await expect(page.locator(".group-title")).toHaveText("行き先");
+  await page.keyboard.press("Control+v");
+  await expect(page.locator(".node:not(.ref)", { hasText: "移す物" })).toHaveCount(1);
+  await settle();
+  const files = mdFiles();
+  expect(files[idOf("行き先") + ".md"]).toContain(`id: ${idOf("移す物")}`);
+  expect(files["root.md"]).not.toContain(`id: ${idOf("移す物")}`);
+});
+
+test("2026-11-24: Ctrl+F でボードの中を探す・書いている文字から Ctrl+L で同じボードの物とつなぐ・線の文字は Esc でも残る", async () => {
+  await write(200, 150, "りんご");
+  await write(600, 500, "みかん");
+  await page.keyboard.press("Control+f");
+  await page.keyboard.type("みかん");
+  await expect(page.locator(".find-count")).toHaveText("1/1");
+  await expect(page.locator(".node.selected", { hasText: "みかん" })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".find-box")).toHaveCount(0);
+  // 文字を押すと書き直しになる。そのまま Ctrl+L
+  await page.locator(".node", { hasText: "りんご" }).click();
+  await expect(page.locator("textarea.draft")).toHaveCount(1);
+  await page.keyboard.press("Control+l");
+  await page.keyboard.type("みかん");
+  await page.locator(".picker-row", { hasText: "みかん" }).last().click();
+  await expect(page.locator(".edge")).toHaveCount(1);
+  await expect(page.locator(".node.ref")).toHaveCount(0);
+  // 線の文字: Esc で決まる
+  const mid = await page.evaluate(() => {
+    const p = document.querySelector(".edge .vis") as SVGPathElement;
+    const m = p.getPointAtLength(p.getTotalLength() / 2);
+    const pt = p.getScreenCTM()!;
+    return { x: pt.a * m.x + pt.c * m.y + pt.e, y: pt.b * m.x + pt.d * m.y + pt.f };
+  });
+  await page.mouse.dblclick(mid.x, mid.y);
+  await page.keyboard.type("好き");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".edgelabel")).toHaveText("好き");
+});
+
+test("2026-11-24: タロットの右の欄は、読み・絵・問いのどれもスクロールせずに全部見える", async () => {
+  await page.locator(".draw-caret").click();
+  await page.locator(".dm-tile", { hasText: "ケルト十字" }).click();
+  await expect(page.locator(".node.t-card")).toHaveCount(10);
+  for (let i = 0; i < 10; i++) {
+    await page.locator(".node.t-card").nth(i).click();
+    for (const t of ["読み", "絵", "問い"]) {
+      await page.locator(".side-panel .d-tabs button", { hasText: t }).click();
+      const over = await page.locator(".side-panel .detail").evaluate((e) => e.scrollHeight - e.clientHeight);
+      expect(over, `${i} 枚目の ${t}`).toBeLessThanOrEqual(0);
+    }
+    await page.locator(".side-panel .d-tabs button", { hasText: "読み" }).click();
+  }
+  await shot("29-tarot-fit");
+});
+
+test("2026-11-24: Tab で書く文字は、ほかの文字にかぶらない", async () => {
+  await write(500, 300, "まんなか");
+  for (const t of ["一つ目のとても長い言葉です", "二つ目のとても長い言葉です", "三つ目のとても長い言葉です", "四つ目のとても長い言葉です", "五つ目のとても長い言葉です"]) {
+    await page.keyboard.press("Escape"); // 選択を外してから選び直す
+    await page.locator(".node", { hasText: "まんなか" }).click({ modifiers: ["Control"] });
+    await page.keyboard.press("Tab");
+    await page.keyboard.type(t);
+    // 書いている間もかぶらない
+    const over = await page.evaluate(() => {
+      const ta = document.querySelector("textarea.draft")!.getBoundingClientRect();
+      return [...document.querySelectorAll(".node:not(.editing)")].some((n) => {
+        const r = n.getBoundingClientRect();
+        return r.left < ta.right && ta.left < r.right && r.top < ta.bottom && ta.top < r.bottom;
+      });
+    });
+    expect(over, t).toBe(false);
+    await page.keyboard.press("Escape");
+  }
+  await expect(page.locator(".edge")).toHaveCount(5);
+  await shot("30-tab-place");
+});

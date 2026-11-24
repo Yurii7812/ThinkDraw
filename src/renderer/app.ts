@@ -298,6 +298,7 @@ class App {
         hasOther: () => !!this.peek,
         openBeside: (id) => this.openInTab(id),
         openTabBehind: (id) => this.openInTab(id, false),
+        jump: (target, from) => this.jump(target, from),
         extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
         groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openGroup(g)),
         openFile: (rel) => void api().openAsset(rel),
@@ -348,7 +349,9 @@ class App {
   private onSelection(ids: string[]): void {
     // カードを 1 つ選んだときだけ、右の欄の「詳細」を自動で開く(文字では開かない)。
     // 自動で開いた分は、選択を外すか別の種類を選ぶと閉じる(手で開いたものは閉じない・保存もしない)
-    const one = ids.length === 1 ? this.vault.get(ids[0]) : undefined;
+    const one0 = ids.length === 1 ? this.vault.get(ids[0]) : undefined;
+    // ボードの中の引用は、元の物として扱う(タロットなら右の欄が出る)
+    const one = one0?.type === "alias" && one0.target ? this.vault.get(one0.target) : one0;
     // 発想カードは問いを札の下に出すので、右の欄は開かない(2026-11-24)
     const t = one?.card?.deck === "prompt" ? "text" : one?.type;
     if (t === "card") {
@@ -756,7 +759,61 @@ class App {
     }
     if (focusNode) this.canvas.centerOn(focusNode);
   }
+  // ---------- 引用から飛ぶ・戻る(2026-11-24 利用者) ----------
+  private returns: { group: string; view: View; sel: string }[] = [];
+  private returnBtn: HTMLElement | null = null;
+  private jumping = false;
+  /** 引用の ↗: 元の場所へ。同じボードにあればそこを見せ、無ければ所属しているグループへ。戻るボタンを出す */
+  jump(target: string, from: string): void {
+    if (!this.vault.exists(target)) return;
+    const c = this.canvas;
+    const r = { group: c.group, view: c.getView(), sel: from };
+    const here = this.vault.itemPos(c.group, target);
+    this.jumping = true;
+    try {
+      if (here && from !== target) c.centerOn(target);
+      else this.goToNode(target, false, true);
+    } finally {
+      this.jumping = false;
+    }
+    this.returns.push(r);
+    this.renderReturn();
+  }
+  /** 飛ぶ前の場所へ。戻る先が無ければ false */
+  jumpBack(): boolean {
+    const r = this.returns.pop();
+    if (!r) return false;
+    this.jumping = true;
+    try {
+      if (r.group !== this.canvas.group && this.vault.exists(r.group)) this.openGroup(r.group);
+      this.canvas.setView(r.view);
+      if (this.vault.exists(r.sel) && this.canvas.rectOf(r.sel)) this.canvas.setSelection([r.sel]);
+    } finally {
+      this.jumping = false;
+    }
+    this.renderReturn();
+    return true;
+  }
+  private renderReturn(): void {
+    if (!this.returns.length) {
+      this.returnBtn?.remove();
+      this.returnBtn = null;
+      return;
+    }
+    if (!this.returnBtn) {
+      this.returnBtn = h("button", { class: "return-btn", title: T.returnTip, text: T.returnBtn });
+      this.returnBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+      this.returnBtn.addEventListener("click", () => this.jumpBack());
+    }
+    if (this.returnBtn.parentElement !== this.canvas.el) this.canvas.el.append(this.returnBtn);
+  }
+
   private showGroup(id: string, anim: "in" | "out"): void {
+    if (!this.jumping && this.returns.length) {
+      // ほかの方法で移ったら、戻るボタンは消す
+      this.returns = [];
+      this.renderReturn();
+    }
     this.canvas.show(id, this.state.views[id] ?? null, anim);
     if (this.whole) {
       // 全体の画面(右)は、左の画面と同じグループを見せる
@@ -1414,7 +1471,7 @@ class App {
       }
       if (e.ctrlKey && (e.key === "[" || e.code === "BracketLeft")) {
         e.preventDefault();
-        this.back();
+        if (!this.jumpBack()) this.back();
         return;
       }
       if (e.ctrlKey && (e.key === "]" || e.code === "BracketRight")) {

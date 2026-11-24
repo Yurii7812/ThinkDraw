@@ -1,7 +1,8 @@
 // データモデル(SPEC 第 3 章)。画面にも Electron にも依存しない。
 
 // frame = 枠(2026-11-24): 見た目だけの囲み。所属は変えない。枠そのものは 1 つの物で、線を引ける
-export type NodeType = "text" | "note" | "group" | "card" | "frame";
+// alias = 同じボードの中の引用(2026-11-24 利用者): target の物を、別の場所にもう 1 つ見せる。中身は持たない
+export type NodeType = "text" | "note" | "group" | "card" | "frame" | "alias";
 export type LinkKind = "line" | "arrow" | "double" | "dashed" | "thick" | "oppose";
 export const LINK_KINDS: LinkKind[] = ["line", "arrow", "double", "dashed", "thick", "oppose"];
 
@@ -58,6 +59,8 @@ export interface TDNode {
   spread?: SpreadRef;
   /** type: frame のみ。枠の大きさ(位置は所属の x, y = 左上) */
   size?: { w: number; h: number };
+  /** type: alias のみ。見せている元の物 */
+  target?: string;
   body: string;
   /** 知らない frontmatter のキー(外部のエディタで足されたもの)。書き戻すときに残す */
   extra: Record<string, unknown>;

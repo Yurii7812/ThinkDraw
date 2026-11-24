@@ -93,7 +93,8 @@ export class SidePanel {
     let parts: (HTMLElement | null)[];
     if (ids.length > 1) parts = this.multi(ids);
     else if (ids.length === 1) {
-      const n = this.v.get(ids[0])!;
+      const n0 = this.v.get(ids[0])!;
+      const n = n0.type === "alias" && n0.target && this.v.exists(n0.target) ? this.v.get(n0.target)! : n0;
       parts = n.type === "card" && n.card ? this.cardDetail(n) : this.nodeDetail(n);
     } else parts = [h("div", { class: "d-empty", text: T.sideEmpty })];
     this.detailEl.replaceChildren(...parts.filter((p): p is HTMLElement => !!p));
@@ -364,7 +365,6 @@ export class SidePanel {
     }
     const panes: Record<TarotTab, HTMLElement[]> = {
       read: [
-        h("div", { class: "d-kwline", text: (rv ? def.kwRv : def.kwUp) ?? "" }),
         h("div", { class: "d-reading", text: reading }),
         h("div", { class: "d-sep" }),
         meaningList(rv ? dp.rv : dp.up),
@@ -392,9 +392,15 @@ export class SidePanel {
     const top = h(
       "div",
       { class: "d-tarot-top" },
-      h("div", { class: "d-face big" }, cardFace(c, 200)),
-      h("div", { class: "d-title" }, def.ja, h("small", { text: " " + def.en })),
-      h("div", { class: "d-sub", text: orient + (pos ? " · " + pos.name : "") }),
+      // 2026-11-24 利用者「スクロールしないと全部見れない」: カードは左に小さく、名前・向き・キーワードを右に
+      h("div", { class: "d-face big" }, cardFace(c, 124)),
+      h(
+        "div",
+        { class: "d-tarot-meta" },
+        h("div", { class: "d-title" }, def.ja, h("small", { text: " " + def.en })),
+        h("div", { class: "d-sub", text: orient + (pos ? " · " + pos.name : "") }),
+        h("div", { class: "d-kwline", text: (rv ? def.kwRv : def.kwUp) ?? "" }),
+      ),
     );
     return [top, tabs, body];
   }

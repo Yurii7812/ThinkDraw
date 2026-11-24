@@ -33,7 +33,7 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
   const pad = 40;
   const W = Math.ceil(x1 - x0 + pad * 2), H = Math.ceil(y1 - y0 + pad * 2);
   const parts: string[] = [];
-  parts.push(`<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${edge}"/></marker></defs>`);
+  parts.push(`<defs><marker id="ah" viewBox="0 0 14 12" refX="13" refY="6" markerWidth="15" markerHeight="13" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0.5 L14,6 L0,11.5 L3.5,6 z" fill="${fg}" fill-opacity="0.75"/></marker></defs>`);
   parts.push(`<rect width="${W}" height="${H}" fill="${bg}"/>`);
   parts.push(`<g transform="translate(${pad - x0},${pad - y0})" font-family="sans-serif" font-size="15">`);
   const clip = (r: { x: number; y: number; w: number; h: number }, tx: number, ty: number) => {
@@ -66,7 +66,9 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
     parts.push(`<path d="${strokeD(s.p)}" fill="none" stroke="${col(s.c)}" stroke-width="${s.hl ? s.w * 2 : s.w}" stroke-linecap="round" stroke-linejoin="round"${s.hl ? ' opacity="0.35"' : ""}/>`);
   }
   for (const i of items) {
-    const n = v.get(i.id)!, r = canvas.rectOf(i.id)!;
+    const n0 = v.get(i.id)!, r = canvas.rectOf(i.id)!;
+    const isAlias = n0.type === "alias";
+    const n = isAlias && n0.target && v.get(n0.target) ? v.get(n0.target)! : n0;
     const cx = r.x + r.w / 2;
     const text = (lines: string[], y: number, color: string, weight = "normal") =>
       lines.map((t, k) => `<text x="${cx}" y="${y + k * 22}" text-anchor="middle" fill="${color}" font-weight="${weight}">${esc(t)}</text>`).join("");
@@ -82,7 +84,7 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
       parts.push(text([lab], body ? r.y + 26 : r.y + r.h / 2 + 5, fg, "600"));
       if (body) parts.push(text([body], r.y + 50, edge));
     }
-    if (i.ref) parts.push(`<rect x="${r.x - 4}" y="${r.y - 4}" width="${r.w + 8}" height="${r.h + 8}" rx="6" fill="none" stroke="${edge}" stroke-dasharray="5 4"/>`);
+    if (i.ref || isAlias) parts.push(`<rect x="${r.x - 4}" y="${r.y - 4}" width="${r.w + 8}" height="${r.h + 8}" rx="6" fill="none" stroke="${edge}" stroke-dasharray="5 4"/>`);
   }
   parts.push("</g>");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join("")}</svg>`;

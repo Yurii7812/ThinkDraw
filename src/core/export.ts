@@ -28,8 +28,10 @@ export function groupToMarkdown(v: Vault, group: string, depth = 1, seen: Set<st
   const shown = new Set<string>();
   const lines: string[] = [];
   const walk = (id: string, level: number): void => {
-    const n = v.get(id)!;
-    const mark = refSet.has(id) ? "(引用)" : "";
+    const n0 = v.get(id)!;
+    // ボードの中の引用は、元の物の名前で
+    const n = n0.type === "alias" && n0.target && v.get(n0.target) ? v.get(n0.target)! : n0;
+    const mark = refSet.has(id) || n0.type === "alias" ? "(引用)" : "";
     const kind = n.type === "note" ? "📄 " : n.type === "group" ? "📁 " : "";
     const again = shown.has(id);
     lines.push(`${"  ".repeat(level)}- ${kind}${labelOf(n)}${mark}${again ? " ↩" : ""}`);

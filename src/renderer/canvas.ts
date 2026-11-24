@@ -59,6 +59,8 @@ export interface CanvasHost {
   openBeside?(id: string): void;
   /** 中ボタン: 後ろのタブで開く */
   openTabBehind?(id: string): void;
+  /** 引用の「飛ぶ」: 元の場所へ(同じボードなら、そこを見せる)。from = 押した引用 */
+  jump?(target: string, from: string): void;
 }
 
 interface Draft {
@@ -67,6 +69,8 @@ interface Draft {
   y: number;
   parent: string | null; // 確定したとき、ここから線を引く
   ta: HTMLTextAreaElement;
+  /** 親の左に置いたとき: 右の端をここに留め、左へ伸ばす(親にかぶらないように) */
+  right?: number;
 }
 
 type Drag =
@@ -86,11 +90,15 @@ type Drag =
   | { kind: "resize"; id: string; sx: number; sy: number; w: number; h: number };
 
 const DRAG_START = 4;
+/** Tab・Enter で次の文字を置くときに見込む幅 */
+const SPOT_W = 110;
 export const PRESET_COLORS = 8;
 
 /** Ctrl+C でコピーした物(どの画面のキャンバスからでも貼れる)と、システムのコピーに入れた目印の文字 */
 let refClip: { id: string; x: number; y: number }[] = [];
 let refClipMark = "";
+/** Ctrl+X で切り取ったとき: 切り取った元のグループ(貼ると、そこから移す) */
+let refCutFrom: string | null = null;
 export const refClipboard = { get mark() { return refClipMark; }, get size() { return refClip.length; } };
 const CARD_FACE_H = CARD_H;
 
@@ -176,6 +184,9 @@ export class Canvas {
     this.el.style.setProperty("--inv-z", String(Math.min(5, Math.max(1, 1 / this.view.z))));
     this.host.onViewChange(this.group, { ...this.view });
   }
+  getView(): View {
+    return { ...this.view };
+  }
   setView(v: View): void {
     this.view = { ...v };
     this.applyView();
@@ -187,6 +198,7 @@ export class Canvas {
   // ---------- 表示するグループ ----------
   show(group: string, view: View | null, animate: "in" | "out" | null = null): void {
     this.commitDraft("esc");
+    if (group !== this.group) this.closeFind();
     this.group = group;
     this.selection.clear();
     this.strokeSel.clear();
@@ -315,6 +327,7 @@ export class Canvas {
       const el = this.els.get(m.id)!;
       this.rects.set(m.id, { x: m.x, y: m.y, w: el.offsetWidth, h: el.offsetHeight });
     }
+    this.markCut();
     this.renderOuter();
     this.renderEdges();
     this.renderStrokes();
@@ -488,6 +501,10 @@ export class Canvas {
   }
 
   private signature(n: TDNode, ref: boolean): string {
+    if (n.type === "alias") {
+      const t = n.target ? this.v.get(n.target) : undefined;
+      return JSON.stringify(["alias", n.target, t && t.type !== "alias" ? this.signature(t, true) : null]);
+    }
     return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, n.paper ? [n.paper, paperStore.fzOf(n.paper), paperStore.thumbOf(n.paper)] : null, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? null : !!n.body.trim(), n.card, n.spread, n.size]);
   }
 
@@ -507,6 +524,25 @@ export class Canvas {
   }
 
   private nodeEl(n: TDNode, ref: boolean): HTMLElement {
+    if (n.type === "alias") {
+      // 同じボードの中の引用: 元の物と同じ見た目に、点線の枠と「飛ぶ」ボタン
+      const t = n.target ? this.v.get(n.target) : undefined;
+      if (t && t.type !== "alias") {
+        const el = this.nodeEl(t, true);
+        el.dataset.id = n.id;
+        el.classList.add("alias");
+        el.title = T.aliasMark;
+        return el;
+      }
+      return h("div", { class: "node t-text ref alias missing", "data-id": n.id }, h("span", { class: "label", text: T.aliasMissing }));
+    }
+    const el = this.nodeEl0(n, ref);
+    // 引用は、右上の ↗ で元の場所へ飛ぶ(ふつうのクリックは選ぶだけ。2026-11-24 利用者)
+    if (ref) el.append(h("button", { class: "jump-btn", "data-act": "jump", title: T.jumpTip, "aria-label": T.jumpTip }));
+    return el;
+  }
+
+  private nodeEl0(n: TDNode, ref: boolean): HTMLElement {
     const el = h("div", { class: `node t-${n.type}${n.color ? " c" + n.color : ""}${n.fill ? " f" + n.fill : ""}${ref ? " ref" : ""}`, "data-id": n.id });
     if (ref) el.title = T.refMark;
     if (n.type === "text" && n.paper) {
@@ -568,8 +604,9 @@ export class Canvas {
 
   private markerDefs(): SVGDefsElement {
     const defs = svg("defs");
-    const m = svg("marker", { id: "arrowhead", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" });
-    m.append(svg("path", { d: "M0,0 L10,5 L0,10 z", class: "marker" }));
+    // 矢印は大きく、とがった形に(2026-11-24 利用者「分かりづらい」)
+    const m = svg("marker", { id: "arrowhead", viewBox: "0 0 14 12", refX: "13", refY: "6", markerWidth: "15", markerHeight: "13", orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" });
+    m.append(svg("path", { d: "M0,0.5 L14,6 L0,11.5 L3.5,6 z", class: "marker" }));
     defs.append(m);
     return defs;
   }
@@ -641,7 +678,7 @@ export class Canvas {
     return !!this.draft;
   }
 
-  startEdit(id: string | null, x: number, y: number, parent: string | null, initial = ""): void {
+  startEdit(id: string | null, x: number, y: number, parent: string | null, initial = "", left = false): void {
     this.commitDraft("esc");
     const ta = h("textarea", { class: "draft", rows: 1, spellcheck: "false" }) as HTMLTextAreaElement;
     ta.value = initial;
@@ -649,9 +686,12 @@ export class Canvas {
     ta.style.top = y + "px";
     const n = id ? this.v.get(id) : null;
     if (n?.color) ta.classList.add("c" + n.color);
-    this.draft = { id, x, y, parent, ta };
+    this.draft = { id, x, y, parent, ta, right: left ? x + SPOT_W : undefined };
     ta.addEventListener("keydown", (e) => this.onDraftKey(e));
-    ta.addEventListener("input", () => this.draftLine());
+    ta.addEventListener("input", () => {
+      this.keepDraftClear();
+      this.draftLine();
+    });
     ta.addEventListener("blur", () => {
       if (this.draft?.ta === ta) this.commitDraft("esc");
     });
@@ -659,9 +699,36 @@ export class Canvas {
     this.draftLayer.append(ta);
     if (id) this.els.get(id)?.classList.add("editing");
     this.updateSelBar();
+    this.keepDraftClear();
     this.draftLine();
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
+
+  /**
+   * 書いている間、文字がほかの物や線にかぶらないように(2026-11-24 利用者)。
+   * 左に置いた文字は左へ伸ばす。それでもかぶったら、今の大きさで置き直す
+   */
+  private keepDraftClear(): void {
+    const d = this.draft;
+    if (!d) return;
+    const w = d.ta.offsetWidth, hh = d.ta.offsetHeight;
+    if (d.right !== undefined) d.x = Math.round(d.right - w);
+    const a = d.parent ? this.rects.get(d.parent) : undefined;
+    if (a && w > 0) {
+      const me = { x: d.x, y: d.y, w, h: hh };
+      const others = [...this.obstacles(new Set([d.parent!, ...(d.id ? [d.id] : [])])), ...this.edgeBoxes(d.parent!)];
+      if (gap(me, a) < 12 || others.some((o) => gap(me, o) < 4)) {
+        const fr = this.frameIds();
+        const boxes = [...this.rects.entries()].filter(([i]) => i !== d.parent && i !== d.id && !fr.has(i)).map(([, b]) => b);
+        const p = placeAround(a, others, { size: { w: w + 20, h: hh }, lineBlockers: boxes, rand: () => 0.5 });
+        d.x = p.x + 10;
+        d.y = p.y;
+        d.right = p.x + 10 + w / 2 < a.x ? d.x + w : undefined;
+      }
+    }
+    d.ta.style.left = d.x + "px";
+    d.ta.style.top = d.y + "px";
   }
 
   /** 書いている最中の文字と、つなぎ元とのあいだの仮の線(確定前でも線が見えるように) */
@@ -690,13 +757,21 @@ export class Canvas {
       e.preventDefault();
       this.commitDraft("esc");
       this.el.focus();
+    } else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l") {
+      // 書いている文字から Ctrl+L: 決めてから、その文字とつなぐ物を探す(2026-11-24 利用者)
+      e.preventDefault();
+      const parent = this.draft?.parent ?? null;
+      const id = this.commitDraft("esc") ?? parent;
+      this.el.focus();
+      this.setSelection(id && this.rects.has(id) ? [id] : []);
+      void this.linkBySearch();
     }
   }
 
   /** 書いている文字を確定する。Enter は同じ親のまわりに次、Tab はこのノードのまわりに子 */
-  commitDraft(mode: "enter" | "tab" | "esc"): void {
+  commitDraft(mode: "enter" | "tab" | "esc"): string | null {
     const d = this.draft;
-    if (!d) return;
+    if (!d) return null;
     this.draft = null;
     d.ta.remove();
     queueMicrotask(() => this.updateSelBar());
@@ -719,15 +794,16 @@ export class Canvas {
       this.renderNow();
     }
     if (id && !d.id && d.parent) this.fitNew(id, d.parent);
-    if (!id || mode === "esc") return;
+    if (!id || mode === "esc") return id;
     if (mode === "enter") {
       const parent = d.parent ?? this.parentOf(id);
       const p = this.spot(parent && this.rects.has(parent) ? parent : id);
-      this.startEdit(null, p.x, p.y, parent);
+      this.startEdit(null, p.x, p.y, parent, "", p.left);
     } else {
       const p = this.spot(id);
-      this.startEdit(null, p.x, p.y, id);
+      this.startEdit(null, p.x, p.y, id, "", p.left);
     }
+    return id;
   }
 
   /** 書き終えた文字の実際の大きさで、親やほかの物に近すぎ・重なっていたら置き直す(書く前は大きさが分からないため) */
@@ -747,13 +823,14 @@ export class Canvas {
   }
 
   /** anchor のまわりで、ほかと一番離れる所(2026-11-22 利用者の希望。core/placement.ts) */
-  spot(anchor: string): { x: number; y: number } {
+  spot(anchor: string): { x: number; y: number; left: boolean } {
     const a = this.rects.get(anchor)!;
     const fr = this.frameIds();
     const others = [...this.rects.entries()].filter(([i]) => i !== anchor && !fr.has(i)).map(([, r]) => r);
     others.push(...this.v.strokesOf(this.group).map(strokeBox), ...this.edgeBoxes());
     const boxes = [...this.rects.entries()].filter(([i]) => i !== anchor && !fr.has(i)).map(([, r]) => r);
-    return placeAround(a, others, { size: { w: 90, h: Math.min(40, a.h) }, lineBlockers: boxes });
+    const p = placeAround(a, others, { size: { w: SPOT_W, h: Math.min(40, a.h) }, lineBlockers: boxes });
+    return { ...p, left: p.x + SPOT_W / 2 < a.x };
   }
 
   /** つなぎの線を、小さな箱の並びとして表す(Tab で置く文字が線にかぶらないように)。except につながる線は除く */
@@ -791,7 +868,7 @@ export class Canvas {
     if (!this.rects.has(from)) return;
     const p = this.spot(from);
     if (edit) {
-      this.startEdit(null, p.x, p.y, from, text);
+      this.startEdit(null, p.x, p.y, from, text, p.left);
       return;
     }
     const id = this.v.tx(() => {
@@ -1223,8 +1300,9 @@ export class Canvas {
       this.setSelection([id]);
       return this.host.groupTree?.(id, target.closest("[data-act=tree]")!);
     }
-    // 引用は読むだけ(2026-11-24 利用者): 1 回クリックは選ぶだけ。ダブルクリック・Enter で引用元へ
-    if (this.v.isRefIn(this.group, id)) {
+    // 引用は読むだけ(2026-11-24 利用者): 1 回クリックは選ぶだけ。右上の ↗・ダブルクリック・Enter で元の場所へ
+    if (this.isQuote(id)) {
+      if (target.closest("[data-act=jump]")) return this.jump(id);
       this.setSelection([id]);
       return;
     }
@@ -1248,7 +1326,7 @@ export class Canvas {
   open(id: string, _target?: Element): void {
     const n = this.v.get(id);
     if (!n) return;
-    if (this.v.isRefIn(this.group, id)) return this.host.goToNode(id); // 引用は引用元へ(中身はここでは直さない)
+    if (this.isQuote(id)) return this.jump(id); // 引用は元の場所へ(中身はここでは直さない)
     if (n.type === "group") return this.host.openGroup(id);
     if (n.type === "frame") return void this.renameFrame(id);
     if (n.type === "text" && n.paper) return this.host.openPaper?.(n.paper);
@@ -1261,6 +1339,89 @@ export class Canvas {
     // 本文はノートだけ(2026-11-23 利用者)。カードは選ぶと右の欄に詳細が出る
     if (n.type === "note" || n.body.trim()) this.host.openBody(id);
     else this.setSelection([id]);
+  }
+
+  // ---------- ボードの中を探す(Ctrl+F。2026-11-24 利用者) ----------
+  private findBox: HTMLElement | null = null;
+  findInBoard(): void {
+    if (this.findBox) {
+      const i = this.findBox.querySelector("input")!;
+      i.focus();
+      i.select();
+      return;
+    }
+    const inp = h("input", { class: "find-input", type: "text", placeholder: T.findPh, spellcheck: "false", title: T.findTip }) as HTMLInputElement;
+    const cnt = h("span", { class: "find-count" });
+    const box = h("div", { class: "find-box" }, inp, cnt);
+    let hits: string[] = [];
+    let k = -1;
+    const textOf = (id: string) => {
+      const n0 = this.v.get(id);
+      const n = n0?.type === "alias" && n0.target ? this.v.get(n0.target) : n0;
+      if (!n) return "";
+      return [n.card ? cardName(n.card) : "", n.title, n.body].join(" ").toLowerCase();
+    };
+    const mark = () => {
+      const set = new Set(hits);
+      for (const [id, el] of this.els) el.classList.toggle("found", set.has(id));
+    };
+    const go = (d: number) => {
+      if (!hits.length) return;
+      k = (k + d + hits.length) % hits.length;
+      this.centerOn(hits[k]);
+      cnt.textContent = `${k + 1}/${hits.length}`;
+    };
+    const run = () => {
+      const words = inp.value.toLowerCase().split(/\s+/).filter(Boolean);
+      const pos = (id: string) => this.rects.get(id)!;
+      hits = words.length ? [...this.rects.keys()].filter((id) => words.every((w) => textOf(id).includes(w))) : [];
+      hits.sort((a, b) => pos(a).y - pos(b).y || pos(a).x - pos(b).x);
+      k = -1;
+      mark();
+      cnt.textContent = words.length && !hits.length ? T.findNone : "";
+      if (hits.length) go(1);
+    };
+    const close = () => {
+      box.remove();
+      this.findBox = null;
+      hits = [];
+      mark();
+      this.el.focus({ preventScroll: true });
+    };
+    inp.addEventListener("input", run);
+    inp.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.isComposing) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        go(e.shiftKey ? -1 : 1);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+      }
+    });
+    box.addEventListener("pointerdown", (e) => e.stopPropagation());
+    (box as HTMLElement & { close?: () => void }).close = close;
+    this.findBox = box;
+    this.el.append(box);
+    inp.focus();
+  }
+  closeFind(): void {
+    (this.findBox as (HTMLElement & { close?: () => void }) | null)?.close?.();
+  }
+
+  /** 引用(ほかのグループの物の引用・同じボードの中の引用) */
+  isQuote(id: string): boolean {
+    return this.v.isRefIn(this.group, id) || this.v.get(id)?.type === "alias";
+  }
+
+  /** 引用の元の場所へ */
+  jump(id: string): void {
+    const n = this.v.get(id);
+    const target = n?.type === "alias" ? n.target : id;
+    if (!target || !this.v.exists(target)) return toast(T.aliasMissing);
+    if (this.host.jump) this.host.jump(target, id);
+    else this.host.goToNode(target);
   }
 
   /** 反対側の画面へドラッグしている間、カーソルに付いてくる札(何がどうなるかを書く) */
@@ -1369,8 +1530,22 @@ export class Canvas {
       this.setSelection([]); // 選択を外す
       return true;
     }
+    if (e.key === "Escape" && refCutFrom) {
+      refClip = [];
+      refCutFrom = null;
+      this.markCut();
+      return true;
+    }
     if (e.ctrlKey && !e.shiftKey && k === "c" && ids.length) {
       this.copySelection(ids);
+      return true;
+    }
+    if (e.ctrlKey && !e.shiftKey && k === "x" && ids.length) {
+      this.copySelection(ids, true);
+      return true;
+    }
+    if (e.ctrlKey && !e.shiftKey && k === "f") {
+      this.findInBoard();
       return true;
     }
     if (e.key === "Delete" || e.key === "Backspace") {
@@ -1412,18 +1587,31 @@ export class Canvas {
     // 選んでいる物(枠も)から Tab: つながった子の文字を書き始める(2026-11-24)
     if (e.key === "Tab" && !e.ctrlKey && !e.shiftKey && ids.length === 1 && this.rects.has(ids[0])) {
       const p = this.spot(ids[0]);
-      this.startEdit(null, p.x, p.y, ids[0]);
+      this.startEdit(null, p.x, p.y, ids[0], "", p.left);
       return true;
     }
     return false;
   }
 
-  /** Ctrl+C: 選んだ物を覚える。貼る(Ctrl+V)と、別のグループに引用として入る。システムのコピーにも目印の文字を入れる */
-  copySelection(ids: string[]): void {
-    refClip = ids.map((id) => ({ id, ...(this.v.itemPos(this.group, id) ?? { x: 0, y: 0 }) }));
-    refClipMark = T.copiedMark(ids.length);
+  /**
+   * Ctrl+C: 選んだ物を覚える。貼る(Ctrl+V)と引用として入る(同じボードなら、ボードの中の引用)。
+   * Ctrl+X(cut): 貼った所へ移す(元のグループからは外れる)。システムのコピーにも目印の文字を入れる
+   */
+  copySelection(ids: string[], cut = false): void {
+    // ボードの中の引用をコピーしたら、元の物をコピーしたことにする
+    const pick = (id: string) => (!cut && this.v.get(id)?.type === "alias" ? this.v.get(id)!.target ?? id : id);
+    refClip = ids.map((id) => ({ id: pick(id), ...(this.v.itemPos(this.group, id) ?? { x: 0, y: 0 }) }));
+    refCutFrom = cut ? this.group : null;
+    refClipMark = (cut ? T.cutMark : T.copiedMark)(ids.length);
     void navigator.clipboard?.writeText(refClipMark).catch(() => {});
-    toast(T.copiedToast(ids.length));
+    toast((cut ? T.cutToast : T.copiedToast)(ids.length));
+    this.markCut();
+  }
+
+  /** 切り取った物を薄く見せる(貼るまで) */
+  private markCut(): void {
+    const cut = refCutFrom === this.group ? new Set(refClip.map((r) => r.id)) : new Set<string>();
+    for (const [id, el] of this.els) el.classList.toggle("cut", cut.has(id));
   }
 
   /** Ctrl+V(app の paste から): コピーした物を、このグループに引用として貼る。見えている真ん中に、元の並びのまま */
@@ -1434,18 +1622,64 @@ export class Canvas {
     const x1 = Math.max(...refClip.map((r) => r.x)), y1 = Math.max(...refClip.map((r) => r.y));
     const dx = c.x - (x0 + x1) / 2, dy = c.y - (y0 + y1) / 2;
     const made: string[] = [];
-    let already = 0;
+    if (refCutFrom) return this.pasteCut(dx, dy);
+    let refused = 0;
     this.v.tx(() => {
       for (const r of refClip) {
         if (!this.v.exists(r.id)) continue;
-        if (!this.v.canContain(this.group, r.id) && this.v.get(r.id)?.type === "group") continue; // 自分の上のグループは引用できない
-        if (this.v.addRef(this.group, r.id, Math.round(r.x + dx), Math.round(r.y + dy))) made.push(r.id);
-        else already++;
+        const x = Math.round(r.x + dx), y = Math.round(r.y + dy);
+        // このボードにもうある物: ボードの中の引用を置く(2026-11-24 利用者)
+        if (this.v.itemPos(this.group, r.id) || r.id === this.group) {
+          made.push(this.v.create({ type: "alias", target: r.id, group: this.group, x, y }).id);
+          continue;
+        }
+        if (!this.v.canContain(this.group, r.id) && this.v.get(r.id)?.type === "group") {
+          refused++; // 自分の上のグループは引用できない
+          continue;
+        }
+        if (this.v.addRef(this.group, r.id, x, y)) made.push(r.id);
       }
     });
     this.renderNow();
     this.setSelection(made);
-    toast(made.length ? T.pastedRefs(made.length) + (already ? T.pastedAlready(already) : "") : T.pastedNone);
+    toast(made.length ? T.pastedRefs(made.length) + (refused ? T.cycleRefused : "") : T.pastedNone);
+    return true;
+  }
+
+  /** 切り取った物を、このグループへ移す */
+  private pasteCut(dx: number, dy: number): boolean {
+    const from = refCutFrom!;
+    const moved: string[] = [];
+    let refused = 0;
+    this.v.tx(() => {
+      for (const r of refClip) {
+        if (!this.v.exists(r.id) || !this.v.itemPos(from, r.id)) continue;
+        const x = Math.round(r.x + dx), y = Math.round(r.y + dy);
+        if (from === this.group) {
+          this.v.move(this.group, [{ id: r.id, x, y }]);
+          moved.push(r.id);
+          continue;
+        }
+        if (this.v.itemPos(this.group, r.id)) {
+          refused++; // もうここにある
+          continue;
+        }
+        try {
+          this.v.moveToGroup(from, this.group, r.id, x, y);
+          moved.push(r.id);
+        } catch (err) {
+          if (err instanceof CycleError) refused++;
+          else throw err;
+        }
+      }
+    });
+    refClip = [];
+    refCutFrom = null;
+    refClipMark = "";
+    this.renderNow();
+    this.markCut();
+    this.setSelection(moved);
+    toast(moved.length ? T.pastedCut(moved.length) + (refused ? T.pastedSkipped(refused) : "") : T.pastedNone);
     return true;
   }
 
@@ -1610,12 +1844,12 @@ export class Canvas {
     const n = this.v.get(id);
     if (!n) return;
     const ids = this.selection.has(id) ? [...this.selection] : [id];
-    const isRef = this.v.isRefIn(this.group, id);
+    const isRef = this.isQuote(id);
     const allRefs = ids.every((i) => this.v.isRefIn(this.group, i));
     const many = ids.length > 1;
     // よく使う操作(横に並べる)
     const bar: NonNullable<MenuItem["bar"]> = [];
-    if (!many && isRef) bar.push({ icon: "open", label: T.mOrigin, title: T.goOrigin + " (ダブルクリック)", action: () => this.host.goToNode(id) });
+    if (!many && isRef) bar.push({ icon: "open", label: T.mOrigin, title: T.jumpTip + " (↗・ダブルクリック)", action: () => this.jump(id) });
     else if (!many) {
       if (n.type === "group") bar.push({ icon: "open", label: T.mOpen, title: T.openGroup, action: () => this.host.openGroup(id) });
       else if (n.type === "text" && n.paper) bar.push({ icon: "open", label: T.mOpen, title: PT.title, action: () => this.host.openPaper?.(n.paper!) });
@@ -1821,7 +2055,7 @@ export class Canvas {
     ]);
   }
 
-  /** 線の文字をその場で書く(線のダブルクリック・右クリック)。Enter で決める・Esc でやめる・空にすると消える */
+  /** 線の文字をその場で書く(線のダブルクリック・右クリック)。Enter・Esc・外を押すと決まる・空にすると消える */
   editLinkLabel(from: string, to: string): void {
     const l = this.v.get(from)?.links.find((x) => x.to === to);
     const a = this.rects.get(from), b = this.rects.get(to);
@@ -1850,8 +2084,8 @@ export class Canvas {
     inp.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.isComposing) return;
-      if (e.key === "Enter") finish(true);
-      else if (e.key === "Escape") finish(false);
+      // Esc でも、書いた文字は残す(2026-11-24 利用者)
+      if (e.key === "Enter" || e.key === "Escape") finish(true);
     });
     inp.addEventListener("blur", () => finish(true));
     inp.addEventListener("pointerdown", (e) => e.stopPropagation());

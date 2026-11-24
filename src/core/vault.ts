@@ -43,6 +43,8 @@ export interface CreateOptions {
   card?: CardRef;
   spread?: SpreadRef;
   size?: { w: number; h: number };
+  /** type: alias のみ */
+  target?: string;
   id?: string;
 }
 
@@ -321,6 +323,7 @@ export class Vault {
       if (o.paper) n.paper = o.paper;
       if (o.spread) n.spread = { ...o.spread };
       if (o.type === "frame") n.size = { ...(o.size ?? { w: 240, h: 160 }) };
+      if (o.type === "alias" && o.target) n.target = o.target;
       this.touch(id);
       this.nodes.set(id, n);
       this.index.update(id, n);
