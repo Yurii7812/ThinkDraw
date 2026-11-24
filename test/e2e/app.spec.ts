@@ -171,13 +171,13 @@ test("タロット: 引くメニューから置き、右の欄に解説、押す
   const item = page.locator(".side-panel .d-item").first();
   const word = (await item.locator(".d-item-n").textContent())!;
   await item.click();
-  await expect(page.locator("textarea.draft")).toHaveValue(word + ": ");
+  await expect(page.locator("textarea.draft")).toHaveValue(word); // 「: 」は付けない(2026-11-24 利用者)
   await page.keyboard.type("崖");
   await page.keyboard.press("Escape");
   await settle();
   const cards = Object.values(mdFiles()).filter((s) => s.includes("type: card"));
   expect(cards.length).toBe(10);
-  expect(Object.values(mdFiles()).some((s) => s.includes(word + ": 崖"))).toBe(true); // 「: 」入りの題は引用符で書かれる
+  expect(Object.values(mdFiles()).some((s) => s.includes(word + "崖"))).toBe(true);
 });
 
 test("易と発想カード", async () => {
@@ -1052,19 +1052,35 @@ test("2026-11-24: Ctrl+F でボードの中を探す・書いている文字か�
   await expect(page.locator(".edgelabel")).toHaveText("好き");
 });
 
-test("2026-11-24: タロットの右の欄は、読み・絵・問いのどれもスクロールせずに全部見える", async () => {
-  await page.locator(".draw-caret").click();
-  await page.locator(".dm-tile", { hasText: "ケルト十字" }).click();
-  await expect(page.locator(".node.t-card")).toHaveCount(10);
-  for (let i = 0; i < 10; i++) {
-    await page.locator(".node.t-card").nth(i).click();
-    for (const t of ["読み", "絵", "問い"]) {
-      await page.locator(".side-panel .d-tabs button", { hasText: t }).click();
-      const over = await page.locator(".side-panel .detail").evaluate((e) => e.scrollHeight - e.clientHeight);
-      expect(over, `${i} 枚目の ${t}`).toBeLessThanOrEqual(0);
+test("2026-11-24: タロットの右の欄は、78 枚の正逆どれでも、読み・絵・問いがスクロールせずに全部見える", async () => {
+  const dir = path.join(__dirname, "../../src/decks/tarot/deep");
+  const ids = readdirSync(dir)
+    .filter((f) => /^(major|wands|cups|swords|pents)\d\.json$/.test(f))
+    .flatMap((f) => Object.keys(JSON.parse(readFileSync(path.join(dir, f), "utf8"))));
+  expect(ids.length).toBe(78);
+  const over = await page.evaluate(async (ids) => {
+    type A = { vault: { create(o: unknown): { id: string } }; canvas: { renderNow(): void; setSelection(i: string[]): void } };
+    const app = (window as unknown as { __app: A }).__app;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const made: string[] = [];
+    ids.forEach((id, k) => {
+      for (const reversed of [false, true]) made.push(app.vault.create({ type: "card", card: { deck: "tarot", id, reversed }, group: "root", x: (k % 13) * 120, y: Math.floor(k / 13) * 400 + (reversed ? 200 : 0) }).id);
+    });
+    app.canvas.renderNow();
+    const bad: string[] = [];
+    for (const nid of made) {
+      app.canvas.setSelection([nid]);
+      await sleep(90);
+      for (const t of ["read", "pic", "ask"]) {
+        (document.querySelector(`.side-panel .d-tabs button[data-t=${t}]`) as HTMLElement).click();
+        const d = document.querySelector(".side-panel .detail")!;
+        const o = d.scrollHeight - d.clientHeight;
+        if (o > 0) bad.push(`${document.querySelector(".side-panel .d-title")!.textContent} ${t} +${o}`);
+      }
     }
-    await page.locator(".side-panel .d-tabs button", { hasText: "読み" }).click();
-  }
+    return bad;
+  }, ids);
+  expect(over).toEqual([]);
   await shot("29-tarot-fit");
 });
 

@@ -267,7 +267,7 @@ export const T = {
   meaningsRv: "意味(逆位置)",
   ifOther: "なら",
   itemsTitle: (n: number) => `絵の中にあるものと象徴(${n})— 押すと、つないで書く`,
-  itemTip: "押すと、このカードにつないで「名前: 」から書き始める",
+  itemTip: "押すと、このカードにつないで、この名前から書き始める",
   questionsTitle: (n: number) => `問い(${n})— 押すと、つないで置く`,
 
   // 易・発想カード・引く

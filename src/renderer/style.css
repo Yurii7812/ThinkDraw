@@ -796,8 +796,10 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .d-other-list { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .d-other-list summary { cursor: pointer; }
 .d-other-list .d-meanings { font-size: 12px; }
-.d-items { display: flex; flex-direction: column; gap: 1px; }
-.d-item { display: grid; grid-template-columns: minmax(80px, 34%) 1fr; gap: 8px; align-items: baseline; text-align: left; border: 0; background: none; color: var(--fg); padding: 2px 6px; border-radius: 6px; cursor: pointer; font-size: 12px; line-height: 1.4; }
+.d-items { display: flex; flex-direction: column; gap: 0; }
+/* 名前のすぐ後ろに意味を続けて流す(2 列だと意味の列が細く、愚者などではみ出した。2026-11-24) */
+.d-item { display: block; text-align: left; border: 0; background: none; color: var(--fg); padding: 0 6px; border-radius: 6px; cursor: pointer; font-size: 12px; line-height: 1.38; }
+.d-item-n::after { content: " — "; color: var(--muted); font-weight: 400; }
 .d-item:hover { background: var(--accent-soft); }
 .d-item-n { font-weight: 600; }
 .d-item-m { color: var(--muted); }

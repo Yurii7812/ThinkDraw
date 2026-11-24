@@ -335,7 +335,6 @@ export class SidePanel {
         this.section(T.readingHere, h("div", { class: "d-reading", text: reading }), other),
         this.section(T.sceneTitle, scene),
         def.question ? this.section(T.question, this.chip(def.question, () => this.host.addConnected(n.id, def.question!, false), "ask")) : null,
-        ...this.relations(n),
       ].filter((x): x is HTMLElement => !!x);
     }
     // 2026-11-24 見本 B: 大きなカード → 「読み｜絵｜問い」の切り替え(覚える)。意味は出た向きのものだけ
@@ -354,7 +353,7 @@ export class SidePanel {
     const items = h("div", { class: "d-items" });
     for (const [name, mean] of dp.items) {
       const row = h("button", { class: "d-item", title: T.itemTip }, h("span", { class: "d-item-n", text: name }), h("span", { class: "d-item-m", text: mean }));
-      row.addEventListener("click", () => this.host.addConnected(n.id, name + ": ", true));
+      row.addEventListener("click", () => this.host.addConnected(n.id, name, true));
       items.append(row);
     }
     const qs = h("div", { class: "d-qlist" });
@@ -370,7 +369,7 @@ export class SidePanel {
         meaningList(rv ? dp.rv : dp.up),
         h("div", { class: "d-h", text: T.wordsTitle(rv) }),
         wordsEl,
-        ...this.relations(n),
+        // 所属先・引用先・つながりは出さない(2026-11-24 利用者「いらない」。元の場所へは引用の ↗)
       ],
       pic: [items],
       ask: [qs],
