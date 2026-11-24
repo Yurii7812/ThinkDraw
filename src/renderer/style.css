@@ -8,6 +8,7 @@
   --muted: #7b7b78;
   --line: #e2e2de;
   --edge: #8f8f8a;
+  --label-bg: #e6e6e2;
   --accent: #2f6fdb;
   --accent-soft: rgba(47, 111, 219, 0.14);
   --danger: #c4443a;
@@ -31,6 +32,7 @@
   --muted: #8f8f8f;
   --line: #3a3a3a;
   --edge: #8a8a8a;
+  --label-bg: #3a3a3a;
   --accent: #7aa7ff;
   --accent-soft: rgba(122, 167, 255, 0.18);
   --danger: #ff7b72;
@@ -68,7 +70,14 @@ input, textarea { font: inherit; color: inherit; }
 }
 .tb-left, .tb-right { display: flex; align-items: center; gap: 2px; flex: 1; }
 .tb-right { justify-content: flex-end; gap: 6px; }
-.tb-center { flex: 2; text-align: center; min-width: 0; }
+.tb-center { flex: 2; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 2px; }
+.title-edit { opacity: 0.55; }
+.title-edit svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
+.tb-center:hover .title-edit, .title-edit:focus-visible { opacity: 1; }
+.title-edit-row { display: flex; align-items: center; gap: 6px; width: min(560px, 100%); }
+.title-date { font-weight: 600; color: var(--muted); white-space: nowrap; }
+.title-input { flex: 1; min-width: 0; font: inherit; font-size: 15px; font-weight: 600; padding: 4px 8px; border: 1px solid var(--accent); border-radius: 6px; background: var(--bg); color: var(--fg); outline: none; }
+.title-ok { color: #fff !important; background: var(--accent) !important; border-radius: 6px; }
 .group-title {
   background: none; border: 0; font-weight: 600; font-size: 15px; padding: 4px 10px; border-radius: 6px;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
@@ -125,15 +134,26 @@ input, textarea { font: inherit; color: inherit; }
 .nodes { position: absolute; left: 0; top: 0; }
 
 .edge .vis { stroke: var(--edge); stroke-width: 1.5; fill: none; }
-.edge .hit { stroke: transparent; stroke-width: 14; fill: none; cursor: context-menu; }
+.edge .hit { stroke: transparent; stroke-width: 14; fill: none; cursor: pointer; }
+.edge .end-fill { fill: var(--edge); stroke: none; }
+.edge .end-stroke { fill: none; stroke: var(--edge); stroke-width: 2; stroke-linecap: square; }
+.edge.k-oppose .end-fill { fill: var(--danger); }
+/* 選んだ線(統合仕様 4.2): 薄い帯で囲む */
+.edge.selected .hit { stroke: color-mix(in srgb, var(--accent) 28%, transparent); }
+.edge.selected .vis { stroke: var(--accent); }
+.edge.selected .end-fill { fill: var(--accent); }
+.edge.selected .end-stroke { stroke: var(--accent); }
 .edge:hover .vis { stroke: var(--accent); }
 .edge.k-dashed .vis { stroke-dasharray: 6 5; }
 .edge.k-thick .vis { stroke-width: 4; }
 .edge.k-oppose .vis { stroke: var(--danger); }
 .oppose-tick { stroke: var(--danger); stroke-width: 2; }
 .marker { fill: var(--edge); }
-.edgelabel { fill: var(--fg); font-size: 13px; paint-order: stroke; stroke: var(--canvas); stroke-width: 10px; stroke-linejoin: round; cursor: text; }
-.edgelabel-input { position: absolute; transform: translate(-50%, -50%); font: inherit; font-size: 13px; text-align: center; padding: 2px 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--canvas); color: var(--fg); outline: none; pointer-events: auto; z-index: 5; }
+/* 線の文字(2026-11-24 統合仕様 6): 文章と同じ大きさ・不透明な薄い灰色の背景・枠なし */
+.edgelabel { fill: var(--fg); font-size: 15px; cursor: grab; }
+.elabel-bg { fill: var(--label-bg); cursor: grab; }
+.edge.selected .elabel-bg { stroke: var(--accent); stroke-width: 1; }
+.edgelabel-input { position: absolute; transform: translate(-50%, -50%); font: inherit; font-size: 15px; text-align: center; padding: 2px 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--canvas); color: var(--fg); outline: none; pointer-events: auto; z-index: 5; }
 .linkdrag { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .spreadframe { fill: none; stroke: var(--frame-line); stroke-width: 1; }
 
@@ -426,13 +446,22 @@ input, textarea { font: inherit; color: inherit; }
 /* ---------- ペンの道具 ---------- */
 .penbar { position: absolute; z-index: 15; top: 10px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 5px 8px; }
 .penbar[hidden] { display: none; }
-.pb-tool { border: 1px solid transparent; background: none; border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 12px; }
-.pb-tool.on { background: var(--accent-soft); border-color: var(--accent); }
-.pb-size { width: 26px; height: 26px; border: 1px solid transparent; background: none; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
-.pb-size i { display: block; border-radius: 50%; background: var(--fg); }
-.pb-size.on { border-color: var(--accent); }
-.penbar input[type="range"] { width: 80px; }
+/* ペンの帯(2026-11-24 統合仕様 9): 絵のボタン・太さの見本・丸い色 */
+.pb-tool { width: 34px; height: 34px; border: 0; background: none; border-radius: 8px; cursor: pointer; color: var(--fg); display: inline-flex; align-items: center; justify-content: center; }
+.pb-tool svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.pb-tool:hover { background: var(--accent-soft); }
+.pb-tool.on { background: var(--line); }
+.pb-size, .pb-more { width: 34px; height: 34px; border: 0; background: none; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; color: var(--fg); }
+.pb-size i { display: block; width: 18px; border-radius: 2px; background: currentColor; }
+.pb-size:hover, .pb-more:hover { background: var(--accent-soft); }
+.pb-size.on, .pb-more.on { background: var(--line); }
+.pb-more { font-size: 12px; color: var(--muted); }
+.pb-pop { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 6px 10px; }
+.pb-pop input[type="range"] { width: 140px; }
 .pb-w { font-size: 11px; color: var(--muted); min-width: 1.5em; }
+.pb-colors { display: grid; grid-template-columns: repeat(5, 18px); gap: 5px 6px; padding: 0 2px; }
+.pb-colors .sw { width: 18px; height: 18px; border-radius: 50%; margin: 0; }
+.pb-colors .sw.active { outline: none; box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--fg); }
 .pb-sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 .sw.ink.c0 { background: var(--fg); }
 .graph-title { font-weight: 600; }
@@ -700,9 +729,12 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .node.t-frame.c5 { border-color: var(--c5); } .node.t-frame.c6 { border-color: var(--c6); } .node.t-frame.c7 { border-color: var(--c7); } .node.t-frame.c8 { border-color: var(--c8); }
 
 /* 記録一覧(Ctrl+J)。2026-11-24 見本 B: 左に月のカレンダー、右にその日の中身 */
-.records { position: absolute; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.18); display: flex; align-items: flex-start; justify-content: center; padding-top: 48px; outline: none; }
-.rec-box { width: min(860px, calc(100% - 40px)); height: min(560px, calc(100% - 80px)); background: var(--bg); border-radius: 12px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); display: flex; overflow: hidden; }
-.rec-cal { width: 400px; flex: none; padding: 18px 20px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+/* 時系列記録(Ctrl+J。2026-11-24 統合仕様 14): アプリの中身の所全体を使う */
+.records { position: absolute; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; outline: none; }
+.rec-top { display: flex; align-items: center; padding: 8px 14px 8px 22px; border-bottom: 1px solid var(--line); }
+.rec-top-title { font-weight: 600; font-size: 15px; }
+.rec-box { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.rec-cal { width: clamp(280px, 30%, 400px); flex: none; padding: 18px 20px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; overflow: auto; }
 .rec-cal-head { display: flex; align-items: center; }
 .rec-month-name { flex: 1; text-align: center; font-weight: 600; font-size: 15px; }
 .rec-nav, .rec-close { border: 0; background: none; color: var(--muted); width: 32px; height: 32px; border-radius: 6px; font-size: 18px; cursor: pointer; }
@@ -724,13 +756,44 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .rec-gap { flex: 1; }
 .rec-kinds-btn { border: 0; background: none; color: var(--muted); font-size: 12px; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
 .rec-kinds-btn:hover { color: var(--fg); background: var(--accent-soft); }
-.rec-dayview { flex: 1; min-width: 0; padding: 18px 22px; display: flex; flex-direction: column; gap: 8px; }
+.rec-dayview { flex: 1; min-width: 0; padding: 20px 28px; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+.rec-day-head { display: flex; align-items: flex-start; gap: 16px; }
+.rec-day-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.rec-day-date { font-size: 14px !important; font-weight: 400 !important; color: var(--muted); }
+.rec-day-name { font: inherit; font-size: 22px; font-weight: 600; border: 1px solid transparent; border-radius: 6px; padding: 2px 6px; margin-left: -7px; background: none; color: var(--fg); outline: none; width: 100%; }
+.rec-day-name:hover { border-color: var(--line); }
+.rec-day-name:focus { border-color: var(--accent); }
+.rec-day-name::placeholder { color: var(--muted); font-weight: 400; }
+.rec-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rec-chip { display: inline-flex; align-items: center; gap: 2px; background: var(--line); color: var(--fg); border: 0; border-radius: 6px; padding: 3px 4px 3px 10px; font-size: 13px; }
+.rec-chip.add { padding: 3px 10px; cursor: pointer; color: var(--muted); }
+.rec-chip.add:hover { color: var(--fg); background: var(--accent-soft); }
+.rec-chip-x { border: 0; background: none; color: var(--muted); cursor: pointer; width: 20px; height: 20px; border-radius: 4px; }
+.rec-chip-x:hover { background: var(--bg); color: var(--fg); }
+.rec-h { font-size: 13px; font-weight: 600; margin-top: 8px; }
+.rec-h-row { display: flex; align-items: baseline; }
+.rec-new { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 6px; }
+.rec-new:hover { background: var(--accent-soft); }
+.rec-preview { position: relative; height: clamp(220px, 42vh, 520px); flex: none; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--canvas); }
+.rec-preview.empty { height: auto; padding: 10px; }
+.rec-preview .canvas.preview-canvas { position: absolute; inset: 0; }
+.rec-preview-open { position: absolute; right: 10px; top: 10px; z-index: 5; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.rec-sep { height: 1px; background: var(--line); margin: 6px 0; }
+.rec-markers { display: flex; flex-direction: column; gap: 1px; }
+.rec-mk { border: 0; background: none; color: var(--fg); text-align: left; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.rec-mk:hover { background: var(--accent-soft); }
+.rec-mk.on { background: var(--line); }
+.rec-others { display: flex; flex-direction: column; gap: 1px; }
+.ask-choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ask-choice { border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 6px; padding: 3px 10px; font-size: 13px; cursor: pointer; }
+.ask-choice:hover { border-color: var(--accent); }
 .rec-day-title { display: flex; align-items: baseline; gap: 10px; }
 .rec-day-date { font-size: 18px; font-weight: 600; }
 .rec-day-wd { color: var(--muted); }
 .rec-today { font-size: 11px; font-weight: 600; color: #fff; background: var(--accent); border-radius: 999px; padding: 1px 8px; }
 .rec-open-day { align-self: flex-start; }
-.rec-items { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
+.rec-items { display: flex; flex-direction: column; gap: 1px; }
+.rec-items .rec-item { border-bottom: 1px solid var(--line); border-radius: 0; }
 .rec-item { display: flex; align-items: center; gap: 10px; border: 0; background: none; color: var(--fg); text-align: left; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 14px; }
 .rec-item:hover { background: var(--accent-soft); }
 .rec-ico { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); opacity: 0.6; flex: none; }
@@ -869,3 +932,28 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 /* 矢印は大きく・はっきり(2026-11-24) */
 .edge.k-arrow .vis, .edge.k-double .vis { stroke-width: 1.8; }
 .marker { fill: color-mix(in srgb, var(--fg) 70%, var(--edge)); }
+
+/* 線の色(統合仕様 4.3)。矢印・括弧にも同じ色 */
+.edge.c1 .vis, .edge.c1 .end-stroke { stroke: var(--c1); } .edge.c1 .end-fill { fill: var(--c1); }
+.edge.c2 .vis, .edge.c2 .end-stroke { stroke: var(--c2); } .edge.c2 .end-fill { fill: var(--c2); }
+.edge.c3 .vis, .edge.c3 .end-stroke { stroke: var(--c3); } .edge.c3 .end-fill { fill: var(--c3); }
+.edge.c4 .vis, .edge.c4 .end-stroke { stroke: var(--c4); } .edge.c4 .end-fill { fill: var(--c4); }
+.edge.c5 .vis, .edge.c5 .end-stroke { stroke: var(--c5); } .edge.c5 .end-fill { fill: var(--c5); }
+.edge.c6 .vis, .edge.c6 .end-stroke { stroke: var(--c6); } .edge.c6 .end-fill { fill: var(--c6); }
+.edge.c7 .vis, .edge.c7 .end-stroke { stroke: var(--c7); } .edge.c7 .end-fill { fill: var(--c7); }
+.edge.c8 .vis, .edge.c8 .end-stroke { stroke: var(--c8); } .edge.c8 .end-fill { fill: var(--c8); }
+.edge.selected .vis { stroke-width: 2.2; }
+.ctxmenu .item.has-preview { display: flex; align-items: center; gap: 10px; }
+.mi-preview { flex: none; color: var(--fg); opacity: 0.85; }
+.g-part { fill: none; stroke: var(--edge); stroke-width: 1.6; }
+.g-part.hot { stroke: var(--accent); }
+
+/* 画像(統合仕様 8): 置いた場所ごとの幅・選ぶと四隅に大きさを変える取っ手 */
+.node.t-text.file.image { padding: 0; }
+.node.t-text.file.image .file-img { width: var(--img-w, auto); max-width: var(--img-max-w, 220px); max-height: var(--img-max-h, 160px); }
+.node.t-text.file.image[style*="--img-w"] .file-img { max-width: none; max-height: none; height: auto; }
+.img-h { position: absolute; width: 10px; height: 10px; background: var(--panel); border: 1.5px solid var(--accent); border-radius: 2px; display: none; z-index: 3; }
+.node.image.selected .img-h { display: block; }
+.img-h.nw { left: -6px; top: -6px; cursor: nwse-resize; } .img-h.se { right: -6px; bottom: -6px; cursor: nwse-resize; }
+.img-h.ne { right: -6px; top: -6px; cursor: nesw-resize; } .img-h.sw { left: -6px; bottom: -6px; cursor: nesw-resize; }
+.rec-time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }

@@ -4,7 +4,8 @@ export interface RecordKind {
   parents: string[];
 }
 export const KINDS_FILE = "record-kinds.json";
-export const DEFAULT_KINDS: RecordKind[] = [{ name: "日記", parents: [] }];
+// 2026-11-24 統合仕様 11: 日記を必須の種類にしない(新しい環境では種類は空。前に作った種類・ノートはそのまま)
+export const DEFAULT_KINDS: RecordKind[] = [];
 
 export function parseKinds(json: string | null): RecordKind[] {
   try {
@@ -42,3 +43,21 @@ export function withDescendants(kinds: RecordKind[], k: string): Set<string> {
   return out;
 }
 
+
+// ---------- 日付グループ(2026-11-24 統合仕様 11) ----------
+// 名前は「2026-11-24」か「2026-11-24-ThinkDrawの設計を考えた日」。先頭 10 文字が日付、その直後の「-」より後ろ全部が題(題の中の「-」もそのまま)
+const DAY_GROUP = /^(\d{4})-(\d{2})-(\d{2})(?:-([\s\S]*))?$/;
+
+/** 日付グループの名前 → 日付と題。日付として正しくなければ null */
+export function parseDayGroup(title: string): { date: string; title: string } | null {
+  const m = DAY_GROUP.exec(title.trim());
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  if (d.getFullYear() !== +m[1] || d.getMonth() !== +m[2] - 1 || d.getDate() !== +m[3]) return null;
+  return { date: `${m[1]}-${m[2]}-${m[3]}`, title: (m[4] ?? "").trim() };
+}
+/** 日付と題 → 日付グループの名前 */
+export function dayGroupTitle(date: string, title: string): string {
+  const t = title.replace(/\s*\n\s*/g, " ").trim();
+  return t ? `${date}-${t}` : date;
+}

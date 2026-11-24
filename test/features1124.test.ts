@@ -111,3 +111,44 @@ describe("ボードの中の引用(alias)", () => {
     expect(searchTiered(v2, "りんご").nodes).toEqual([a]);
   });
 });
+
+describe("統合仕様(2026-11-24)のデータ", () => {
+  it("線の色・文字の位置と大きさ・部分・全体を書いて読み直せる。反転しても失わない。逆向きがあれば反転しない", async () => {
+    const a = text("全体", ROOT_ID, 0, 0);
+    const b = text("部分", ROOT_ID, 300, 0);
+    v.addLink(a, b, "part");
+    v.setLinkLabel(a, b, "一部");
+    v.setLinkProps(a, b, { color: 3, at: 0.3, size: 19 });
+    await v.flush();
+    const { v: v2 } = await openVault(dir);
+    expect(v2.get(a)!.links[0]).toEqual({ to: b, kind: "part", label: "一部", color: 3, at: 0.3, size: 19 });
+    expect(v.reverseLink(a, b)).toBe(true);
+    expect(v.get(a)!.links).toEqual([]);
+    expect(v.get(b)!.links[0]).toEqual({ to: a, kind: "part", label: "一部", color: 3, at: 0.7, size: 19 });
+    // 両向きの線が(外で書かれて)あるときは、黙って消さない
+    v.get(a)!.links.push({ to: b, kind: "line" });
+    expect(v.reverseLink(b, a)).toBe(false);
+    expect(v.get(b)!.links.length).toBe(1);
+  });
+
+  it("画像の幅は置いた場所ごと・マーカーは重ならない", async () => {
+    const a = text("絵", ROOT_ID, 0, 0);
+    v.setItemWidth(ROOT_ID, a, 333.4);
+    const g = v.create({ type: "group", title: "2026-11-24", group: ROOT_ID, x: 0, y: 100 }).id;
+    v.setMarkers(g, ["@読書", "夢", "読書", " "]);
+    await v.flush();
+    const { v: v2 } = await openVault(dir);
+    expect(v2.membersOf(ROOT_ID).find((m) => m.id === a)?.w).toBe(333);
+    expect(v2.get(g)?.markers).toEqual(["読書", "夢"]);
+  });
+
+  it("選んだ物の Markdown: 文字 1 つはそのまま、線でつないだ物は字下げ、つないでいない物は平らに", async () => {
+    const { selectionToMarkdown } = await import("../src/core/export");
+    const a = text("親", ROOT_ID, 0, 0);
+    const b = text("子", ROOT_ID, 0, 100);
+    const c = text("別", ROOT_ID, 0, 200);
+    v.addLink(a, b);
+    expect(selectionToMarkdown(v, ROOT_ID, [a])).toBe("親\n");
+    expect(selectionToMarkdown(v, ROOT_ID, [a, b, c]).trim()).toBe("- 親\n  - 子\n- 別");
+  });
+});

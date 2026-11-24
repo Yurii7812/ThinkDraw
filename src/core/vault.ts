@@ -4,7 +4,7 @@
 import { parseNode, serializeNode } from "./frontmatter";
 import { ID_RE, newId, nowIso, randomId } from "./ids";
 import { Index } from "./indexer";
-import { cloneNode, ROOT_ID, ROOT_TITLE, type CardRef, type Link, type LinkKind, type NodeType, type SpreadRef, type Stroke, type TDNode } from "./types";
+import { cloneNode, ROOT_ID, ROOT_TITLE, type CardRef, type Link, type Member, type LinkKind, type NodeType, type SpreadRef, type Stroke, type TDNode } from "./types";
 
 export interface VaultIO {
   /** 一時ファイルに書いてからリネームする。.trash/ に同じ名前があれば消す(復元) */
@@ -142,7 +142,7 @@ export class Vault {
     return this.index.backlinksOf(id).filter((p) => this.nodes.has(p));
   }
   /** キャンバスに描くメンバー(存在するものだけ) */
-  membersOf(group: string): { id: string; x: number; y: number }[] {
+  membersOf(group: string): Member[] {
     const g = this.nodes.get(group);
     if (!g || g.type !== "group") return [];
     return g.members.filter((m) => this.nodes.has(m.id));
@@ -152,13 +152,13 @@ export class Vault {
     return m ? { x: m.x, y: m.y } : null;
   }
   /** このグループに引用として置いてあるもの(存在するもの。所属しているものは除く) */
-  refsOf(group: string): { id: string; x: number; y: number }[] {
+  refsOf(group: string): Member[] {
     const g = this.nodes.get(group);
     if (!g || g.type !== "group") return [];
     return g.refs.filter((m) => this.nodes.has(m.id) && !g.members.some((x) => x.id === m.id));
   }
   /** キャンバスに描くもの全部(所属 + 引用) */
-  itemsOf(group: string): { id: string; x: number; y: number; ref: boolean }[] {
+  itemsOf(group: string): (Member & { ref: boolean })[] {
     return [...this.membersOf(group).map((m) => ({ ...m, ref: false })), ...this.refsOf(group).map((m) => ({ ...m, ref: true }))];
   }
   itemPos(group: string, id: string): { x: number; y: number; ref: boolean } | null {
@@ -403,9 +403,20 @@ export class Vault {
     });
   }
   setLinkKind(from: string, to: string, kind: LinkKind): void {
+    this.setLinkProps(from, to, { kind });
+  }
+  /** 線の種類・色・文字の位置・文字の大きさを変える(undefined のものは変えない、null は消す) */
+  setLinkProps(from: string, to: string, p: { kind?: LinkKind; color?: number | null; at?: number | null; size?: number | null }): void {
     this.tx(() => {
       const l = this.mut(from).links.find((l) => l.to === to);
-      if (l) l.kind = kind;
+      if (!l) return;
+      if (p.kind) l.kind = p.kind;
+      for (const k of ["color", "at", "size"] as const) {
+        const v = p[k];
+        if (v === undefined) continue;
+        if (v === null || (k === "color" && v === 0)) delete l[k];
+        else l[k] = v;
+      }
     });
   }
   setLinkLabel(from: string, to: string, label: string): void {
@@ -416,18 +427,41 @@ export class Vault {
       else delete l.label;
     });
   }
-  /** 向きを逆にする: リンクを、もう一方のノードの links へ移す */
-  reverseLink(from: string, to: string): void {
+  /**
+   * 向きを逆にする: リンクを、もう一方のノードの links へ移す。種類・色・文字・文字の位置などはそのまま
+   * (文字の位置は線の上の割合なので、逆にすると 1 - at)。逆向きの線がもうあるときは何もしない(false)
+   */
+  reverseLink(from: string, to: string): boolean {
+    const l0 = this.nodes.get(from)?.links.find((l) => l.to === to);
+    if (!l0 || this.nodes.get(to)?.links.some((x) => x.to === from)) return false;
     this.tx(() => {
       const a = this.mut(from);
-      const l = a.links.find((l) => l.to === to);
-      if (!l) return;
+      const l = a.links.find((l) => l.to === to)!;
       a.links = a.links.filter((x) => x !== l);
-      const b = this.mut(to);
-      b.links = b.links.filter((x) => x.to !== from);
-      const moved: Link = { to: from, kind: l.kind };
-      if (l.label) moved.label = l.label;
-      b.links.push(moved);
+      const moved: Link = { ...l, to: from };
+      if (l.at !== undefined) moved.at = 1 - l.at;
+      this.mut(to).links.push(moved);
+    });
+    return true;
+  }
+
+  /** 置いた場所ごとの表示の幅(画像)。w = null で元の大きさ */
+  setItemWidth(group: string, id: string, w: number | null): void {
+    this.tx(() => {
+      const g = this.mut(group);
+      const m = g.members.find((m) => m.id === id) ?? g.refs.find((m) => m.id === id);
+      if (!m) return;
+      if (w === null) delete m.w;
+      else m.w = Math.round(w);
+    });
+  }
+  /** 日付グループの @ マーカー(同じものは 1 つだけ) */
+  setMarkers(group: string, markers: string[]): void {
+    this.tx(() => {
+      const g = this.mut(group);
+      const list = [...new Set(markers.map((m) => m.replace(/^@/, "").trim()).filter(Boolean))];
+      if (list.length) g.markers = list;
+      else delete g.markers;
     });
   }
 

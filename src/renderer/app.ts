@@ -5,9 +5,9 @@ import { Canvas, PRESET_COLORS, refClipboard, type PenState, type View } from ".
 import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
 import { exportGroup, type ExportKind } from "./exporter";
-import { cleanKind, DATE } from "../core/records";
+import { cleanKind, dayGroupTitle } from "../core/records";
 import { CUSTOM_FILE, parseCustomSets, setCustomPromptSets, type CustomPromptSet } from "../decks/prompts";
-import { findRecordNote, KINDS_FILE, parseKinds, parseRecordTitle, RecordsView, type RecordEntry, type RecordKind } from "./records";
+import { findDayGroup, findRecordNote, isDayGroup, KINDS_FILE, parseKinds, RecordsView, type RecordEntry, type RecordKind } from "./records";
 import { showGroupTree } from "./grouptree";
 import type { Rect } from "../core/placement";
 import { openPicker } from "./picker";
@@ -26,7 +26,8 @@ interface AppState {
   sideTab: SideTab;
   lastGroup: string;
   peekGroup?: string | null; // 横に開いているグループ
-  recordKind?: string | null; // 記録一覧の絞り込み
+  recordKind?: string | null; // (前の版)記録一覧の種類の絞り込み
+  recordMarker?: string | null; // 時系列記録のマーカーの絞り込み
   splitRatio?: number; // 画面を分けたときの左の幅の割合
   surround?: boolean; // 左の画面で「まわり」を出しているか
   islandScope?: number | null; // 島の範囲(0・1・2・全部 = null)
@@ -36,8 +37,19 @@ interface AppState {
 /** タブ 1 枚: 開いているグループと、そのタブの戻る・進む */
 interface TabState {
   group: string;
-  back: string[];
-  fwd: string[];
+  back: Loc[];
+  fwd: Loc[];
+}
+/** 履歴の 1 つ(2026-11-24 統合仕様 1): グループ・見ていた場所と倍率・選んでいた物。前の版はグループの ID だけ */
+interface Loc {
+  g: string;
+  v?: View;
+  sel?: string[];
+}
+function toLoc(x: unknown): Loc | null {
+  if (typeof x === "string") return { g: x };
+  if (x && typeof x === "object" && typeof (x as Loc).g === "string") return x as Loc;
+  return null;
 }
 interface Config {
   theme?: Theme;
@@ -47,10 +59,11 @@ interface Config {
 const STATE_FILE = "state.json";
 const HISTORY_MAX = 50; // 戻る・進むで覚える数
 const HISTORY_MENU = 12; // 右クリックの一覧に出す数
-/** 履歴に足す。直前と同じなら足さない(同じグループが続けて並ばない)。古いものから捨てる */
-function pushHist(stack: string[], g: string): void {
-  if (stack[stack.length - 1] === g) return;
-  stack.push(g);
+/** 履歴に足す。直前と同じ場所なら足さない。古いものから捨てる */
+function pushHist(stack: Loc[], loc: Loc): void {
+  const top = stack[stack.length - 1];
+  if (top && top.g === loc.g && JSON.stringify(top.v) === JSON.stringify(loc.v)) return;
+  stack.push(loc);
   if (stack.length > HISTORY_MAX) stack.splice(0, stack.length - HISTORY_MAX);
 }
 
@@ -99,12 +112,14 @@ class App {
   private tabs: TabState[] = [];
   private activeTab = 0;
   private tabBar!: HTMLElement;
-  private backStack: string[] = [];
-  private fwdStack: string[] = [];
+  private backStack: Loc[] = [];
+  private fwdStack: Loc[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private stateTimer: ReturnType<typeof setTimeout> | undefined;
   private sideTimer: ReturnType<typeof setTimeout> | undefined;
   private titleEl!: HTMLElement;
+  private titleBox!: HTMLElement;
+  private renameBtn!: HTMLElement;
   private upBtn!: HTMLButtonElement;
   private btnBack!: HTMLButtonElement;
   private btnFwd!: HTMLButtonElement;
@@ -184,7 +199,8 @@ class App {
     api().onFlush(() => this.flushAll());
     await api().watch();
     const isGroup = (id: string) => this.vault.get(id)?.type === "group";
-    this.tabs = (this.state.tabs ?? []).filter((t) => t && isGroup(t.group)).map((t) => ({ group: t.group, back: (t.back ?? []).filter(isGroup), fwd: (t.fwd ?? []).filter(isGroup) }));
+    const locs = (a: unknown[] | undefined) => (a ?? []).map(toLoc).filter((l): l is Loc => !!l && isGroup(l.g));
+    this.tabs = (this.state.tabs ?? []).filter((t) => t && isGroup(t.group)).map((t) => ({ group: t.group, back: locs(t.back), fwd: locs(t.fwd) }));
     if (!this.tabs.length) this.tabs = [{ group: isGroup(this.state.lastGroup) ? this.state.lastGroup : ROOT_ID, back: [], fwd: [] }];
     this.activeTab = Math.min(Math.max(0, this.state.activeTab ?? 0), this.tabs.length - 1);
     this.backStack = [...this.tabs[this.activeTab].back];
@@ -225,6 +241,11 @@ class App {
     this.titleEl = h("button", { class: "group-title" });
     // 題を押すと上のグループの一覧(本文はノートだけなので、グループの本文は開かない)
     this.titleEl.addEventListener("click", () => this.ancestorMenu(this.titleEl));
+    // 横の鉛筆で名前を変える(2026-11-24 統合仕様 10)。題を押すと上のグループの一覧なのはそのまま
+    this.renameBtn = h("button", { class: "tbtn title-edit", title: T.groupRename, "aria-label": T.groupRename });
+    this.renameBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg>';
+    this.renameBtn.addEventListener("click", () => this.editTitle());
+    this.titleBox = h("div", { class: "tb-center" }, this.titleEl, this.renameBtn);
     // 上のグループへ(← → の右隣。2026-11-23 利用者の希望)。所属先が 1 つならすぐ上がり、複数なら選ぶ
     this.upBtn = h("button", { class: "tbtn group-up", title: T.upMenu + " (Ctrl+↑)", "aria-label": T.upMenu, text: "↑" });
     this.upBtn.addEventListener("click", () => this.goUp());
@@ -243,7 +264,7 @@ class App {
       "header",
       { class: "topbar" },
       h("div", { class: "tb-left" }, this.btnBack, this.btnFwd, this.upBtn, btn("i-home", T.goHome + " (Ctrl+Home)", () => this.openGroup(ROOT_ID))),
-      h("div", { class: "tb-center" }, this.titleEl),
+      this.titleBox,
       h(
         "div",
         { class: "tb-right" },
@@ -395,7 +416,7 @@ class App {
     this.renderSideSoon();
     if (!this.vault.exists(this.canvas.group)) {
       // 開いていたグループが消えた
-      this.backStack = this.backStack.filter((g) => this.vault.exists(g));
+      this.backStack = this.backStack.filter((l) => this.vault.exists(l.g));
       this.canvas.show(ROOT_ID, this.state.views[ROOT_ID] ?? null);
     }
     if (ids.has(this.canvas.group)) this.updateBar();
@@ -427,9 +448,45 @@ class App {
     this.btnFwd.disabled = !this.fwdStack.length;
     document.title = `${this.titleEl.textContent} — ${T.appName}`;
     this.upBtn.disabled = this.canvas.group === ROOT_ID;
+    this.renameBtn.hidden = this.canvas.group === ROOT_ID; // ホームの名前は変えない(今までどおり)
     this.leftTitle.textContent = this.titleEl.textContent + " ▾";
     this.syncTab();
     this.renderSideSoon();
+  }
+
+  /** 上のグループ名をその場で直す。Enter で決める・Esc でやめる。日付グループは日付をそのまま、題だけ */
+  private editTitle(): void {
+    const g = this.canvas.group;
+    const n = this.vault.get(g);
+    if (!n || g === ROOT_ID || this.titleBox.querySelector("input")) return;
+    const day = isDayGroup(this.vault, g);
+    const input = h("input", { class: "title-input", type: "text", spellcheck: "false", placeholder: day ? T.recordsTitlePh : T.untitledGroup }) as HTMLInputElement;
+    input.value = day ? day.title : n.title;
+    const ok = h("button", { class: "tbtn title-ok", title: "OK (Enter)", "aria-label": "OK", text: "✓" });
+    const wrap = h("div", { class: "title-edit-row" }, day ? h("span", { class: "title-date", text: day.date + "-" }) : null, input, ok);
+    let done = false;
+    const finish = (save: boolean) => {
+      if (done) return;
+      done = true;
+      if (save && this.vault.exists(g)) {
+        const t = day ? dayGroupTitle(day.date, input.value) : input.value.replace(/\s*\n\s*/g, " ").trim();
+        if (t !== n.title) this.vault.update(g, { title: t });
+      }
+      this.titleBox.replaceChildren(this.titleEl, this.renameBtn);
+      this.updateBar();
+    };
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === "Enter") finish(true);
+      else if (e.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => setTimeout(() => finish(true), 0));
+    ok.addEventListener("mousedown", (e) => e.preventDefault());
+    ok.addEventListener("click", () => finish(true));
+    this.titleBox.replaceChildren(wrap);
+    input.focus();
+    input.select();
   }
 
   // ---------- タブ(2026-11-24 利用者) ----------
@@ -541,9 +598,11 @@ class App {
     return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
   }
   todayGroup(): string {
-    const d = new Date();
-    const p2 = (n: number) => String(n).padStart(2, "0");
-    const y = String(d.getFullYear()), ym = `${y}-${p2(d.getMonth() + 1)}`, ymd = `${ym}-${p2(d.getDate())}`;
+    return this.dayGroupFor(this.today());
+  }
+  /** その日の日付グループ(なければ ホーム › 記録 › 年 › 月 の下に作る) */
+  dayGroupFor(ymd: string): string {
+    const y = ymd.slice(0, 4), ym = ymd.slice(0, 7);
     let day = "";
     this.vault.tx(() => {
       const rec = this.childGroup(ROOT_ID, T.recordsGroup);
@@ -556,7 +615,8 @@ class App {
       }
       const year = this.childGroup(rec, y);
       const month = this.childGroup(year, ym);
-      day = this.childGroup(month, ymd);
+      // 題の付いた日付グループ(2026-11-24-○○)もその日のグループとして使い、日付だけのものを重ねて作らない(統合仕様 11)
+      day = findDayGroup(this.vault, ymd) ?? this.childGroup(month, ymd);
     });
     return day;
   }
@@ -624,13 +684,21 @@ class App {
       get kinds() {
         return app.kinds;
       },
-      kind: this.state.recordKind ?? null,
-      onKind: (k) => {
-        this.state.recordKind = k;
+      marker: this.state.recordMarker ?? null,
+      onMarker: (m) => {
+        this.state.recordMarker = m;
+        this.records!["host"].marker = m;
         this.saveState();
       },
       open: (e) => this.openRecord(e),
-      writeToday: (k) => this.writeRecord(k),
+      newNote: (date, kind) => this.writeRecord(kind, date),
+      renameDay: (date, title) => {
+        const g = this.dayGroupFor(date);
+        this.vault.update(g, { title: dayGroupTitle(date, title) });
+        this.records?.render();
+      },
+      setMarkers: (date, markers) => this.vault.setMarkers(this.dayGroupFor(date), markers),
+      preview: (el, g) => this.showPreview(el, g),
       saveKinds: (ks) => this.saveKinds(ks),
       close: () => this.closeRecords(),
     });
@@ -640,7 +708,42 @@ class App {
   closeRecords(): void {
     this.records?.el.remove();
     this.records = null;
+    this.previewCanvas?.el.remove();
     this.canvas.el.focus({ preventScroll: true });
+  }
+  /** Ctrl+J の、その日のボードの縮小(見るだけ。押した物の所へ開く)。キャンバスの部品をそのまま使う(データは写さない) */
+  private previewCanvas: Canvas | null = null;
+  private showPreview(el: HTMLElement, g: string | null): void {
+    if (!g) {
+      this.previewCanvas?.el.remove();
+      return;
+    }
+    if (!this.previewCanvas) {
+      const open = (grp: string, node?: string) => {
+        this.closeRecords();
+        this.openGroup(grp, node);
+      };
+      const pc: Canvas = new Canvas(
+        {
+          vault: this.vault,
+          openGroup: (id) => open(id),
+          openBody: (id) => open(pc.group, id),
+          goToNode: (id) => open(pc.group, id),
+          pickGroup: async () => null,
+          cardHover: () => {},
+          onViewChange: () => {},
+          onSelectionChange: () => {},
+        },
+        el,
+      );
+      pc.readOnly = true;
+      pc.el.classList.add("preview-canvas");
+      this.previewCanvas = pc;
+    }
+    const pc = this.previewCanvas;
+    el.prepend(pc.el);
+    pc.show(g, null);
+    requestAnimationFrame(() => pc.fitAll());
   }
   private openRecord(e: RecordEntry): void {
     this.closeRecords();
@@ -652,10 +755,10 @@ class App {
     } else this.openGroup(e.type === "group" ? e.id : e.day);
   }
   /** 今日のその種類の記録(ノート「2026-11-23-種類」)を開く。なければ作り、上位・下位の記録と線でつなぐ */
-  writeRecord(kind: string): void {
+  writeRecord(kind: string, date?: string): void {
     if (this.records) this.closeRecords();
-    const day = this.todayGroup();
-    const ymd = this.today();
+    const ymd = date ?? this.today();
+    const day = this.dayGroupFor(ymd);
     let note = "";
     this.vault.tx(() => {
       note = this.ensureRecordNote(day, ymd, kind);
@@ -665,20 +768,18 @@ class App {
     this.canvas.setSelection([note]);
     this.openBody(note);
   }
-  /** 日のグループ(2026-11-23)の空きの右クリック: 種類ごとに、その日の記録を作る/開く。新しい種類でも作れる */
+  /** 日のグループ(2026-11-23・2026-11-23-題)の空きの右クリック: 種類ごとに、その日の記録を新しく作る。新しい種類でも作れる */
   private dayMenu(group: string, x: number, y: number): MenuItem[] {
-    const date = this.vault.get(group)?.title ?? "";
-    if (!DATE.test(date)) return [];
+    const day = isDayGroup(this.vault, group);
+    if (!day) return [];
+    const date = day.date;
     const make = (kind: string) => () => {
       let note = "";
       this.vault.tx(() => (note = this.ensureRecordNote(group, date, kind, { x, y })));
       this.openBody(note);
     };
     const items: MenuItem[] = [{ label: T.dayMenuHead(date), disabled: true }];
-    for (const k of this.kinds) {
-      const has = !!findRecordNote(this.vault, group, k.name);
-      items.push({ label: has ? T.dayMenuOpen(k.name) : T.dayMenuNew(k.name), action: make(k.name) });
-    }
+    for (const k of this.kinds) items.push({ label: T.dayMenuNew(k.name), action: make(k.name) });
     items.push({
       label: T.dayMenuNewKind,
       action: async () => {
@@ -696,13 +797,8 @@ class App {
     this.records?.render();
   }
 
+  /** その日の記録ノートを新しく作る(同じ日・同じ種類でも、毎回新しいノート。統合仕様 13) */
   private ensureRecordNote(day: string, ymd: string, kind: string, at?: { x: number; y: number }): string {
-    const found = findRecordNote(this.vault, day, kind);
-    if (found) {
-      // 前の版の名前(「日記」だけ)は「2026-11-23-日記」に直す
-      if (!parseRecordTitle(this.vault.get(found)!.title)) this.vault.update(found, { title: `${ymd}-${kind}` });
-      return found;
-    }
     const def = this.kinds.find((k) => k.name === kind);
     const parentNotes = (def?.parents ?? []).map((p) => findRecordNote(this.vault, day, p)).filter((x): x is string => !!x);
     const childNotes = this.kinds.filter((k) => k.parents.includes(kind)).map((k) => findRecordNote(this.vault, day, k.name)).filter((x): x is string => !!x);
@@ -719,9 +815,13 @@ class App {
       (x = c.x - 300), (y = c.y);
     }
     if (at && !parentNotes.length) ((x = at.x), (y = at.y));
+    // 置いてある物と重ならない所へ
+    const taken = items.map((i) => ({ x: i.x, y: i.y, w: 200, h: 60 }));
+    for (let k = 0; k < 50 && taken.some((r) => Math.abs(r.x - x) < 200 && Math.abs(r.y - y) < 60); k++) y += 70;
     const id = this.vault.create({ type: "note", title: `${ymd}-${kind}`, group: day, x, y }).id;
-    for (const p of parentNotes) this.vault.addLink(p, id);
-    for (const c of childNotes) this.vault.addLink(id, c);
+    // 上位のノート 1 枚からだけ線を引く(全部へ自動ではつながない)
+    if (parentNotes[0]) this.vault.addLink(parentNotes[0], id);
+    if (childNotes.length && !parentNotes.length && !findRecordNote(this.vault, day, kind, id)) for (const c of childNotes) this.vault.addLink(id, c);
     return id;
   }
 
@@ -753,49 +853,52 @@ class App {
     if (this.vault.get(id)?.type !== "group") return;
     this.closePopup();
     if (id !== this.canvas.group) {
-      pushHist(this.backStack, this.canvas.group);
+      pushHist(this.backStack, this.here());
       this.fwdStack = [];
       this.showGroup(id, "in");
     }
     if (focusNode) this.canvas.centerOn(focusNode);
   }
-  // ---------- 引用から飛ぶ・戻る(2026-11-24 利用者) ----------
-  private returns: { group: string; view: View; sel: string }[] = [];
+  /** 今いる場所(グループ・見ている場所・選んでいる物) */
+  private here(): Loc {
+    return { g: this.canvas.group, v: this.canvas.getView(), sel: [...this.canvas.selection] };
+  }
+  /** 履歴の場所へ(グループ・見ていた場所・選んでいた物を戻す) */
+  private restoreLoc(loc: Loc, anim: "in" | "out"): void {
+    const g = this.vault.exists(loc.g) ? loc.g : ROOT_ID;
+    if (g !== this.canvas.group) this.showGroup(g, anim);
+    if (loc.v) this.canvas.setView(loc.v);
+    const sel = (loc.sel ?? []).filter((i) => this.canvas.rectOf(i));
+    if (sel.length) this.canvas.setSelection(sel);
+    this.updateBar();
+  }
+
+  // ---------- 引用から飛ぶ・戻る(2026-11-24 利用者・統合仕様 1) ----------
+  // 飛ぶのも履歴に入れる(同じボードの中でも)。飛んだ直後は左下に「↩ 戻る」(押すと Ctrl+← と同じ)
   private returnBtn: HTMLElement | null = null;
+  private jumped = false;
   private jumping = false;
-  /** 引用の ↗: 元の場所へ。同じボードにあればそこを見せ、無ければ所属しているグループへ。戻るボタンを出す */
+  /** 引用の ↗: 元の場所へ。同じボードにあればそこを見せ、無ければ所属しているグループへ */
   jump(target: string, from: string): void {
     if (!this.vault.exists(target)) return;
     const c = this.canvas;
-    const r = { group: c.group, view: c.getView(), sel: from };
     const here = this.vault.itemPos(c.group, target);
     this.jumping = true;
     try {
-      if (here && from !== target) c.centerOn(target);
-      else this.goToNode(target, false, true);
+      if (here && from !== target) {
+        pushHist(this.backStack, this.here());
+        this.fwdStack = [];
+        c.centerOn(target);
+        this.updateBar();
+      } else this.goToNode(target, false, true);
     } finally {
       this.jumping = false;
     }
-    this.returns.push(r);
+    this.jumped = true;
     this.renderReturn();
-  }
-  /** 飛ぶ前の場所へ。戻る先が無ければ false */
-  jumpBack(): boolean {
-    const r = this.returns.pop();
-    if (!r) return false;
-    this.jumping = true;
-    try {
-      if (r.group !== this.canvas.group && this.vault.exists(r.group)) this.openGroup(r.group);
-      this.canvas.setView(r.view);
-      if (this.vault.exists(r.sel) && this.canvas.rectOf(r.sel)) this.canvas.setSelection([r.sel]);
-    } finally {
-      this.jumping = false;
-    }
-    this.renderReturn();
-    return true;
   }
   private renderReturn(): void {
-    if (!this.returns.length) {
+    if (!this.jumped || !this.backStack.length) {
       this.returnBtn?.remove();
       this.returnBtn = null;
       return;
@@ -803,15 +906,15 @@ class App {
     if (!this.returnBtn) {
       this.returnBtn = h("button", { class: "return-btn", title: T.returnTip, text: T.returnBtn });
       this.returnBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
-      this.returnBtn.addEventListener("click", () => this.jumpBack());
+      this.returnBtn.addEventListener("click", () => this.back());
     }
     if (this.returnBtn.parentElement !== this.canvas.el) this.canvas.el.append(this.returnBtn);
   }
 
   private showGroup(id: string, anim: "in" | "out"): void {
-    if (!this.jumping && this.returns.length) {
+    if (!this.jumping && this.jumped) {
       // ほかの方法で移ったら、戻るボタンは消す
-      this.returns = [];
+      this.jumped = false;
       this.renderReturn();
     }
     this.canvas.show(id, this.state.views[id] ?? null, anim);
@@ -826,27 +929,29 @@ class App {
     this.renderSideSoon();
   }
   back(): void {
-    const g = this.backStack.pop();
-    if (!g) return;
-    pushHist(this.fwdStack, this.canvas.group);
-    this.showGroup(this.vault.exists(g) ? g : ROOT_ID, "out");
+    const loc = this.backStack.pop();
+    if (!loc) return;
+    pushHist(this.fwdStack, this.here());
+    this.restoreLoc(loc, "out");
+    this.jumped = false;
+    this.renderReturn();
   }
   /** ← / → の右クリック: 履歴の一覧。近い順。押すとそこまで一度に戻る/進む */
   private historyMenu(anchor: HTMLElement, dir: "back" | "fwd"): void {
     const stack = dir === "back" ? this.backStack : this.fwdStack;
     // ブラウザと同じく、近いものから決まった数だけ(古い分は「ほか N 件」)
     const all = [...stack].reverse();
-    const items: MenuItem[] = all.slice(0, HISTORY_MENU).map((g, i) => ({
-      label: this.groupName(g),
+    const items: MenuItem[] = all.slice(0, HISTORY_MENU).map((loc, i) => ({
+      label: this.groupName(loc.g),
       action: () => {
         const from = dir === "back" ? this.backStack : this.fwdStack;
         const to = dir === "back" ? this.fwdStack : this.backStack;
-        let cur = this.canvas.group; // 途中は表示せずに通り過ぎる
+        let cur = this.here(); // 途中は表示せずに通り過ぎる
         for (let k = 0; k <= i && from.length; k++) {
           pushHist(to, cur);
           cur = from.pop()!;
         }
-        this.showGroup(this.vault.exists(cur) ? cur : ROOT_ID, dir === "back" ? "out" : "in");
+        this.restoreLoc(cur, dir === "back" ? "out" : "in");
       },
     }));
     if (all.length > HISTORY_MENU) items.push({ separator: true } as MenuItem, { label: T.historyMore(all.length - HISTORY_MENU), disabled: true } as MenuItem);
@@ -879,10 +984,12 @@ class App {
   }
 
   forward(): void {
-    const g = this.fwdStack.pop();
-    if (!g) return;
-    pushHist(this.backStack, this.canvas.group);
-    this.showGroup(this.vault.exists(g) ? g : ROOT_ID, "in");
+    const loc = this.fwdStack.pop();
+    if (!loc) return;
+    pushHist(this.backStack, this.here());
+    this.restoreLoc(loc, "in");
+    this.jumped = false;
+    this.renderReturn();
   }
   /** そのノード(が含まれるグループ)へ移る。home = 引用ではなく、所属しているグループへ */
   goToNode(id: string, openBody: boolean, home = false): void {
@@ -1323,31 +1430,61 @@ class App {
     this.btnPen.classList.toggle("on", p.on);
     this.penBar.hidden = !p.on;
     if (!p.on) return;
+    // 2026-11-24 統合仕様 9: 絵のボタン(ペン・蛍光ペン・消しゴム)・実際の太さの見本・丸い色。細かな太さは「…」のときだけ
+    const ICON: Record<PenState["tool"], string> = {
+      pen: '<path d="M5 19l1.2-4.2L16 5l3 3-9.8 9.8z"/><path d="M14 7l3 3"/>',
+      hl: '<path d="M7 15l8-10 4 3-8 10z"/><path d="M7 15l-2 4h5l1-2"/>',
+      eraser: '<path d="M4 15l8-9 7 6-7 8H8z"/><path d="M8.5 11l6.5 5.5M8 20h11"/>',
+    };
     const tool = (t: PenState["tool"], label: string) => {
-      const b = h("button", { class: "pb-tool" + (p.tool === t ? " on" : ""), text: label, title: label });
+      const ico = svg("svg", { viewBox: "0 0 24 24", width: 20, height: 20, "aria-hidden": "true" });
+      ico.innerHTML = ICON[t];
+      const b = h("button", { class: "pb-tool" + (p.tool === t ? " on" : ""), title: label, "aria-label": label, "data-tool": t }, ico);
       b.addEventListener("click", () => this.setPen({ tool: t }));
       return b;
     };
-    const sizes = [2, 4, 8].map((w, i) => {
-      const b = h("button", { class: "pb-size" + (p.width === w ? " on" : ""), title: `${T.penSize}: ${T.penSizes[i]}` }, h("i", { style: `width:${w + 2}px;height:${w + 2}px` }));
+    const presets = [2, 4, 8];
+    const sizes = presets.map((w, i) => {
+      const b = h("button", { class: "pb-size" + (p.width === w ? " on" : ""), title: `${T.penSize}: ${T.penSizes[i]}`, "aria-label": `${T.penSize}: ${T.penSizes[i]}` }, h("i", { style: `height:${w}px` }));
       b.addEventListener("click", () => this.setPen({ width: w }));
       return b;
     });
-    const range = h("input", { type: "range", min: 1, max: 30, value: String(p.width), title: T.penSize });
-    range.addEventListener("input", () => this.setPen({ width: +range.value }));
+    const more = h("button", { class: "pb-more" + (presets.includes(p.width) ? "" : " on"), title: T.penSizeFine, text: presets.includes(p.width) ? "…" : String(p.width) });
+    more.addEventListener("click", () => {
+      const range = h("input", { type: "range", min: 1, max: 30, value: String(p.width), title: T.penSize }) as HTMLInputElement;
+      const num = h("span", { class: "pb-w", text: String(p.width) });
+      range.addEventListener("input", () => {
+        num.textContent = range.value;
+        this.canvas.setPen({ width: +range.value });
+      });
+      range.addEventListener("change", () => this.setPen({ width: +range.value }));
+      range.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        e.stopPropagation();
+        pop.remove();
+        this.canvas.el.focus({ preventScroll: true });
+      });
+      const pop = h("div", { class: "pb-pop" }, range, num);
+      this.penBar.append(pop);
+      range.focus();
+      const off = (e: MouseEvent) => {
+        if (pop.contains(e.target as Node)) return;
+        pop.remove();
+        removeEventListener("mousedown", off, true);
+      };
+      addEventListener("mousedown", off, true);
+    });
     const colors = Array.from({ length: PRESET_COLORS + 1 }, (_, c) => {
-      const b = h("button", { class: `sw ink c${c}${p.color === c ? " active" : ""}`, title: c ? `${T.color} ${c}` : T.inkDefault });
+      const b = h("button", { class: `sw ink c${c}${p.color === c ? " active" : ""}`, title: c ? `${T.color} ${c}` : T.inkDefault, "aria-label": c ? `${T.color} ${c}` : T.inkDefault });
       b.addEventListener("click", () => this.setPen({ color: c }));
       return b;
     });
-    const done = h("button", { class: "btn small", text: T.penDone });
-    done.addEventListener("click", () => this.togglePen(false));
     this.penBar.replaceChildren(
       tool("pen", T.penPen), tool("hl", T.penHl), tool("eraser", T.penEraser),
-      h("span", { class: "pb-sep" }), ...sizes, range, h("span", { class: "pb-w", text: String(p.width) }),
-      h("span", { class: "pb-sep" }), ...colors,
-      h("span", { class: "pb-sep" }), done,
+      h("span", { class: "pb-sep" }), ...sizes, more,
+      h("span", { class: "pb-sep" }), h("div", { class: "pb-colors" }, ...colors),
     );
+    this.penBar.title = T.penExitTip;
   }
 
   settings(): void {
@@ -1431,7 +1568,8 @@ class App {
       if (inField || this.popup || this.records || this.paperOpen) return;
       const c = this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas;
       // Ctrl+C でコピーした物(目印の文字が入っている)は、引用として貼る
-      if (!files?.length && refClipboard.size && e.clipboardData?.getData("text/plain") === refClipboard.mark) {
+      const norm = (t: string) => t.replace(/\r\n/g, "\n").trim();
+      if (!files?.length && refClipboard.size && norm(e.clipboardData?.getData("text/plain") ?? "") === norm(refClipboard.mark)) {
         e.preventDefault();
         c.pasteRefs();
         return;
@@ -1471,12 +1609,19 @@ class App {
       }
       if (e.ctrlKey && (e.key === "[" || e.code === "BracketLeft")) {
         e.preventDefault();
-        if (!this.jumpBack()) this.back();
+        this.back();
         return;
       }
       if (e.ctrlKey && (e.key === "]" || e.code === "BracketRight")) {
         e.preventDefault();
         this.forward();
+        return;
+      }
+      // 移動の履歴: Ctrl+← 戻る・Ctrl+→ 進む(統合仕様 1)。書いている最中はふつうのカーソル移動
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight") && !inField && !this.paperOpen && !this.records) {
+        e.preventDefault();
+        if (e.key === "ArrowLeft") this.back();
+        else this.forward();
         return;
       }
       if (e.ctrlKey && e.key === "Home") {

@@ -2,7 +2,8 @@
 import { gap, placeAround, segHitsRect, type Rect } from "../core/placement";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
-import { LINK_KINDS, ROOT_ID, type LinkKind, type Stroke, type TDNode } from "../core/types";
+import { NEW_LINK_KINDS, ROOT_ID, type Link, type LinkKind, type Stroke, type TDNode } from "../core/types";
+import { edgeEnds, findHops, hopPath, kindPreview, type Pt } from "./edgeshape";
 import { cardName, spreadDef } from "../decks";
 import { PROMPT_BY_ID } from "../decks/prompts";
 import { cardFace, faceHeight } from "./cardface";
@@ -12,6 +13,7 @@ import { paperStore } from "./paperstore";
 import { makeChecklist, makeTable, schema as mdSchema, serializeMarkdown } from "./mdschema";
 import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
 import { pickIslands, placeIslands } from "../core/islands";
+import { selectionToMarkdown } from "../core/export";
 
 export interface View {
   x: number; // 画面 = 世界 * z + (x, y)
@@ -87,9 +89,14 @@ type Drag =
   | { kind: "draw"; pts: number[]; path: SVGPathElement }
   | { kind: "erase"; hit: Set<string> }
   | { kind: "outer"; id: string; sx: number; sy: number; moved: boolean }
-  | { kind: "resize"; id: string; sx: number; sy: number; w: number; h: number };
+  | { kind: "resize"; id: string; sx: number; sy: number; w: number; h: number }
+  | { kind: "edge-press"; key: string; sx: number; sy: number; ctrl: boolean; label: boolean }
+  | { kind: "label-drag"; key: string }
+  | { kind: "img-resize"; id: string; corner: string; sx: number; sy: number; x0: number; y0: number; w0: number; h0: number; w?: number };
 
 const DRAG_START = 4;
+/** 線の文字の大きさ(0 = 文章と同じ) */
+const LABEL_SIZES: [string, number][] = [["小", 12], ["ふつう(文章と同じ)", 0], ["大", 19], ["特大", 24]];
 /** Tab・Enter で次の文字を置くときに見込む幅 */
 const SPOT_W = 110;
 export const PRESET_COLORS = 8;
@@ -101,6 +108,10 @@ let refClipMark = "";
 let refCutFrom: string | null = null;
 export const refClipboard = { get mark() { return refClipMark; }, get size() { return refClip.length; } };
 const CARD_FACE_H = CARD_H;
+
+function isImageFile(f: string): boolean {
+  return /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(f);
+}
 
 export function strokeD(p: number[]): string {
   if (p.length < 2) return "";
@@ -260,6 +271,10 @@ export class Canvas {
   }
 
   setSelection(ids: Iterable<string>, strokes: Iterable<string> = []): void {
+    if (this.edgeSel.size) {
+      this.edgeSel.clear();
+      for (const g of this.edgesSvg.querySelectorAll("g.edge.selected")) g.classList.remove("selected");
+    }
     this.selection = new Set(ids);
     this.strokeSel = new Set(strokes);
     for (const [id, el] of this.els) el.classList.toggle("selected", this.selection.has(id));
@@ -314,6 +329,9 @@ export class Canvas {
       }
       el.style.left = m.x + "px";
       el.style.top = m.y + "px";
+      // 画像の幅は置いた場所ごと(引用先でも別々に)
+      if (m.w) el.style.setProperty("--img-w", m.w + "px");
+      else el.style.removeProperty("--img-w");
       el.classList.toggle("selected", this.selection.has(n.id));
       el.classList.toggle("editing", this.draft?.id === n.id);
       order.push(el);
@@ -438,10 +456,20 @@ export class Canvas {
     for (const [id, r] of this.rects) put(id, r, this.group);
     for (const isl of this.islands)
       for (const nd of isl.nodes) put(nd.id, { x: isl.box.x + nd.el.offsetLeft, y: isl.box.y + nd.el.offsetTop, w: nd.el.offsetWidth, h: nd.el.offsetHeight }, isl.group);
-    const line = (a: Rect, b: Rect, cls: string) => {
+    const line = (a: Rect, b: Rect, cls: string, l?: Link) => {
       const p = this.clip(a, b.x + b.w / 2, b.y + b.h / 2);
       const q = this.clip(b, a.x + a.w / 2, a.y + a.h / 2);
-      this.edgesSvg.append(svg("line", { class: cls, x1: p.x, y1: p.y, x2: q.x, y2: q.y }));
+      if (!l) {
+        this.edgesSvg.append(svg("line", { class: cls, x1: p.x, y1: p.y, x2: q.x, y2: q.y }));
+        return;
+      }
+      // 島の中・島をまたぐ線も、種類(矢印・部分の括弧)と色は同じ(統合仕様 3)
+      const e = edgeEnds(l.kind, p, q);
+      const g = svg("g", { class: `edge outer k-${l.kind}${l.color ? " c" + l.color : ""}` });
+      g.append(svg("path", { class: "vis " + cls, d: `M${e.start.x},${e.start.y} L${e.end.x},${e.end.y}` }));
+      if (e.fill) g.append(svg("path", { class: "end-fill", d: e.fill }));
+      if (e.stroke) g.append(svg("path", { class: "end-stroke", d: e.stroke }));
+      this.edgesSvg.append(g);
     };
     const dist = (a: Rect, b: Rect) => Math.hypot(a.x + a.w / 2 - b.x - b.w / 2, a.y + a.h / 2 - b.y - b.h / 2);
     // 線(リンク)
@@ -461,12 +489,12 @@ export class Canvas {
           for (const b of tl)
             if (a.ig === b.ig) {
               drewSame = true;
-              if (a.ig !== this.group) line(a.r, b.r, "outer-edge k-link");
+              if (a.ig !== this.group) line(a.r, b.r, "outer-edge k-link", l);
             }
         if (drewSame) continue;
         let best: [Rect, Rect] | null = null, bd = Infinity;
         for (const a of list) for (const b of tl) if (dist(a.r, b.r) < bd) (bd = dist(a.r, b.r)), (best = [a.r, b.r]);
-        if (best) line(best[0], best[1], "outer-edge k-link");
+        if (best) line(best[0], best[1], "outer-edge k-link", l);
       }
     }
     // 所属: 島の中のグループのノード → そのグループの島の縁(点線)
@@ -538,7 +566,8 @@ export class Canvas {
     }
     const el = this.nodeEl0(n, ref);
     // 引用は、右上の ↗ で元の場所へ飛ぶ(ふつうのクリックは選ぶだけ。2026-11-24 利用者)
-    if (ref) el.append(h("button", { class: "jump-btn", "data-act": "jump", title: T.jumpTip, "aria-label": T.jumpTip }));
+    // 引用したグループには付けない(押すと、そのグループ自身の中を開く。2026-11-24 統合仕様 7)
+    if (ref && n.type !== "group") el.append(h("button", { class: "jump-btn", "data-act": "jump", title: T.jumpTip, "aria-label": T.jumpTip }));
     return el;
   }
 
@@ -553,10 +582,16 @@ export class Canvas {
       if (thumb) el.append(h("img", { class: "file-img paper-img", src: thumb, alt: "", draggable: "false" }));
       el.append(h("span", { class: "label" }, fz === undefined ? PT.nodeMissing : PT.nodeLabel(fz ?? "?")));
     } else if (n.type === "text" && n.file) {
-      // 添付: 画像は小さな絵、ほかは 📎 と名前
+      // 添付: 画像は絵だけ(名前はマウスを乗せたときの説明に。選ぶと四隅で大きさを変えられる。統合仕様 8)、ほかは 📎 と名前
       el.classList.add("file");
-      if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(n.file)) el.append(h("img", { class: "file-img", src: "vault://local/" + n.file.split("/").map(encodeURIComponent).join("/"), alt: n.title, draggable: "false" }));
-      el.append(h("span", { class: "label" }, h("span", { class: "clip", text: "📎 " }), n.title || T.untitled));
+      if (isImageFile(n.file)) {
+        el.classList.add("image");
+        el.title = n.title;
+        const img = h("img", { class: "file-img", src: "vault://local/" + n.file.split("/").map(encodeURIComponent).join("/"), alt: n.title, draggable: "false" });
+        img.addEventListener("load", () => this.requestRender()); // 読み込んでから大きさを測り直す(線の端・取っ手)
+        el.append(img);
+        for (const c of ["nw", "ne", "sw", "se"]) el.append(h("div", { class: `img-h ${c}`, "data-act": "imgresize", "data-corner": c, title: T.imgResize }));
+      } else el.append(h("span", { class: "label" }, h("span", { class: "clip", text: "📎 " }), n.title || T.untitled));
     } else if (n.type === "text") {
       el.append(h("span", { class: "label", text: n.title || T.untitled }));
       if (n.body.trim()) el.append(h("span", { class: "bodymark", title: T.hasBody, "data-act": "body" }, "¶"));
@@ -621,42 +656,85 @@ export class Canvas {
     return { x: cx + dx * s, y: cy + dy * s };
   }
 
-  private renderEdges(): void {
-    const defs = this.edgesSvg.querySelector("defs")!;
-    this.edgesSvg.replaceChildren(defs);
-    // スプレッドの囲み枠は出さない(2026-11-23 利用者「枠やっぱりいらない」)
+  /** 選んでいる線("from>to") */
+  edgeSel = new Set<string>();
+  /** 文字をドラッグしている間の位置(決めるまで保存しない) */
+  private labelAtLive: { key: string; at: number } | null = null;
+
+  /** このキャンバスの線(両端があるもの)と、その形 */
+  private edgeGeom(): { from: string; to: string; key: string; l: Link; p1: Pt; p2: Pt; ends: ReturnType<typeof edgeEnds> }[] {
+    const out: { from: string; to: string; key: string; l: Link; p1: Pt; p2: Pt; ends: ReturnType<typeof edgeEnds> }[] = [];
     for (const [id, a] of this.rects) {
-      const n = this.v.get(id)!;
-      for (const l of n.links) {
+      for (const l of this.v.get(id)!.links) {
         const b = this.rects.get(l.to);
         if (!b) continue; // 両端が同じキャンバスの中にあるときだけ描く
         const p1 = this.clip(a, b.x + b.w / 2, b.y + b.h / 2);
         const p2 = this.clip(b, a.x + a.w / 2, a.y + a.h / 2);
-        const g = svg("g", { class: `edge k-${l.kind}`, "data-from": id, "data-to": l.to });
-        const d = `M${p1.x},${p1.y} L${p2.x},${p2.y}`;
-        g.append(svg("path", { d, class: "hit" }));
-        const vis = svg("path", { d, class: "vis" });
-        if (l.kind === "arrow" || l.kind === "double") vis.setAttribute("marker-end", "url(#arrowhead)");
-        if (l.kind === "double") vis.setAttribute("marker-start", "url(#arrowhead)");
-        g.append(vis);
-        const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
-        if (l.kind === "oppose") {
-          const len = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
-          const ux = (p2.x - p1.x) / len, uy = (p2.y - p1.y) / len;
-          for (const o of [-4, 4]) {
-            const cx = mx + ux * o, cy = my + uy * o;
-            g.append(svg("line", { class: "oppose-tick", x1: cx - uy * 8, y1: cy + ux * 8, x2: cx + uy * 8, y2: cy - ux * 8 }));
-          }
-        }
-        if (l.label) {
-          // 線の真ん中で線を切って文字(2026-11-24 利用者)。背景色の太い縁取りで線を隠す
-          const t = svg("text", { x: mx, y: my, class: "edgelabel", "text-anchor": "middle", "dominant-baseline": "central" });
-          t.textContent = l.label;
-          g.append(t);
-        }
-        this.edgesSvg.append(g);
+        out.push({ from: id, to: l.to, key: id + ">" + l.to, l, p1, p2, ends: edgeEnds(l.kind, p1, p2) });
       }
     }
+    return out;
+  }
+
+  /** 文字の位置(線の上の割合)。終わりの印を隠さないよう、端に寄せすぎない */
+  private labelAt(key: string, l: Link): number {
+    const at = this.labelAtLive?.key === key ? this.labelAtLive.at : l.at ?? 0.5;
+    return Math.min(0.85, Math.max(0.15, at));
+  }
+
+  private renderEdges(): void {
+    const defs = this.edgesSvg.querySelector("defs")!;
+    this.edgesSvg.replaceChildren(defs);
+    // スプレッドの囲み枠は出さない(2026-11-23 利用者「枠やっぱりいらない」)
+    const geom = this.edgeGeom();
+    const alive = new Set(geom.map((g) => g.key));
+    for (const k of [...this.edgeSel]) if (!alive.has(k)) this.edgeSel.delete(k);
+    // 交差: 一方が小さな弧で乗り越える(2026-11-24 統合仕様 5)
+    const hops = findHops(geom.map((g) => ({ key: g.key, a: g.ends.start, b: g.ends.end, ends: [g.from, g.to] as [string, string] })));
+    const labels: SVGGElement[] = [];
+    for (const e of geom) {
+      const { l, p1, p2, ends } = e;
+      const g = svg("g", { class: `edge k-${l.kind}${l.color ? " c" + l.color : ""}${this.edgeSel.has(e.key) ? " selected" : ""}`, "data-from": e.from, "data-to": e.to });
+      g.append(svg("path", { d: `M${p1.x},${p1.y} L${p2.x},${p2.y}`, class: "hit" }));
+      g.append(svg("path", { d: hopPath(ends.start, ends.end, hops.get(e.key) ?? []), class: "vis" }));
+      if (ends.fill) g.append(svg("path", { d: ends.fill, class: "end-fill" }));
+      if (ends.stroke) g.append(svg("path", { d: ends.stroke, class: "end-stroke" }));
+      const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+      if (l.kind === "oppose") {
+        const len = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
+        const ux = (p2.x - p1.x) / len, uy = (p2.y - p1.y) / len;
+        for (const o of [-4, 4]) {
+          const cx = mx + ux * o, cy = my + uy * o;
+          g.append(svg("line", { class: "oppose-tick", x1: cx - uy * 8, y1: cy + ux * 8, x2: cx + uy * 8, y2: cy - ux * 8 }));
+        }
+      }
+      this.edgesSvg.append(g);
+      if (l.label) {
+        // 線の上の文字(2026-11-24 統合仕様 6): 文章と同じ大きさ・不透明な薄い灰色の背景・いつも水平。ドラッグで線に沿って動く
+        const at = this.labelAt(e.key, l);
+        const x = p1.x + (p2.x - p1.x) * at, y = p1.y + (p2.y - p1.y) * at;
+        const lg = svg("g", { class: "elabel", transform: `translate(${Math.round(x * 10) / 10},${Math.round(y * 10) / 10})` }) as SVGGElement;
+        const bg = svg("rect", { class: "elabel-bg", rx: 4 });
+        const t = svg("text", { class: "edgelabel", "text-anchor": "middle", "dominant-baseline": "central" });
+        if (l.size) t.style.fontSize = l.size + "px";
+        t.textContent = l.label;
+        lg.append(bg, t);
+        g.append(lg);
+        labels.push(lg);
+      }
+    }
+    // 文字の背景を、文字の大きさに合わせる(線の上に重ねて、後ろの線を隠す)
+    for (const lg of labels) {
+      const t = lg.querySelector("text")!;
+      const bb = t.getBBox();
+      const bg = lg.querySelector("rect")!;
+      bg.setAttribute("x", String(bb.x - 7));
+      bg.setAttribute("y", String(bb.y - 3));
+      bg.setAttribute("width", String(bb.width + 14));
+      bg.setAttribute("height", String(bb.height + 6));
+    }
+    // 文字は線より前に
+    for (const lg of labels) this.edgesSvg.append(lg.parentElement!);
     this.drawOuterEdges();
     this.draftLine();
   }
@@ -1002,7 +1080,22 @@ export class Canvas {
       return;
     }
     if (e.button === 0) {
-      if (edge) return; // 線の左クリックは何もしない(メニューは右クリック)
+      if (edge) {
+        // 線: 押すと選ぶ(Ctrl で足す・外す)。文字はドラッグで線に沿って動かす
+        if (this.readOnly) return;
+        const key = edge.getAttribute("data-from") + ">" + edge.getAttribute("data-to");
+        this.drag = { kind: "edge-press", key, sx: e.clientX, sy: e.clientY, ctrl, label: !!(e.target as Element).closest?.(".elabel") };
+        this.el.focus({ preventScroll: true });
+        return;
+      }
+      const ih = (e.target as Element).closest?.<HTMLElement>("[data-act=imgresize]");
+      if (id && ih && !this.readOnly) {
+        const r = this.rects.get(id)!;
+        const nel = this.els.get(id)!;
+        this.drag = { kind: "img-resize", id, corner: ih.dataset.corner!, sx: e.clientX, sy: e.clientY, x0: r.x, y0: r.y, w0: nel.offsetWidth, h0: nel.offsetHeight };
+        e.preventDefault();
+        return;
+      }
       if (id && (e.target as Element).closest?.("[data-act=resize]") && !this.readOnly) {
         const z = this.v.get(id)?.size ?? { w: 240, h: 160 };
         this.drag = { kind: "resize", id, sx: e.clientX, sy: e.clientY, w: z.w, h: z.h };
@@ -1055,6 +1148,45 @@ export class Canvas {
           d.hit.add(s.id);
           this.strokesSvg.querySelector(`g[data-sid="${s.id}"]`)?.remove();
         }
+        return;
+      }
+      case "img-resize": {
+        // 縦横の比は保つ。向かいの角を動かさない。小さくなりすぎない
+        const dx = (e.clientX - d.sx) / this.view.z, dy = (e.clientY - d.sy) / this.view.z;
+        const sx = d.corner.includes("e") ? 1 : -1, sy = d.corner.includes("s") ? 1 : -1;
+        const ratio = d.h0 / (d.w0 || 1);
+        const dw = Math.abs(dx) > Math.abs(dy / ratio) ? sx * dx : (sy * dy) / ratio;
+        const w = Math.max(40, Math.round(d.w0 + dw));
+        const hh = w * ratio;
+        const x = sx < 0 ? d.x0 + d.w0 - w : d.x0, y = sy < 0 ? d.y0 + d.h0 - hh : d.y0;
+        d.w = w;
+        const el = this.els.get(d.id);
+        if (el) {
+          el.style.setProperty("--img-w", w + "px");
+          el.style.left = x + "px";
+          el.style.top = y + "px";
+        }
+        this.rects.set(d.id, { x, y, w, h: hh });
+        this.renderEdges(); // 線の端も付いてくる
+        return;
+      }
+      case "edge-press": {
+        if (!far || !d.label) return;
+        this.drag = { kind: "label-drag", key: d.key };
+        this.onMove(e);
+        return;
+      }
+      case "label-drag": {
+        const [from, to] = d.key.split(">");
+        const a = this.rects.get(from), b = this.rects.get(to);
+        if (!a || !b) return;
+        const p1 = this.clip(a, b.x + b.w / 2, b.y + b.h / 2);
+        const p2 = this.clip(b, a.x + a.w / 2, a.y + a.h / 2);
+        const p = this.toWorld(e.clientX, e.clientY);
+        const vx = p2.x - p1.x, vy = p2.y - p1.y;
+        const t = ((p.x - p1.x) * vx + (p.y - p1.y) * vy) / (vx * vx + vy * vy || 1);
+        this.labelAtLive = { key: d.key, at: Math.min(0.85, Math.max(0.15, t)) };
+        this.renderEdges();
         return;
       }
       case "node-press": {
@@ -1211,6 +1343,33 @@ export class Canvas {
         }
         return this.quoteOuterHere(d.id, e.clientX, e.clientY);
       }
+      case "img-resize": {
+        if (!d.w) return;
+        const r = this.rects.get(d.id)!;
+        this.v.tx(() => {
+          this.v.setItemWidth(this.group, d.id, d.w!);
+          this.v.move(this.group, [{ id: d.id, x: Math.round(r.x), y: Math.round(r.y) }]);
+        });
+        return;
+      }
+      case "edge-press": {
+        if (d.ctrl) {
+          const s = new Set(this.edgeSel);
+          if (s.has(d.key)) s.delete(d.key);
+          else s.add(d.key);
+          this.setEdgeSel(s);
+        } else this.setEdgeSel([d.key]);
+        return;
+      }
+      case "label-drag": {
+        const live = this.labelAtLive;
+        this.labelAtLive = null;
+        if (!live) return;
+        const [from, to] = d.key.split(">");
+        this.v.setLinkProps(from, to, { at: Math.round(live.at * 1000) / 1000 });
+        this.renderEdges();
+        return;
+      }
       case "node-press":
         if (this.readOnly) return this.setSelection([d.id]);
         return this.clickNode(d.id, d.ctrl, d.target, d.wasSelected);
@@ -1302,6 +1461,9 @@ export class Canvas {
     }
     // 引用は読むだけ(2026-11-24 利用者): 1 回クリックは選ぶだけ。右上の ↗・ダブルクリック・Enter で元の場所へ
     if (this.isQuote(id)) {
+      // 引用したグループは、1 回クリックでそのグループ自身の中へ(親ではない。統合仕様 7)
+      const g = this.quotedGroup(id);
+      if (g) return this.host.openGroup(g);
       if (target.closest("[data-act=jump]")) return this.jump(id);
       this.setSelection([id]);
       return;
@@ -1326,7 +1488,10 @@ export class Canvas {
   open(id: string, _target?: Element): void {
     const n = this.v.get(id);
     if (!n) return;
-    if (this.isQuote(id)) return this.jump(id); // 引用は元の場所へ(中身はここでは直さない)
+    if (this.isQuote(id)) {
+      const g = this.quotedGroup(id);
+      return g ? this.host.openGroup(g) : this.jump(id); // 引用は元の場所へ(グループはそのグループ自身の中へ)
+    }
     if (n.type === "group") return this.host.openGroup(id);
     if (n.type === "frame") return void this.renameFrame(id);
     if (n.type === "text" && n.paper) return this.host.openPaper?.(n.paper);
@@ -1413,6 +1578,13 @@ export class Canvas {
   /** 引用(ほかのグループの物の引用・同じボードの中の引用) */
   isQuote(id: string): boolean {
     return this.v.isRefIn(this.group, id) || this.v.get(id)?.type === "alias";
+  }
+
+  /** 引用(ボードの中の引用も)がグループなら、そのグループの ID */
+  private quotedGroup(id: string): string | null {
+    const n = this.v.get(id);
+    const t = n?.type === "alias" ? (n.target ? this.v.get(n.target) : undefined) : n;
+    return t?.type === "group" ? t.id : null;
   }
 
   /** 引用の元の場所へ */
@@ -1526,6 +1698,22 @@ export class Canvas {
     const ids = [...this.selection];
     const k = e.key.toLowerCase();
     if (e.key === "Escape" && this.pen.on) return false; // ペンモードを抜けるのは app
+    // 選んだ線: R で反転・Delete で外す・Esc で選ぶのをやめる(統合仕様 4.2)
+    if (this.edgeSel.size && !ids.length && !this.strokeSel.size) {
+      const keys = [...this.edgeSel];
+      if (e.key === "Escape") {
+        this.setEdgeSel([]);
+        return true;
+      }
+      if (!e.ctrlKey && !e.altKey && k === "r") {
+        this.reverseEdges(keys);
+        return true;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        this.removeEdges(keys);
+        return true;
+      }
+    }
     if (e.key === "Escape" && (ids.length || this.strokeSel.size)) {
       this.setSelection([]); // 選択を外す
       return true;
@@ -1602,7 +1790,9 @@ export class Canvas {
     const pick = (id: string) => (!cut && this.v.get(id)?.type === "alias" ? this.v.get(id)!.target ?? id : id);
     refClip = ids.map((id) => ({ id: pick(id), ...(this.v.itemPos(this.group, id) ?? { x: 0, y: 0 }) }));
     refCutFrom = cut ? this.group : null;
-    refClipMark = (cut ? T.cutMark : T.copiedMark)(ids.length);
+    // システムのコピーには Markdown を入れる(外のエディタや AI にそのまま貼れる。2026-11-24 統合仕様 2)。
+    // ThinkDraw の中で貼ると、同じ文字なので引用(切り取りなら移動)になる。外で別の物をコピーすると、文字が変わるので使わない
+    refClipMark = selectionToMarkdown(this.v, this.group, ids).trim() || (cut ? T.cutMark : T.copiedMark)(ids.length);
     void navigator.clipboard?.writeText(refClipMark).catch(() => {});
     toast((cut ? T.cutToast : T.copiedToast)(ids.length));
     this.markCut();
@@ -2063,14 +2253,16 @@ export class Canvas {
     this.commitDraft("esc");
     const p1 = this.clip(a, b.x + b.w / 2, b.y + b.h / 2);
     const p2 = this.clip(b, a.x + a.w / 2, a.y + a.h / 2);
-    const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+    const at = this.labelAt(from + ">" + to, l);
+    const mx = p1.x + (p2.x - p1.x) * at, my = p1.y + (p2.y - p1.y) * at;
     const inp = h("input", { class: "edgelabel-input", type: "text", spellcheck: "false", placeholder: T.labelPrompt }) as HTMLInputElement;
     inp.value = l.label ?? "";
-    const fit = () => (inp.style.width = Math.max(80, [...(inp.value || T.labelPrompt)].length * 13 + 20) + "px");
+    if (l.size) inp.style.fontSize = l.size + "px";
+    const fit = () => (inp.style.width = Math.max(80, [...(inp.value || T.labelPrompt)].length * (l.size ?? 15) + 24) + "px");
     fit();
     inp.style.left = mx + "px";
     inp.style.top = my + "px";
-    this.edgesSvg.querySelector(`g.edge[data-from="${from}"][data-to="${to}"] .edgelabel`)?.setAttribute("visibility", "hidden");
+    this.edgesSvg.querySelector(`g.edge[data-from="${from}"][data-to="${to}"] .elabel`)?.setAttribute("visibility", "hidden");
     let done = false;
     const finish = (ok: boolean) => {
       if (done) return;
@@ -2094,20 +2286,80 @@ export class Canvas {
     inp.select();
   }
 
-  private edgeMenu(from: string, to: string, x: number, y: number): void {
-    const l = this.v.get(from)?.links.find((l) => l.to === to);
-    if (!l) return;
-    showMenu(x, y, [
-      { label: T.linkKind, disabled: true },
-      ...LINK_KINDS.map((k: LinkKind) => ({ label: "  " + T.kinds[k], checked: l.kind === k, action: () => this.v.setLinkKind(from, to, k) })),
-      { separator: true, label: "" },
-      { label: T.linkReverse, action: () => this.v.reverseLink(from, to) },
-      {
-        label: T.linkLabel,
-        hint: "ダブルクリック",
-        action: () => this.editLinkLabel(from, to),
-      },
-      { label: T.linkRemove, action: () => this.v.removeLink(from, to) },
-    ]);
+  // ---------- 線を選ぶ・まとめて直す(2026-11-24 統合仕様 4) ----------
+  setEdgeSel(keys: Iterable<string>): void {
+    const ks = new Set(keys);
+    if (ks.size && (this.selection.size || this.strokeSel.size)) this.setSelection([]);
+    this.edgeSel = ks;
+    for (const g of this.edgesSvg.querySelectorAll<SVGGElement>("g.edge")) g.classList.toggle("selected", ks.has(g.getAttribute("data-from") + ">" + g.getAttribute("data-to")));
   }
+  private edgeLinks(keys: Iterable<string>): { from: string; to: string; l: Link }[] {
+    const out: { from: string; to: string; l: Link }[] = [];
+    for (const k of keys) {
+      const [from, to] = k.split(">");
+      const l = this.v.get(from)?.links.find((x) => x.to === to);
+      if (l) out.push({ from, to, l });
+    }
+    return out;
+  }
+  /** 選んだ線の向きを逆に(種類・色・文字はそのまま)。逆向きの線がもうある所はしない */
+  reverseEdges(keys: string[]): void {
+    let refused = 0;
+    const next: string[] = [];
+    this.v.tx(() => {
+      for (const { from, to } of this.edgeLinks(keys)) {
+        if (this.v.reverseLink(from, to)) next.push(to + ">" + from);
+        else refused++;
+      }
+    });
+    this.edgeSel = new Set(next);
+    this.renderEdges();
+    if (refused) toast(T.reverseRefused(refused));
+  }
+  removeEdges(keys: string[]): void {
+    this.v.tx(() => {
+      for (const { from, to } of this.edgeLinks(keys)) this.v.removeLink(from, to);
+    });
+    this.edgeSel.clear();
+  }
+
+  /** 線の右クリック: 上から 反転・削除 → 色 → 線の種類(統合仕様 4.3)。選んである線なら、選んだ線全部に */
+  private edgeMenu(from: string, to: string, x: number, y: number): void {
+    const key = from + ">" + to;
+    if (!this.edgeSel.has(key)) this.setEdgeSel([key]);
+    const keys = [...this.edgeSel];
+    const links = this.edgeLinks(keys);
+    if (!links.length) return;
+    const same = <T,>(f: (l: Link) => T): T | undefined => (links.every((x) => f(x.l) === f(links[0].l)) ? f(links[0].l) : undefined);
+    const kind = same((l) => l.kind);
+    const color = same((l) => l.color ?? 0);
+    const set = (p: Parameters<Vault["setLinkProps"]>[2]) => this.v.tx(() => links.forEach((x) => this.v.setLinkProps(x.from, x.to, p)));
+    const items: MenuItem[] = [];
+    if (links.length > 1) items.push({ label: T.edgesCount(links.length), heading: true });
+    items.push({
+      label: "",
+      bar: [
+        { icon: "reverse", label: T.linkReverseShort, title: T.linkReverse + " (R)", key: "r", action: () => this.reverseEdges(keys) },
+        { icon: "trash", label: T.edgeDelete, title: T.linkRemove + " (Delete)", danger: true, action: () => this.removeEdges(keys) },
+      ],
+    });
+    items.push({
+      label: T.color,
+      swatches: Array.from({ length: PRESET_COLORS + 1 }, (_, c) => ({ color: c, title: c ? `${T.color} ${c}` : T.colorDefault, active: c === color, action: () => set({ color: c }) })),
+    });
+    items.push({ label: T.linkKind, heading: true });
+    for (const k of NEW_LINK_KINDS) items.push({ label: T.kinds[k], preview: kindPreview(k), checked: kind === k, action: () => set({ kind: k }) });
+    // 古い種類(太線・対立)の線は、そのまま見せる(選び直すと新しい種類になる)
+    if (kind && !NEW_LINK_KINDS.includes(kind)) items.push({ label: T.kinds[kind] + T.oldKind, preview: kindPreview(kind), checked: true, disabled: true });
+    if (links.some((x) => x.l.label)) {
+      const size = same((l) => l.size ?? 0);
+      items.push({ separator: true, label: "" });
+      items.push({
+        label: T.labelSize,
+        sub: LABEL_SIZES.map(([name, px]) => ({ label: name, checked: size === px, action: () => set({ size: px || null }) })),
+      });
+    }
+    showMenu(x, y, items);
+  }
+
 }

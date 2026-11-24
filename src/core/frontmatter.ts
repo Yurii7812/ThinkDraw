@@ -5,7 +5,7 @@
 import YAML from "yaml";
 import { LINK_KINDS, type Link, type LinkKind, type Member, type NodeType, type Stroke, type TDNode } from "./types";
 
-const KNOWN = new Set(["id", "title", "type", "color", "fill", "file", "paper", "created", "updated", "members", "refs", "strokes", "links", "card", "spread", "size", "target"]);
+const KNOWN = new Set(["id", "title", "type", "color", "fill", "file", "paper", "created", "updated", "members", "refs", "strokes", "links", "card", "spread", "size", "target", "markers"]);
 const TYPES: NodeType[] = ["text", "note", "group", "card", "frame", "alias"];
 
 export class ParseError extends Error {}
@@ -60,7 +60,11 @@ export function parseNode(src: string, fallbackId: string): TDNode {
     Array.isArray(v)
       ? (v as unknown[])
           .filter((m): m is Record<string, unknown> => !!m && typeof m === "object" && "id" in (m as object))
-          .map((m) => ({ id: str(m.id), x: num(m.x), y: num(m.y) }))
+          .map((m) => {
+            const o: Member = { id: str(m.id), x: num(m.x), y: num(m.y) };
+            if (typeof m.w === "number" && m.w > 0) o.w = m.w;
+            return o;
+          })
       : [];
   const members = posList(data.members);
   const refs = posList(data.refs);
@@ -82,6 +86,9 @@ export function parseNode(src: string, fallbackId: string): TDNode {
           const kind = LINK_KINDS.includes(l.kind as LinkKind) ? (l.kind as LinkKind) : "line";
           const out: Link = { to: str(l.to), kind };
           if (l.label !== undefined && l.label !== null && str(l.label) !== "") out.label = str(l.label);
+          if (typeof l.color === "number" && l.color > 0) out.color = Math.trunc(l.color);
+          if (typeof l.at === "number" && l.at >= 0 && l.at <= 1) out.at = l.at;
+          if (typeof l.size === "number" && l.size > 0) out.size = l.size;
           return out;
         })
     : [];
@@ -98,6 +105,7 @@ export function parseNode(src: string, fallbackId: string): TDNode {
     ...(/^p[0-9a-f]{12}$/.test(str(data.paper)) ? { paper: str(data.paper) } : {}),
     ...(type === "frame" ? { size: frameSize(data.size) } : {}),
     ...(type === "alias" && str(data.target) ? { target: str(data.target) } : {}),
+    ...(type === "group" && Array.isArray(data.markers) && data.markers.length ? { markers: [...new Set((data.markers as unknown[]).map((m) => str(m).trim()).filter(Boolean))] } : {}),
     created: str(data.created),
     updated: str(data.updated),
     members,
@@ -165,17 +173,18 @@ export function serializeNode(n: TDNode): string {
   if (n.paper) L.push(`paper: ${scalar(n.paper)}`);
   if (n.type === "frame" && n.size) L.push(`size: { w: ${Math.round(n.size.w)}, h: ${Math.round(n.size.h)} }`);
   if (n.type === "alias" && n.target) L.push(`target: ${scalar(n.target)}`);
+  if (n.type === "group" && n.markers?.length) L.push(`markers: [${n.markers.map((m) => flowScalar(m)).join(", ")}]`);
   if (n.created) L.push(`created: ${scalar(n.created)}`);
   if (n.updated) L.push(`updated: ${scalar(n.updated)}`);
   if (n.type === "group") {
     if (n.members.length === 0) L.push("members: []");
     else {
       L.push("members:");
-      for (const m of n.members) L.push(`  - ${flowMap({ id: m.id, x: round(m.x), y: round(m.y) })}`);
+      for (const m of n.members) L.push(`  - ${flowMap({ id: m.id, x: round(m.x), y: round(m.y), w: m.w === undefined ? undefined : round(m.w) })}`);
     }
     if (n.refs.length) {
       L.push("refs:");
-      for (const m of n.refs) L.push(`  - ${flowMap({ id: m.id, x: round(m.x), y: round(m.y) })}`);
+      for (const m of n.refs) L.push(`  - ${flowMap({ id: m.id, x: round(m.x), y: round(m.y), w: m.w === undefined ? undefined : round(m.w) })}`);
     }
     if (n.strokes.length) {
       L.push("strokes:");
@@ -188,7 +197,7 @@ export function serializeNode(n: TDNode): string {
   }
   if (n.links.length) {
     L.push("links:");
-    for (const l of n.links) L.push(`  - ${flowMap({ to: l.to, kind: l.kind, label: l.label })}`);
+    for (const l of n.links) L.push(`  - ${flowMap({ to: l.to, kind: l.kind, label: l.label, color: l.color || undefined, at: l.at === undefined ? undefined : Math.round(l.at * 1000) / 1000, size: l.size })}`);
   }
   if (n.card) {
     L.push("card:");

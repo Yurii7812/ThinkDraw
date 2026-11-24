@@ -1,4 +1,5 @@
 // グラフビュー(右のサイドパネル。SPEC 第 5 章)。静止した層状の配置。丸は動かせない(パンとズームだけ)
+import { edgeEnds } from "./edgeshape";
 import { buildGroupGraph, buildLocalGraph, graphKey, layoutGraph, type Layout } from "../core/graphLayout";
 import { ROOT_ID } from "../core/types";
 import type { Vault } from "../core/vault";
@@ -150,6 +151,12 @@ export class GraphPanel {
       if (e.kind === "arrow" || e.kind === "double") line.setAttribute("marker-end", "url(#g-arrow)");
       if (e.kind === "double") line.setAttribute("marker-start", "url(#g-arrow)");
       edgesG.append(line);
+      // 部分・全体: to の側に小さな括弧(キャンバスと同じ形。統合仕様 3)
+      if (e.kind === "part") {
+        const pe = edgeEnds("part", { x: x1, y: y1 }, { x: x2, y: y2 }, 0.8);
+        line.setAttribute("d", `M${pe.start.x},${pe.start.y} L${pe.end.x},${pe.end.y}`);
+        edgesG.append(svg("path", { d: pe.stroke, class: "g-part" + (hot ? " hot" : "") }));
+      }
     }
     this.gRoot.append(edgesG);
     const cur = this.host.currentGroup();

@@ -63,6 +63,8 @@ export interface MenuItem {
   heading?: boolean;
   /** メニューが開いている間、このキー 1 つで選べる(例: "r")。右に小さく出す */
   key?: string;
+  /** 名前の左に出す小さな絵(SVG の中身。幅 64・高さ 14。線の種類の見本) */
+  preview?: string;
 }
 
 /** 右クリックのボタンの絵(線だけの小さな SVG) */
@@ -73,6 +75,7 @@ export const MENU_ICONS: Record<string, string> = {
   bundle: '<path d="M3 7h6l2 2h10v10H3z"/><path d="M12 12v5M9.5 14.5h5"/>',
   color: '<circle cx="12" cy="12" r="8"/><circle cx="9" cy="10" r="1.2"/><circle cx="14" cy="9" r="1.2"/><circle cx="16" cy="13" r="1.2"/>',
   trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>',
+  reverse: '<path d="M4 8h15l-4-4M20 16H5l4 4"/>',
   frame: '<rect x="3" y="4" width="18" height="16" rx="3" stroke-dasharray="3 2"/><path d="M8 10h8M8 14h5"/>',
   tab: '<path d="M3 19V7h7l2 3h9v9z"/><path d="M14 14h4M16 12v4"/>',
   beside: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/>',
@@ -132,7 +135,9 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
         parent.append(h("div", { class: "menuhead", text: it.label }));
         continue;
       }
-      const b = h("button", { class: "item" + (it.checked ? " checked" : "") + (it.danger ? " danger" : ""), role: "menuitem", disabled: it.disabled }, h("span", { class: "mi-label", text: it.label }), it.hint || it.key ? h("span", { class: "mi-hint", text: it.hint ?? it.key!.toUpperCase() }) : null);
+      const pv = it.preview ? svg("svg", { class: "mi-preview", viewBox: "0 0 64 14", width: 64, height: 14, "aria-hidden": "true" }) : null;
+      if (pv) pv.innerHTML = it.preview!;
+      const b = h("button", { class: "item" + (it.checked ? " checked" : "") + (it.danger ? " danger" : "") + (pv ? " has-preview" : ""), role: "menuitem", disabled: it.disabled }, pv, h("span", { class: "mi-label", text: it.label }), it.hint || it.key ? h("span", { class: "mi-hint", text: it.hint ?? it.key!.toUpperCase() }) : null);
       if (it.key && !it.disabled) menuKeys.set(it.key.toLowerCase(), () => b.click());
       if (it.sub) {
         b.classList.add("hassub");
@@ -205,12 +210,19 @@ addEventListener("keydown", (e) => {
 export const menuOpen = () => !!openMenu;
 
 /** 小さな入力の窓(prompt の代わり。Electron は window.prompt を持たない) */
-export function askText(title: string, initial = ""): Promise<string | null> {
+export function askText(title: string, initial = "", choices: string[] = []): Promise<string | null> {
   return new Promise((resolve) => {
     const input = h("input", { type: "text", class: "ask-input", value: initial });
     const ok = h("button", { class: "btn primary", text: "OK" });
     const cancel = h("button", { class: "btn", text: "やめる" });
-    const box = h("div", { class: "modal ask" }, h("div", { class: "modal-title", text: title }), input, h("div", { class: "row-end" }, cancel, ok));
+    // 候補(押すとそれで決まる)
+    const pick = choices.length ? h("div", { class: "ask-choices" }) : null;
+    for (const c of choices) {
+      const b = h("button", { class: "ask-choice", text: c });
+      b.onclick = () => done(c);
+      pick!.append(b);
+    }
+    const box = h("div", { class: "modal ask" }, h("div", { class: "modal-title", text: title }), input, pick, h("div", { class: "row-end" }, cancel, ok));
     const back = h("div", { class: "backdrop" }, box);
     const done = (v: string | null) => {
       back.remove();

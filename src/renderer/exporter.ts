@@ -1,5 +1,6 @@
 // 書き出し(画像・HTML): いまの画面と同じ並びを、SVG にして PNG や HTML にする
 import { groupToMarkdown, labelOf } from "../core/export";
+import { edgeEnds } from "./edgeshape";
 import { ROOT_ID } from "../core/types";
 import type { Vault } from "../core/vault";
 import { strokeD, type Canvas } from "./canvas";
@@ -33,7 +34,6 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
   const pad = 40;
   const W = Math.ceil(x1 - x0 + pad * 2), H = Math.ceil(y1 - y0 + pad * 2);
   const parts: string[] = [];
-  parts.push(`<defs><marker id="ah" viewBox="0 0 14 12" refX="13" refY="6" markerWidth="15" markerHeight="13" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0.5 L14,6 L0,11.5 L3.5,6 z" fill="${fg}" fill-opacity="0.75"/></marker></defs>`);
   parts.push(`<rect width="${W}" height="${H}" fill="${bg}"/>`);
   parts.push(`<g transform="translate(${pad - x0},${pad - y0})" font-family="sans-serif" font-size="15">`);
   const clip = (r: { x: number; y: number; w: number; h: number }, tx: number, ty: number) => {
@@ -57,9 +57,20 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
       if (!b) continue;
       const p1 = clip(a, b.x + b.w / 2, b.y + b.h / 2), p2 = clip(b, a.x + a.w / 2, a.y + a.h / 2);
       const dash = l.kind === "dashed" ? ' stroke-dasharray="6 5"' : "";
-      const mk = (l.kind === "arrow" || l.kind === "double" ? ' marker-end="url(#ah)"' : "") + (l.kind === "double" ? ' marker-start="url(#ah)"' : "");
-      parts.push(`<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="${edge}" stroke-width="1.5"${dash}${mk}/>`);
-      if (l.label) parts.push(`<text x="${(p1.x + p2.x) / 2}" y="${(p1.y + p2.y) / 2 + 4}" text-anchor="middle" font-size="12" fill="${fg}" paint-order="stroke" stroke="${bg}" stroke-width="8">${esc(l.label)}</text>`);
+      const lc = l.color ? col(l.color) : l.kind === "oppose" ? css("--danger") : edge;
+      const e = edgeEnds(l.kind, p1, p2);
+      parts.push(`<line x1="${e.start.x}" y1="${e.start.y}" x2="${e.end.x}" y2="${e.end.y}" stroke="${lc}" stroke-width="${l.kind === "thick" ? 4 : 1.5}"${dash}/>`);
+      if (e.fill) parts.push(`<path d="${e.fill}" fill="${lc}"/>`);
+      if (e.stroke) parts.push(`<path d="${e.stroke}" fill="none" stroke="${lc}" stroke-width="2"/>`);
+      if (l.label) {
+        // 線の文字: 文章と同じ大きさ・薄い灰色の背景(統合仕様 6)
+        const at = Math.min(0.85, Math.max(0.15, l.at ?? 0.5));
+        const lx = p1.x + (p2.x - p1.x) * at, ly = p1.y + (p2.y - p1.y) * at;
+        const fs = l.size ?? 15;
+        const w = [...l.label].reduce((a, ch) => a + (ch.charCodeAt(0) > 255 ? fs : fs * 0.6), 0) + 14;
+        parts.push(`<rect x="${lx - w / 2}" y="${ly - fs * 0.75 - 3}" width="${w}" height="${fs * 1.5 + 6}" rx="4" fill="${css("--label-bg") || "#e6e6e3"}"/>`);
+        parts.push(`<text x="${lx}" y="${ly + fs * 0.35}" text-anchor="middle" font-size="${fs}" fill="${fg}">${esc(l.label)}</text>`);
+      }
     }
   }
   for (const s of strokes) {

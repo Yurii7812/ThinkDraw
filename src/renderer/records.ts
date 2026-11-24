@@ -1,15 +1,14 @@
-// 記録一覧(日記・夢日記などの時系列の記録を、日付順のリストで見る画面。右の欄とは関係なく、キャンバスの上に重ねて出す)
-// 記録の形(2026-11-23 利用者と決めた):
-//   ホーム › 記録 › 2026 › 2026-11 › 2026-11-23(日のグループ)の中に、種類ごとのノートを 1 枚ずつ。
-//   ノートの名前は「2026-11-23-日記」「2026-11-23-夢日記-空を飛ぶ」(日付-種類-好きな題)。
-//   その日のブレストは、日のグループのキャンバスに一緒に書く。
-//   種類には上位を複数付けられる。その日の上位のノートから、下位のノートへ線を引く。
+// 時系列記録(Ctrl+J)。2026-11-24 統合仕様 11〜14:
+//   その日にブレストや文章を書いた日付グループ(2026-11-24 / 2026-11-24-題)そのものを、その日の記録とする。日記は必須ではない。
+//   日付グループには @ マーカー(@読書・@夢 など。時系列記録だけのしるし)を付けられる。
+//   画面はアプリの中身の所全体: 左に月のカレンダーとマーカーの絞り込み、右に選んだ日の題・マーカー・ボードの縮小・記録ノート。
 import type { Vault } from "../core/vault";
+import { ROOT_ID } from "../core/types";
 import { T } from "./strings";
-import { h, toast } from "./ui";
+import { askText, h, toast } from "./ui";
 
 export { cleanKind, DEFAULT_KINDS, KINDS_FILE, parseKinds, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
-import { cleanKind, DATE, DEFAULT_KINDS, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
+import { cleanKind, parseDayGroup, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
 
 export interface RecordEntry {
   date: string;
@@ -21,58 +20,58 @@ export interface RecordEntry {
   preview: string;
 }
 
-function flat(s: string, n = 140): string {
-  const t = s
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "🖼")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/^#+\s*/gm, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return [...t].length > n ? [...t].slice(0, n).join("") + "…" : t;
-}
-function groupPreview(v: Vault, g: string): string {
-  const items = v.itemsOf(g).filter((i) => v.exists(i.id)).sort((a, b) => a.y - b.y || a.x - b.x);
-  return flat(items.map((i) => v.get(i.id)!.title).filter(Boolean).join(" / "));
-}
-
-/** 日のグループ(名前が 2026-11-23 の形)を全部 */
-export function dayGroups(v: Vault): { id: string; date: string }[] {
-  return [...v.nodes.values()].filter((n) => n.type === "group" && DATE.test(n.title)).map((n) => ({ id: n.id, date: n.title }));
+/**
+ * 日付グループか(名前が 2026-11-24 か 2026-11-24-題)。日付だけの名前は前の版と同じくどこにあっても日付グループ。
+ * 題の付いたものは、記録 › 年 › 月(2026-11)の下にあるときだけ(関係ない「2026-11-24-会議」などと混ぜない)
+ */
+export function isDayGroup(v: Vault, id: string): { date: string; title: string } | null {
+  const n = v.get(id);
+  if (n?.type !== "group" || id === ROOT_ID) return null;
+  const p = parseDayGroup(n.title);
+  if (!p) return null;
+  if (n.title.trim() === p.date) return p;
+  return v.parentsOf(id).some((g) => v.get(g)?.title === p.date.slice(0, 7)) ? p : null;
 }
 
-/** 日のグループの中の、その種類のノート(古い名前「日記」だけのものも見つける) */
-export function findRecordNote(v: Vault, day: string, kind: string): string | null {
+/** 日付グループを全部(同じ日に複数あれば全部) */
+export function dayGroups(v: Vault): { id: string; date: string; title: string }[] {
+  const out: { id: string; date: string; title: string }[] = [];
+  for (const n of v.nodes.values()) {
+    const d = isDayGroup(v, n.id);
+    if (d) out.push({ id: n.id, ...d });
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+}
+
+/** その日の日付グループ(月のグループの下にあるものを先に) */
+export function findDayGroup(v: Vault, date: string): string | null {
+  const list = dayGroups(v).filter((d) => d.date === date);
+  const under = list.find((d) => v.parentsOf(d.id).some((g) => v.get(g)?.title === date.slice(0, 7)));
+  return (under ?? list[0])?.id ?? null;
+}
+
+/** 日のグループの中の、その種類のノート(古い名前「日記」だけのものも見つける)。except は除く */
+export function findRecordNote(v: Vault, day: string, kind: string, except?: string): string | null {
   for (const it of v.itemsOf(day)) {
     const n = v.get(it.id);
-    if (it.ref || n?.type !== "note") continue;
+    if (it.ref || n?.type !== "note" || n.id === except) continue;
     if (parseRecordTitle(n.title)?.kind === kind || n.title === kind) return n.id;
   }
   return null;
 }
 
+/** その日の記録(ノートとグループ)。同じ種類・同じ名前でも別々に */
 export function collectRecords(v: Vault): RecordEntry[] {
   const out: RecordEntry[] = [];
   for (const d of dayGroups(v)) {
-    const items = v.itemsOf(d.id).filter((i) => !i.ref && v.exists(i.id));
-    let any = false;
-    for (const it of items) {
+    for (const it of v.itemsOf(d.id).filter((i) => !i.ref && v.exists(i.id)).sort((a, b) => a.y - b.y || a.x - b.x)) {
       const c = v.get(it.id)!;
       if (c.type !== "note" && c.type !== "group") continue;
-      any = true;
       const p = parseRecordTitle(c.title);
-      out.push({
-        date: d.date,
-        day: d.id,
-        id: c.id,
-        kind: p?.kind ?? (c.title || T.untitled),
-        sub: p?.sub ?? "",
-        type: c.type,
-        preview: c.type === "note" ? flat(c.body) : groupPreview(v, c.id),
-      });
+      out.push({ date: d.date, day: d.id, id: c.id, kind: p?.kind ?? (c.title || T.untitled), sub: p?.sub ?? "", type: c.type, preview: "" });
     }
-    if (!any && items.length) out.push({ date: d.date, day: d.id, id: d.id, kind: T.recordsDayMemo, sub: "", type: "day", preview: groupPreview(v, d.id) });
   }
-  return out.sort((a, b) => b.date.localeCompare(a.date) || a.kind.localeCompare(b.kind, "ja"));
+  return out;
 }
 
 /** 種類を木の順に(上位の無いもの → その下位 …)。複数の上位があるものは最初に出てきた所に置く */
@@ -94,10 +93,18 @@ function treeOrder(kinds: RecordKind[]): { k: RecordKind; depth: number }[] {
 export interface RecordsHost {
   vault: Vault;
   kinds: RecordKind[];
-  kind: string | null; // 絞り込み(null = すべて)
-  onKind(k: string | null): void;
+  /** マーカーの絞り込み(null = すべて) */
+  marker: string | null;
+  onMarker(m: string | null): void;
   open(e: RecordEntry): void;
-  writeToday(kind: string): void;
+  /** その日に新しい記録ノート(日付グループが無ければ作る) */
+  newNote(date: string, kind: string): void;
+  /** 日付グループの題(日付はそのまま)。無ければ作る */
+  renameDay(date: string, title: string): void;
+  /** 日付グループの @ マーカー。無ければ作る */
+  setMarkers(date: string, markers: string[]): void;
+  /** ボードの縮小(見るだけ)を el に出す。group = null なら消す */
+  preview(el: HTMLElement, group: string | null): void;
   saveKinds(kinds: RecordKind[]): void;
   close(): void;
 }
@@ -124,24 +131,28 @@ export class RecordsView {
   private day: HTMLElement;
   private month: string; // 2026-11
   private sel: string; // 2026-11-24
-  private adding = false;
   constructor(private host: RecordsHost) {
-    // 2026-11-24 利用者が見本 B を選んだ: 左に月のカレンダー(書いた物のある日に点)、右にその日の中身(タイトルだけ)
     const today = todayStr();
     this.sel = today;
     this.month = today.slice(0, 7);
     this.cal = h("div", { class: "rec-cal" });
     this.day = h("div", { class: "rec-dayview" });
-    this.el = h("section", { class: "records", tabindex: "-1" }, h("div", { class: "rec-box", role: "dialog", "aria-label": T.recordsTitle }, this.cal, this.day));
-    this.el.addEventListener("mousedown", (e) => e.target === this.el && host.close());
+    const close = h("button", { class: "rec-close", title: T.recordsClose + " (Esc・Ctrl+J)", "aria-label": T.recordsClose, text: "×" });
+    close.addEventListener("click", () => host.close());
+    this.el = h(
+      "section",
+      { class: "records", tabindex: "-1", role: "dialog", "aria-label": T.recordsTitle },
+      h("header", { class: "rec-top" }, h("span", { class: "rec-top-title", text: T.recordsTitle }), h("span", { class: "rec-gap" }), close),
+      h("div", { class: "rec-box" }, this.cal, this.day),
+    );
     this.el.addEventListener("keydown", (e) => this.onKey(e));
     this.render();
   }
 
   private onKey(e: KeyboardEvent): void {
-    if ((e.target as Element).closest?.("input")) return;
+    if ((e.target as Element).closest?.("input, textarea")) return;
     const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
-    if (step) {
+    if (step && !e.ctrlKey) {
       e.preventDefault();
       e.stopPropagation();
       const d = new Date(this.sel + "T00:00:00");
@@ -151,12 +162,15 @@ export class RecordsView {
       e.preventDefault();
       e.stopPropagation();
       const g = this.dayId(this.sel);
-      if (g) this.host.open({ date: this.sel, day: g, id: g, kind: "", sub: "", type: "day", preview: "" });
+      if (g) this.openDay(g);
     }
   }
 
   private dayId(date: string): string | null {
-    return dayGroups(this.host.vault).find((d) => d.date === date)?.id ?? null;
+    return findDayGroup(this.host.vault, date);
+  }
+  private openDay(g: string): void {
+    this.host.open({ date: this.sel, day: g, id: g, kind: "", sub: "", type: "day", preview: "" });
   }
 
   private pick(date: string): void {
@@ -168,10 +182,20 @@ export class RecordsView {
   render(): void {
     const v = this.host.vault;
     const today = todayStr();
-    const days = new Map<string, string>(); // 日付 → 日のグループ(中に何かある日だけ)
-    for (const d of dayGroups(v)) if (v.itemsOf(d.id).some((i) => v.exists(i.id))) days.set(d.date, d.id);
+    // 記録のある日: 中に何かある・題がある・マーカーがある日付グループ
+    const days = new Map<string, { id: string; markers: string[] }[]>();
+    const allMarkers = new Set<string>();
+    for (const d of dayGroups(v)) {
+      const n = v.get(d.id)!;
+      const markers = n.markers ?? [];
+      markers.forEach((m) => allMarkers.add(m));
+      if (!d.title && !markers.length && !v.itemsOf(d.id).some((i) => v.exists(i.id))) continue;
+      (days.get(d.date) ?? days.set(d.date, []).get(d.date)!).push({ id: d.id, markers });
+    }
+    const filter = this.host.marker && allMarkers.has(this.host.marker) ? this.host.marker : null;
+    const shown = (date: string) => !!days.get(date)?.some((d) => !filter || d.markers.includes(filter));
 
-    // ---- 左: 月のカレンダー
+    // ---- 左: 月のカレンダーとマーカー
     const [y, m] = this.month.split("-").map(Number);
     const first = new Date(y, m - 1, 1);
     const n = new Date(y, m, 0).getDate();
@@ -188,71 +212,138 @@ export class RecordsView {
     for (let i = 0; i < first.getDay(); i++) grid.append(h("span", { class: "rec-cell blank" }));
     for (let d = 1; d <= n; d++) {
       const date = `${this.month}-${String(d).padStart(2, "0")}`;
-      const has = days.has(date);
       const b = h(
         "button",
-        { class: "rec-cell" + (date === this.sel ? " sel" : "") + (date === today ? " today" : "") + (has ? " has" : ""), "data-date": date, "aria-label": date },
+        { class: "rec-cell" + (date === this.sel ? " sel" : "") + (date === today ? " today" : "") + (shown(date) ? " has" : ""), "data-date": date, "aria-label": date },
         h("span", { class: "rec-num", text: String(d) }),
         h("span", { class: "rec-mark" }),
       );
       b.addEventListener("click", () => this.pick(date));
       b.addEventListener("dblclick", () => {
-        const g = days.get(date);
-        if (g) this.host.open({ date, day: g, id: g, kind: "", sub: "", type: "day", preview: "" });
+        const g = this.dayId(date);
+        if (g) this.openDay(g);
       });
       grid.append(b);
     }
+    const mk = h("div", { class: "rec-markers" }, h("div", { class: "rec-h", text: T.recordsMarkers }));
+    const mrow = (label: string, val: string | null) => {
+      const b = h("button", { class: "rec-mk" + (filter === val ? " on" : ""), text: label, "data-marker": val ?? "" });
+      b.addEventListener("click", () => {
+        this.host.onMarker(val);
+        this.render();
+      });
+      return b;
+    };
+    mk.append(mrow(T.recordsAll, null));
+    for (const x of [...allMarkers].sort((a, b) => a.localeCompare(b, "ja"))) mk.append(mrow("@" + x, x));
+    if (!allMarkers.size) mk.append(h("div", { class: "rec-none small", text: T.recordsNoMarkers }));
     const kindsBtn = h("button", { class: "rec-kinds-btn", text: T.recordsKindsBtn });
     kindsBtn.addEventListener("click", () => this.kindsDialog());
     this.cal.replaceChildren(
-      h("div", { class: "rec-cal-head" }, prev, h("span", { class: "rec-month-name", text: `${y}年 ${m}月` }), next),
+      h("div", { class: "rec-cal-head" }, prev, h("span", { class: "rec-month-name", text: `${y}年${m}月` }), next),
       grid,
-      h("div", { class: "rec-cal-foot" }, h("span", { class: "rec-legend", text: T.recordsLegend }), h("span", { class: "rec-gap" }), kindsBtn),
+      h("div", { class: "rec-sep" }),
+      mk,
+      h("div", { class: "rec-cal-foot" }, h("span", { class: "rec-gap" }), kindsBtn),
     );
 
-    // ---- 右: 選んだ日の中身(タイトルだけ)
+    // ---- 右: 選んだ日
     const d = new Date(this.sel + "T00:00:00");
-    const close = h("button", { class: "rec-close", title: T.recordsClose + " (Esc)", "aria-label": T.recordsClose, text: "×" });
-    close.addEventListener("click", () => this.host.close());
-    const g = days.get(this.sel) ?? this.dayId(this.sel);
-    const head = h(
-      "div",
-      { class: "rec-day-title" },
-      h("span", { class: "rec-day-date", text: `${d.getMonth() + 1}月${d.getDate()}日` }),
-      h("span", { class: "rec-day-wd", text: WEEK[d.getDay()] + "曜日" }),
-      this.sel === today ? h("span", { class: "rec-today", text: T.recordsToday }) : null,
-      h("span", { class: "rec-gap" }),
-      close,
-    );
-    const parts: HTMLElement[] = [head];
-    if (g) {
-      const open = h("button", { class: "btn small rec-open-day", text: T.recordsOpenDay });
-      open.addEventListener("click", () => this.host.open({ date: this.sel, day: g, id: g, kind: "", sub: "", type: "day", preview: "" }));
-      parts.push(open);
+    const g = this.dayId(this.sel);
+    const gNode = g ? v.get(g) : undefined;
+    const info = g ? isDayGroup(v, g) : null;
+    const others = dayGroups(v).filter((x) => x.date === this.sel && x.id !== g);
+    const dateLine = h("div", { class: "rec-day-date", text: `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日(${WEEK[d.getDay()]})` + (this.sel === today ? " · " + T.recordsToday : "") });
+    // 題(グループの名前の日付より後ろ)。直すとグループの名前に入る(日付はそのまま)
+    const title = h("input", { class: "rec-day-name", type: "text", placeholder: T.recordsTitlePh, spellcheck: "false" }) as HTMLInputElement;
+    title.value = info?.title ?? "";
+    const saveTitle = () => {
+      if (title.value.trim() !== (info?.title ?? "")) this.host.renameDay(this.sel, title.value);
+    };
+    title.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === "Enter") title.blur();
+      if (e.key === "Escape") {
+        title.value = info?.title ?? "";
+        title.blur();
+      }
+    });
+    title.addEventListener("change", saveTitle);
+    const openBtn = h("button", { class: "btn rec-open-day", text: T.recordsOpenBoard, disabled: !g });
+    if (g) openBtn.addEventListener("click", () => this.openDay(g));
+    // マーカー
+    const markers = gNode?.markers ?? [];
+    const chips = h("div", { class: "rec-chips" });
+    for (const x of markers) {
+      const del = h("button", { class: "rec-chip-x", title: T.recordsMarkerRemove, "aria-label": T.recordsMarkerRemove, text: "×" });
+      del.addEventListener("click", () => {
+        this.host.setMarkers(this.sel, markers.filter((y) => y !== x));
+        this.render();
+      });
+      chips.append(h("span", { class: "rec-chip", "data-marker": x }, "@" + x, del));
     }
-    const entries = collectRecords(v).filter((e) => e.date === this.sel && e.type !== "day");
-    const memos = g ? v.itemsOf(g).filter((i) => !i.ref && v.get(i.id)?.type === "text").length : 0;
+    const add = h("button", { class: "rec-chip add", title: T.recordsMarkerAdd, "aria-label": T.recordsMarkerAdd, text: "＋ @" });
+    add.addEventListener("click", async () => {
+      const t = await askText(T.recordsMarkerAsk, "", [...allMarkers].filter((x) => !markers.includes(x)));
+      const name = (t ?? "").replace(/^@/, "").trim();
+      if (!name) return;
+      if (markers.includes(name)) return toast(T.recordsMarkerDup);
+      this.host.setMarkers(this.sel, [...markers, name]);
+      this.render();
+    });
+    chips.append(add);
+    // ボードの縮小(見るだけ。押すと開く)
+    const pv = h("div", { class: "rec-preview" + (g && v.itemsOf(g).length ? "" : " empty") });
+    if (g && v.itemsOf(g).length) {
+      pv.title = T.recordsOpenBoard;
+      pv.addEventListener("dblclick", () => this.openDay(g));
+      const hint = h("button", { class: "rec-preview-open", text: T.recordsOpenBoard });
+      hint.addEventListener("click", () => this.openDay(g));
+      pv.append(hint);
+    } else pv.append(h("div", { class: "rec-none", text: T.recordsNoBoard }));
+    // 記録ノート(全部。同じ種類・同じ名前でも別々に)
+    const entries = collectRecords(v).filter((e) => e.date === this.sel && (e.day === g || others.some((o) => o.id === e.day)));
     const list = h("div", { class: "rec-items" });
     for (const e of entries) {
-      const n = v.get(e.id);
-      const label = e.type === "group" ? n?.title || T.untitledGroup : e.sub ? `${e.kind} — ${e.sub}` : e.kind;
-      const row = h("button", { class: "rec-item" + (e.type === "group" ? " group" : ""), "data-id": e.id }, h("span", { class: "rec-ico" }), h("span", { class: "rec-item-t", text: label }));
+      const nn = v.get(e.id);
+      const label = e.type === "group" ? nn?.title || T.untitledGroup : e.sub ? `${e.kind} — ${e.sub}` : e.kind;
+      // 同じ名前でも分かるように、作った時刻を右に
+      const t = nn?.created ? new Date(nn.created) : null;
+      const time = t && !isNaN(+t) ? `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}` : "";
+      const row = h("button", { class: "rec-item" + (e.type === "group" ? " group" : ""), "data-id": e.id }, h("span", { class: "rec-ico" }), h("span", { class: "rec-item-t", text: label }), h("span", { class: "rec-gap" }), h("span", { class: "rec-time", text: time }));
       row.addEventListener("click", () => this.host.open(e));
       list.append(row);
     }
-    if (memos) list.append(h("div", { class: "rec-memos", text: T.recordsMemos(memos) }));
-    if (!entries.length && !memos) list.append(h("div", { class: "rec-none", text: T.recordsNothing }));
-    parts.push(list);
-    if (this.sel === today && this.host.kinds.length) {
-      const w = h("div", { class: "rec-write-row" });
-      for (const k of this.host.kinds) {
-        const b = h("button", { class: "rec-write", "data-kind": k.name, text: "＋ " + k.name });
-        b.addEventListener("click", () => this.host.writeToday(k.name));
-        w.append(b);
-      }
-      parts.push(w);
-    }
-    this.day.replaceChildren(...parts);
+    if (!entries.length) list.append(h("div", { class: "rec-none", text: T.recordsNoNotes }));
+    const newBtn = h("button", { class: "rec-new", text: T.recordsNewNote });
+    newBtn.addEventListener("click", async () => {
+      const kinds = this.host.kinds.map((k) => k.name);
+      const t = await askText(T.recordsNewNoteAsk, kinds[0] ?? "", kinds);
+      const kind = cleanKind(t ?? "");
+      if (!kind) return;
+      if (!this.host.kinds.some((k) => k.name === kind)) this.host.saveKinds([...this.host.kinds, { name: kind, parents: [] }]);
+      this.host.newNote(this.sel, kind);
+    });
+    const otherDays: HTMLElement | null = others.length
+      ? h("div", { class: "rec-others" }, h("span", { class: "rec-h", text: T.recordsOtherGroups }), ...others.map((o) => {
+          const b = h("button", { class: "rec-item group", text: v.get(o.id)?.title ?? o.date });
+          b.addEventListener("click", () => this.openDay(o.id));
+          return b;
+        }))
+      : null;
+    this.day.replaceChildren(
+      ...([
+        h("div", { class: "rec-day-head" }, h("div", { class: "rec-day-main" }, dateLine, title), openBtn),
+        chips,
+        h("div", { class: "rec-h", text: T.recordsBrainstorm }),
+        pv,
+        h("div", { class: "rec-h-row" }, h("span", { class: "rec-h", text: T.recordsNotes }), h("span", { class: "rec-gap" }), newBtn),
+        list,
+        otherDays,
+      ] as (HTMLElement | null)[]).filter((x): x is HTMLElement => !!x),
+    );
+    this.host.preview(pv, g && v.itemsOf(g).length ? g : null);
   }
 
   /** 種類の一覧(足す・押すと設定)。カレンダーの下の「種類…」から */

@@ -223,7 +223,15 @@ function createWindow(): void {
     title: "ThinkDraw",
     icon: path.join(__dirname, "../../assets/icon.png"),
     backgroundColor: "#1e1e1e",
+    show: false,
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: false },
+  });
+  // 起動したら最大化して出す(OS の全画面ではない。2026-11-24 統合仕様 15)。最大化を外す・大きさを変えるのはふつうに
+  const w0 = win;
+  w0.once("ready-to-show", () => {
+    w0.maximize();
+    w0.show();
+    (globalThis as { __thinkdrawMaximizeCalled?: boolean }).__thinkdrawMaximizeCalled = true; // 試験用(xvfb には窓の管理が無く、最大化そのものは確かめられない)
   });
   Menu.setApplicationMenu(null);
   win.loadFile(path.join(__dirname, "../renderer/index.html"));
