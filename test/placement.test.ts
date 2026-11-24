@@ -58,3 +58,13 @@ it("線分が長方形を通るか", () => {
   expect(segHitsRect(0, 0, 5, 5, r)).toBe(false);
   expect(segHitsRect(0, 40, 40, 0, r)).toBe(true);
 });
+
+describe("長い文字の親(2026-11-24)", () => {
+  it("親の箱の縁から近い所に置く(真ん中からの円で遠くならない)", () => {
+    const anchor = { x: 0, y: 0, w: 900, h: 26 };
+    for (let k = 0; k < 300; k++) {
+      const p = placeAround(anchor, [], { size: { w: 90, h: 26 } });
+      expect(gap({ x: p.x, y: p.y, w: 90, h: 26 }, anchor)).toBeLessThan(120);
+    }
+  });
+});

@@ -54,17 +54,20 @@ export function placeAround(anchor: Rect, obstacles: Rect[], o: PlaceOptions = {
   const cy = anchor.y + anchor.h / 2;
   const all = [anchor, ...obstacles];
   const N = 24;
-  const base = Math.max(anchor.w, anchor.h) / 2 + Math.max(size.w, size.h) / 2 + 50;
   let best: { x: number; y: number; c: number } | null = null;
   for (let ring = 0; ring < 8; ring++) {
-    const r = base + ring * 55;
+    // 親の箱の「縁」からの距離で輪を作る(2026-11-24: 長い文字の親だと、真ん中からの円では線が無駄に長くなった)
+    const d = 50 + ring * 55;
+    const ex = anchor.w / 2 + d * 1.2 + size.w / 2; // 横は少し広め
+    const ey = anchor.h / 2 + d * 0.8 + size.h / 2; // 上下も最初の輪で十分空くように(0.7 だと長い親で輪を飛ばした)
     const rot = rand() * ((Math.PI * 2) / N);
     const cands: { x: number; y: number; c: number }[] = [];
     for (let i = 0; i < N; i++) {
       const a = rot + (i * Math.PI * 2) / N;
-      // 横に長い文字が多いので、輪は少し横長に
-      const px = cx + Math.cos(a) * r * 1.35 - size.w / 2;
-      const py = cy + Math.sin(a) * r * 0.85 - size.h / 2;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const t = Math.min(Math.abs(ca) > 1e-6 ? ex / Math.abs(ca) : Infinity, Math.abs(sa) > 1e-6 ? ey / Math.abs(sa) : Infinity);
+      const px = cx + ca * t - size.w / 2;
+      const py = cy + sa * t - size.h / 2;
       const me = { x: px, y: py, w: size.w, h: size.h };
       let c = Math.min(...all.map((b) => gap(me, b)));
       // 親からの線が、ほかの文字の上を通る所は選ばない

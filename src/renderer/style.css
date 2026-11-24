@@ -296,7 +296,6 @@ input, textarea { font: inherit; color: inherit; }
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
 }
 .popup.expanded { left: 0; top: 0; transform: none; width: 100%; height: 100%; max-height: none; border-radius: 0; border: 0; }
-.popup.expanded .pop-body { padding: 24px max(24px, calc((100% - 760px) / 2)); }
 .pop-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px 6px 14px; border-bottom: 1px solid var(--line); }
 .pop-title { flex: 1; font-size: 17px; font-weight: 600; border: 0; background: none; outline: none; min-width: 0; user-select: text; }
 .pop-title.static { user-select: text; }
@@ -307,6 +306,9 @@ input, textarea { font: inherit; color: inherit; }
 .tb-ico { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .tb:hover { background: var(--accent-soft); color: var(--fg); }
 .popup.expanded .pop-body { flex: 1; overflow: auto; padding: 12px 16px; min-height: 160px; user-select: text; position: relative; }
+/* 大画面のノートは、Obsidian のように本文を真ん中の読みやすい幅(約 720px)に(2026-11-24 利用者「左右に広がりすぎ」)。
+   前にも同じ指定があったが、この上の行に上書きされて効いていなかった */
+.popup.expanded .pop-body { padding: 32px max(24px, calc((100% - 720px) / 2)) 120px; }
 .ProseMirror { outline: none; min-height: 120px; white-space: pre-wrap; word-wrap: break-word; line-height: 1.7; }
 .ProseMirror p { margin: 0 0 0.6em; }
 .ProseMirror h1, .ProseMirror h2, .ProseMirror h3 { margin: 0.8em 0 0.4em; line-height: 1.3; }
@@ -743,3 +745,20 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .rec-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .rec-add-input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 13px; outline: none; }
 .rec-add-input:focus { border-color: var(--accent); }
+
+/* タブ(2026-11-24)。1 枚だけのときは出さない */
+.tabbar { flex: none; display: flex; align-items: flex-end; gap: 2px; padding: 4px 8px 0; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.tabbar.hidden { display: none; }
+.tab { display: flex; align-items: center; gap: 4px; max-width: 220px; min-width: 90px; height: 30px; padding: 0 6px 0 12px; border-radius: 8px 8px 0 0; color: var(--muted); cursor: pointer; font-size: 13px; user-select: none; border: 1px solid transparent; border-bottom: none; margin-bottom: -1px; }
+.tab:hover { background: var(--accent-soft); color: var(--fg); }
+.tab.active { background: var(--canvas); color: var(--fg); border-color: var(--line); }
+.tab-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-x { border: 0; background: none; color: var(--muted); width: 20px; height: 20px; border-radius: 4px; font-size: 14px; line-height: 1; cursor: pointer; opacity: 0; flex: none; }
+.tab:hover .tab-x, .tab.active .tab-x { opacity: 1; }
+.tab-x:hover { background: var(--line); color: var(--fg); }
+.tab-new { border: 0; background: none; color: var(--muted); width: 28px; height: 28px; border-radius: 6px; cursor: pointer; flex: none; align-self: center; }
+.tab-new:hover { background: var(--accent-soft); color: var(--fg); }
+/* 大画面のノート: 題と下の欄も本文と同じ列に(2026-11-24) */
+.popup.expanded .pop-head { padding-left: max(14px, calc((100% - 720px) / 2)); }
+.popup.expanded .pop-title { font-size: 22px; }
+.popup.expanded .pop-foot { padding-left: max(14px, calc((100% - 720px) / 2)); padding-right: max(14px, calc((100% - 720px) / 2)); }

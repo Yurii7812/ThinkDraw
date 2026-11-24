@@ -29,6 +29,14 @@ interface AppState {
   splitRatio?: number; // 画面を分けたときの左の幅の割合
   surround?: boolean; // 左の画面で「まわり」を出しているか
   islandScope?: number | null; // 島の範囲(0・1・2・全部 = null)
+  tabs?: TabState[]; // タブ(2026-11-24)。1 つのときも覚える
+  activeTab?: number;
+}
+/** タブ 1 枚: 開いているグループと、そのタブの戻る・進む */
+interface TabState {
+  group: string;
+  back: string[];
+  fwd: string[];
 }
 interface Config {
   theme?: Theme;
@@ -86,6 +94,9 @@ class App {
   config: Config = {};
   draw: DrawConfig = { ...DEFAULT_CONFIG };
   dir = "";
+  private tabs: TabState[] = [];
+  private activeTab = 0;
+  private tabBar!: HTMLElement;
   private backStack: string[] = [];
   private fwdStack: string[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -168,7 +179,13 @@ class App {
     });
     api().onFlush(() => this.flushAll());
     await api().watch();
-    const g = this.vault.get(this.state.lastGroup)?.type === "group" ? this.state.lastGroup : ROOT_ID;
+    const isGroup = (id: string) => this.vault.get(id)?.type === "group";
+    this.tabs = (this.state.tabs ?? []).filter((t) => t && isGroup(t.group)).map((t) => ({ group: t.group, back: (t.back ?? []).filter(isGroup), fwd: (t.fwd ?? []).filter(isGroup) }));
+    if (!this.tabs.length) this.tabs = [{ group: isGroup(this.state.lastGroup) ? this.state.lastGroup : ROOT_ID, back: [], fwd: [] }];
+    this.activeTab = Math.min(Math.max(0, this.state.activeTab ?? 0), this.tabs.length - 1);
+    this.backStack = [...this.tabs[this.activeTab].back];
+    this.fwdStack = [...this.tabs[this.activeTab].fwd];
+    const g = this.tabs[this.activeTab].group;
     this.canvas.show(g, this.state.views[g] ?? null);
     if (this.state.surround) this.toggleSurround(true);
     const pg = this.state.peekGroup;
@@ -231,7 +248,6 @@ class App {
         btn("paper-btn", PT.btnTip, () => this.togglePaper(), PT.title, "paper"),
         attachBtn,
         this.btnPen,
-        btn("beside", T.besideTip, () => this.toggleBeside(), T.besideBtn, "beside"),
         btn("surround-btn", T.surroundTip, () => this.toggleSurround(), T.surroundBtn, "surround"),
         btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn, "whole"),
         btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn, "export"),
@@ -253,7 +269,9 @@ class App {
     leftUp.addEventListener("click", () => this.goUp());
     this.leftPane = h("div", { class: "pane left-pane" }, h("div", { class: "pane-head" }, leftUp, this.leftTitle));
     this.main.append(this.leftPane);
-    document.body.replaceChildren(bar, this.main);
+    // タブ(2026-11-24)。1 枚だけのときは出さない
+    this.tabBar = h("nav", { class: "tabbar hidden", "aria-label": T.tabsLabel });
+    document.body.replaceChildren(bar, this.tabBar, this.main);
     this.canvas = new Canvas(
       {
         vault: this.vault,
@@ -274,7 +292,8 @@ class App {
         dragOutside: (ids, cx, cy) => this.dragOver(this.peek, cx, cy, ids),
         quoteToOther: (ids) => this.peek && this.quoteAcross(this.canvas, this.peek, ids),
         hasOther: () => !!this.peek,
-        openBeside: (id) => this.openBeside(id),
+        openBeside: (id) => this.openInTab(id),
+        openTabBehind: (id) => this.openInTab(id, false),
         extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
         groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openGroup(g)),
         openFile: (rel) => void api().openAsset(rel),
@@ -400,7 +419,101 @@ class App {
     document.title = `${this.titleEl.textContent} — ${T.appName}`;
     this.upBtn.disabled = this.canvas.group === ROOT_ID;
     this.leftTitle.textContent = this.titleEl.textContent + " ▾";
+    this.syncTab();
     this.renderSideSoon();
+  }
+
+  // ---------- タブ(2026-11-24 利用者) ----------
+  /** 今のタブに、今のグループと戻る・進むを書き戻し、タブの列を描き直す */
+  private syncTab(): void {
+    if (!this.tabs.length) return;
+    this.tabs[this.activeTab] = { group: this.canvas.group, back: [...this.backStack], fwd: [...this.fwdStack] };
+    this.state.tabs = this.tabs;
+    this.state.activeTab = this.activeTab;
+    this.saveState();
+    this.renderTabs();
+  }
+  private loadTab(i: number): void {
+    this.activeTab = i;
+    const t = this.tabs[i];
+    this.backStack = [...t.back];
+    this.fwdStack = [...t.fwd];
+    this.closePopup();
+    if (this.records) this.closeRecords();
+    this.showGroup(this.vault.get(t.group)?.type === "group" ? t.group : ROOT_ID, "in");
+  }
+  switchTab(i: number): void {
+    if (i === this.activeTab || i < 0 || i >= this.tabs.length) return;
+    this.syncTab();
+    this.loadTab(i);
+  }
+  /** 新しいタブでグループを開く。activate = false なら後ろで開く(中ボタン) */
+  newTab(group: string = this.canvas.group, activate = true, focusNode?: string): void {
+    if (this.vault.get(group)?.type !== "group") return;
+    this.syncTab();
+    this.tabs.splice(this.activeTab + 1, 0, { group, back: [], fwd: [] });
+    if (activate) {
+      this.loadTab(this.activeTab + 1);
+      if (focusNode) {
+        this.canvas.centerOn(focusNode);
+        this.canvas.setSelection([focusNode]);
+      }
+    } else {
+      this.syncTab();
+      toast(T.tabOpenedBehind(this.groupName(group)));
+    }
+  }
+  closeTab(i: number = this.activeTab): void {
+    if (this.tabs.length <= 1) return;
+    this.syncTab();
+    this.tabs.splice(i, 1);
+    if (i === this.activeTab) this.loadTab(Math.min(i, this.tabs.length - 1));
+    else {
+      if (i < this.activeTab) this.activeTab--;
+      this.syncTab();
+    }
+  }
+  /** このタブ以外を全部閉じる / このタブより右を閉じる */
+  closeTabs(keep: number, which: "others" | "right"): void {
+    this.syncTab();
+    const cur = this.tabs[this.activeTab];
+    this.tabs = which === "others" ? [this.tabs[keep]] : this.tabs.slice(0, keep + 1);
+    const at = this.tabs.indexOf(cur);
+    if (at >= 0) {
+      this.activeTab = at;
+      this.syncTab();
+    } else this.loadTab(which === "others" ? 0 : keep);
+  }
+  private renderTabs(): void {
+    if (!this.tabBar) return;
+    this.tabBar.classList.toggle("hidden", this.tabs.length < 2);
+    if (this.tabs.length < 2) return void this.tabBar.replaceChildren();
+    const els = this.tabs.map((t, i) => {
+      const x = h("button", { class: "tab-x", title: T.tabClose + " (Ctrl+W)", "aria-label": T.tabClose, text: "×" });
+      const el = h("div", { class: "tab" + (i === this.activeTab ? " active" : ""), role: "tab", "aria-selected": String(i === this.activeTab), title: this.groupName(t.group) }, h("span", { class: "tab-t", text: this.groupName(t.group) }), x);
+      el.addEventListener("mousedown", (e) => {
+        if (e.button === 1) e.preventDefault(); // 中ボタンのスクロールを出さない
+      });
+      el.addEventListener("click", (e) => {
+        if (e.target === x) return this.closeTab(i);
+        this.switchTab(i);
+      });
+      el.addEventListener("auxclick", (e) => e.button === 1 && this.closeTab(i));
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        showMenu(e.clientX, e.clientY, [
+          { label: T.tabClose, hint: "Ctrl+W", action: () => this.closeTab(i) },
+          { label: T.tabCloseOthers, action: () => this.closeTabs(i, "others") },
+          { label: T.tabCloseRight, disabled: i === this.tabs.length - 1, action: () => this.closeTabs(i, "right") },
+          { separator: true, label: "" },
+          { label: T.tabDuplicate, hint: "Ctrl+T", action: () => this.newTab(t.group) },
+        ]);
+      });
+      return el;
+    });
+    const plus = h("button", { class: "tab-new", title: T.tabNew + " (Ctrl+T)", "aria-label": T.tabNew, text: "＋" });
+    plus.addEventListener("click", () => this.newTab());
+    this.tabBar.replaceChildren(...els, plus);
   }
   /** 題の横の▾: 所属先とホームへ移る */
   goUp(): void {
@@ -718,6 +831,10 @@ class App {
       g = parents.includes(ROOT_ID) ? ROOT_ID : parents.sort()[0] ?? ROOT_ID;
     }
     this.openGroup(g, id);
+    if (home) {
+      this.canvas.renderNow();
+      this.canvas.setSelection([id]); // 引用元へ飛んだときは、そのノードを選んでおく
+    }
     if (openBody) this.openBody(id);
   }
 
@@ -754,6 +871,12 @@ class App {
     const r = await openPicker(this.vault, { title: T.searchTitle, mode: "search" });
     if (!r || !("id" in r)) return;
     const n = this.vault.get(r.id);
+    if (r.newTab) {
+      // Ctrl+Enter・Ctrl+クリック: 新しいタブで開く(グループはその中、ほかはそれのあるグループ)
+      if (n?.type === "group") return this.newTab(r.id);
+      const ps = this.vault.parentsOf(r.id);
+      return this.newTab(ps.includes(ROOT_ID) ? ROOT_ID : ps.sort()[0] ?? ROOT_ID, true, r.id);
+    }
     if (n?.type === "group") this.openGroup(r.id);
     else this.goToNode(r.id, false);
   }
@@ -851,7 +974,7 @@ class App {
           dragOutside: (ids, cx, cy) => this.dragOver(this.canvas, cx, cy, ids),
           quoteToOther: (ids) => this.quoteAcross(this.peek!, this.canvas, ids),
           hasOther: () => true,
-          openBeside: (id) => this.openBeside(id),
+          openBeside: (id) => this.openInTab(id),
           extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
           groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openPeek(g)),
           openFile: (rel) => void api().openAsset(rel),
@@ -1027,6 +1150,15 @@ class App {
   toggleBeside(): void {
     if (this.peek) this.closePeek();
     else void this.pickBeside();
+  }
+  /** 新しいタブで開く: グループならその中を、ほかはそれのある所(所属先、なければ引用している所)を開いて選ぶ */
+  openInTab(id: string, activate = true): void {
+    const n = this.vault.get(id);
+    if (!n) return;
+    if (n.type === "group") return this.newTab(id, activate);
+    const ps = this.vault.parentsOf(id);
+    const g = ps.includes(ROOT_ID) ? ROOT_ID : ps.sort()[0] ?? this.vault.quotedBy(id)[0];
+    if (g) this.newTab(g, activate, activate ? id : undefined);
   }
   /** 横に開く: グループならその中を、ほかは所属先(なければ引用している所)を開いて、そのノードを見せる */
   openBeside(id: string): void {
@@ -1245,6 +1377,25 @@ class App {
       if (e.ctrlKey && k === "k") {
         e.preventDefault();
         this.search();
+        return;
+      }
+      // タブ: Ctrl+T 新しいタブ(今のグループ)・Ctrl+W 閉じる・Ctrl+Tab / Ctrl+PageDown 次・Ctrl+Shift+Tab / Ctrl+PageUp 前
+      if (e.ctrlKey && !e.shiftKey && k === "t") {
+        e.preventDefault();
+        this.newTab();
+        return;
+      }
+      if (e.ctrlKey && !e.shiftKey && k === "w") {
+        e.preventDefault();
+        this.closeTab();
+        return;
+      }
+      if (e.ctrlKey && (e.key === "Tab" || e.key === "PageDown" || e.key === "PageUp")) {
+        e.preventDefault();
+        if (this.tabs.length > 1) {
+          const d = e.key === "PageUp" || (e.key === "Tab" && e.shiftKey) ? -1 : 1;
+          this.switchTab((this.activeTab + d + this.tabs.length) % this.tabs.length);
+        }
         return;
       }
       if (e.ctrlKey && (e.key === "[" || e.code === "BracketLeft")) {

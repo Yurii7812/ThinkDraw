@@ -54,7 +54,10 @@ export interface CanvasHost {
   /** 空きの右クリックに足す項目(日のグループでの記録の作成など)。x, y は置く位置 */
   extraEmptyMenu?(group: string, x: number, y: number): MenuItem[];
   /** 横の画面に開く(グループはその中、ほかは所属先で、そのノードを見せる) */
+  /** 新しいタブで開く(2026-11-24。前は「横に開く」) */
   openBeside?(id: string): void;
+  /** 中ボタン: 後ろのタブで開く */
+  openTabBehind?(id: string): void;
 }
 
 interface Draft {
@@ -820,6 +823,14 @@ export class Canvas {
     el.addEventListener("pointerdown", (e) => this.onDown(e));
     addEventListener("pointermove", (e) => this.onMove(e));
     addEventListener("pointerup", (e) => this.onUp(e));
+    el.addEventListener("auxclick", (e) => {
+      if (e.button !== 1) return;
+      const id = this.nodeAt(e.target);
+      if (id && this.v.get(id)?.type === "group" && this.host.openTabBehind) {
+        e.preventDefault();
+        this.host.openTabBehind(id);
+      }
+    });
     el.addEventListener("dblclick", (e) => {
       if (this.pen.on) return;
       // ほかの島: その島のグループを開いて編集できるように
@@ -1205,6 +1216,11 @@ export class Canvas {
       this.setSelection([id]);
       return this.host.groupTree?.(id, target.closest("[data-act=tree]")!);
     }
+    // 引用は読むだけ(2026-11-24 利用者): 1 回クリックは選ぶだけ。ダブルクリック・Enter で引用元へ
+    if (this.v.isRefIn(this.group, id)) {
+      this.setSelection([id]);
+      return;
+    }
     if (target.closest("[data-act=body]")) {
       this.setSelection([id]);
       return this.host.openBody(id);
@@ -1225,6 +1241,7 @@ export class Canvas {
   open(id: string, _target?: Element): void {
     const n = this.v.get(id);
     if (!n) return;
+    if (this.v.isRefIn(this.group, id)) return this.host.goToNode(id); // 引用は引用元へ(中身はここでは直さない)
     if (n.type === "group") return this.host.openGroup(id);
     if (n.type === "frame") return void this.renameFrame(id);
     if (n.type === "text" && n.paper) return this.host.openPaper?.(n.paper);
@@ -1591,7 +1608,8 @@ export class Canvas {
     const many = ids.length > 1;
     // よく使う操作(横に並べる)
     const bar: NonNullable<MenuItem["bar"]> = [];
-    if (!many) {
+    if (!many && isRef) bar.push({ icon: "open", label: T.mOrigin, title: T.goOrigin + " (ダブルクリック)", action: () => this.host.goToNode(id) });
+    else if (!many) {
       if (n.type === "group") bar.push({ icon: "open", label: T.mOpen, title: T.openGroup, action: () => this.host.openGroup(id) });
       else if (n.type === "text" && n.paper) bar.push({ icon: "open", label: T.mOpen, title: PT.title, action: () => this.host.openPaper?.(n.paper!) });
       else if (n.type === "text" && n.file) bar.push({ icon: "open", label: T.mOpen, title: T.openFile, action: () => this.host.openFile?.(n.file!) });
@@ -1602,7 +1620,7 @@ export class Canvas {
     bar.push({ icon: "link", label: T.linkShort, title: T.linkSearch + " (Ctrl+L)", action: () => this.linkBySearch() });
     bar.push({ icon: "bundle", label: T.bundleShort, title: T.bundle + " (Ctrl+G)", action: () => this.bundleSelection() });
     bar.push({ icon: "frame", label: T.frameShort, title: T.frameTip, action: () => this.frameSelection() });
-    if (this.host.openBeside && !many) bar.push({ icon: "beside", label: T.mBeside, title: T.openBeside, action: () => this.host.openBeside!(id) });
+    if (this.host.openBeside && !many) bar.push({ icon: "tab", label: T.mBeside, title: T.openBeside, action: () => this.host.openBeside!(id) });
     bar.push({ icon: "trash", label: T.deleteShort, title: (allRefs ? T.deleteRef : T.delete) + " (Delete)", danger: true, action: () => this.deleteItems(ids, true) });
 
     const items: MenuItem[] = [{ label: "", bar }];
@@ -1612,10 +1630,10 @@ export class Canvas {
     if (ids.every((i) => this.v.get(i)?.type === "text" && !this.v.get(i)?.file && !this.v.get(i)?.paper)) items.push(this.fillItem(ids));
     // このノードだけのこと
     const own: MenuItem[] = [];
-    if (!many && n.type === "group") own.push({ label: T.rename, key: "r", action: () => this.renameGroup(id) }, { label: T.unbundle, action: () => this.v.unbundle(id) });
-    if (!many && n.type === "frame") own.push({ label: T.rename, key: "r", action: () => void this.renameFrame(id) });
-    if (!many && n.type === "text" && n.file) own.push({ label: T.rename, key: "r", action: () => this.editText(id) });
-    if (!many && n.type === "note")
+    if (!many && !isRef && n.type === "group") own.push({ label: T.rename, key: "r", action: () => this.renameGroup(id) }, { label: T.unbundle, action: () => this.v.unbundle(id) });
+    if (!many && !isRef && n.type === "frame") own.push({ label: T.rename, key: "r", action: () => void this.renameFrame(id) });
+    if (!many && !isRef && n.type === "text" && n.file) own.push({ label: T.rename, key: "r", action: () => this.editText(id) });
+    if (!many && !isRef && n.type === "note")
       own.push({
         label: T.rename,
         key: "r",
@@ -1624,11 +1642,10 @@ export class Canvas {
           if (t !== null) this.v.update(id, { title: t.trim() });
         },
       });
-    if (!many && n.type === "card" && n.card?.deck === "tarot") own.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
+    if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") own.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
     if (own.length) items.push({ separator: true, label: "" }, ...own);
     // グループ(入れる・引用する・外す)
     items.push({ label: T.mGroupHead, heading: true });
-    if (isRef && !many) items.push({ label: T.goOrigin, action: () => this.host.goToNode(id) });
     items.push(...this.groupMenuItems(ids));
     if (allRefs) items.push({ label: T.removeRef, action: () => this.v.tx(() => ids.forEach((i) => this.v.removeFromGroup(this.group, i))) });
     else

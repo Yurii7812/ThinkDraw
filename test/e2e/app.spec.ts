@@ -240,7 +240,7 @@ test("引用: Ctrl+L でほかのグループの物を引用して線でつな�
   expect(mdFiles()["root.md"]).toContain(`refs:\n  - { id: ${idOf("遠い話")}`);
   // 右クリックの「元の場所へ」で、元のグループへ
   await page.locator(".node.ref").click({ button: "right" });
-  await page.locator(".ctxmenu .item", { hasText: "所属しているグループへ" }).click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "引用元へ" }).click();
   await expect(page.locator(".group-title")).toHaveText("別の箱");
   await page.locator(".tbtn.group-up").click();
   await expect(page.locator(".group-title")).toHaveText("ホーム");
@@ -725,10 +725,10 @@ test("分割: 右クリックの「反対側の画面に引用する」", async 
   await expect(page.locator(".left-pane .node.ref", { hasText: "向こうの物" })).toHaveCount(1);
 });
 
-test("右クリック: 一番上に絵付きのボタン(書き直す・つなぐ・束ねる・囲む・横に開く・消す)、その下に色、グループの操作は見出しの下", async () => {
+test("右クリック: 一番上に絵付きのボタン(書き直す・つなぐ・束ねる・囲む・タブで開く・消す)、その下に色、グループの操作は見出しの下", async () => {
   await write(300, 200, "ひとつ");
   await page.locator(".node", { hasText: "ひとつ" }).click({ button: "right" });
-  await expect(page.locator(".ctxmenu .menubar .mb-btn")).toHaveCount(6); // 書き直す・つなぐ・束ねる・囲む・横に開く・消す
+  await expect(page.locator(".ctxmenu .menubar .mb-btn")).toHaveCount(6); // 書き直す・つなぐ・束ねる・囲む・タブで開く・消す
   await expect(page.locator(".ctxmenu .menuhead", { hasText: "グループ" })).toBeVisible();
   await shot("16-menu");
   await page.locator(".ctxmenu .swatches").first().locator(".sw.c1").click();
@@ -837,4 +837,80 @@ test("2026-11-24: 枠で囲む・枠から線・枠を動かすと中も動く�
   await settle();
   expect(Object.values(mdFiles()).some((s) => /label: "?なぜ"?/.test(s))).toBe(true);
   await shot("24-frame");
+});
+
+test("2026-11-24: タブ。1 枚のときは出さない・Ctrl+T・切り替え・ほかを全部閉じる・検索から Ctrl+Enter・中ボタン", async () => {
+  await expect(page.locator(".tabbar")).toBeHidden();
+  await expect(page.locator(".tbtn.beside")).toHaveCount(0); // 左右に分けるボタンはなくした
+  await write(300, 200, "中身");
+  await page.locator(".node", { hasText: "中身" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("箱A");
+  await page.keyboard.press("Escape");
+  await settle();
+  // 検索して Ctrl+Enter で新しいタブ
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("箱A");
+  await page.keyboard.press("Control+Enter");
+  await expect(page.locator(".tabbar .tab")).toHaveCount(2);
+  await expect(page.locator(".tab.active")).toContainText("箱A");
+  await expect(page.locator(".group-title")).toHaveText("箱A");
+  // Ctrl+Tab で前のタブ(ホーム)へ
+  await page.keyboard.press("Control+Tab");
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+  // グループを中ボタンで: 後ろのタブに開く(今の画面はそのまま)
+  await page.locator(".node.t-group", { hasText: "箱A" }).click({ button: "middle" });
+  await expect(page.locator(".tabbar .tab")).toHaveCount(3);
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+  // Ctrl+T で今のグループのタブ
+  await page.keyboard.press("Control+t");
+  await expect(page.locator(".tabbar .tab")).toHaveCount(4);
+  await page.waitForTimeout(600);
+  await shot("25-tabs");
+  // 右クリック → ほかのタブを全部閉じる
+  await page.locator(".tab.active").click({ button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "ほかのタブを全部閉じる" }).click();
+  await expect(page.locator(".tabbar")).toBeHidden();
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+  // 開き直しても覚えている
+  await page.keyboard.press("Control+t");
+  await page.locator(".node.t-group", { hasText: "箱A" }).click();
+  await expect(page.locator(".tab.active")).toContainText("箱A");
+  await page.keyboard.press("Control+w");
+  await expect(page.locator(".tabbar")).toBeHidden();
+  await expect(page.locator(".group-title")).toHaveText("ホーム");
+});
+
+test("2026-11-24: 大画面のノートは本文が真ん中の幅", async () => {
+  await page.mouse.click(400, 300, { button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "ノート" }).first().click();
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  const pm = (await page.locator(".popup.expanded .ProseMirror").boundingBox())!;
+  expect(pm.width).toBeLessThanOrEqual(722);
+  expect(Math.abs(pm.x + pm.width / 2 - 640)).toBeLessThan(30);
+  await page.keyboard.type("真ん中に書く");
+  await shot("26-note-center");
+});
+
+test("2026-11-24: 引用は読むだけ。1 回クリックで選ぶだけ・ダブルクリックで引用元へ", async () => {
+  await write(300, 200, "元の文");
+  await page.locator(".node", { hasText: "元の文" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("元の箱");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.mouse.click(300, 500); // 空きを押して何もしない
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+l");
+  await page.keyboard.type("元の文");
+  await page.locator(".picker-row", { hasText: "元の文" }).last().click();
+  const ref = page.locator(".node.ref", { hasText: "元の文" });
+  await expect(ref).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await ref.click();
+  await expect(page.locator("textarea.draft")).toHaveCount(0); // 書き直しにならない
+  await expect(page.locator(".node.ref.selected")).toHaveCount(1);
+  await ref.dblclick();
+  await expect(page.locator(".group-title")).toHaveText("元の箱");
+  await expect(page.locator(".node.selected", { hasText: "元の文" })).toHaveCount(1);
 });

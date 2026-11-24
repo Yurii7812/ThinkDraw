@@ -5,7 +5,7 @@ import { T } from "./strings";
 import { h } from "./ui";
 import { searchTiered } from "../core/search";
 
-export type PickResult = { id: string } | { url: string } | null;
+export type PickResult = { id: string; newTab?: boolean } | { url: string } | null;
 
 interface Opts {
   title: string;
@@ -102,7 +102,7 @@ export function openPicker(v: Vault, o: Opts): Promise<PickResult> {
             mark();
           }
         });
-        r.el.addEventListener("click", () => done(r.res));
+        r.el.addEventListener("click", (e) => done(e.ctrlKey && r.res && "id" in r.res ? { ...r.res, newTab: true } : r.res));
         list.append(r.el);
       });
       if (!rows.length && q) list.append(h("div", { class: "picker-empty", text: T.noResults }));
@@ -126,7 +126,9 @@ export function openPicker(v: Vault, o: Opts): Promise<PickResult> {
         e.preventDefault();
       } else if (e.key === "Enter") {
         e.preventDefault();
-        if (rows[sel]) done(rows[sel].res);
+        const res = rows[sel]?.res;
+        // Ctrl+Enter: 新しいタブで(検索の窓だけ)
+        if (res) done(e.ctrlKey && o.mode === "search" && "id" in res ? { ...res, newTab: true } : res);
       } else if (e.key === "Escape") {
         e.preventDefault();
         done(null);

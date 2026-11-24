@@ -74,6 +74,7 @@ export const MENU_ICONS: Record<string, string> = {
   color: '<circle cx="12" cy="12" r="8"/><circle cx="9" cy="10" r="1.2"/><circle cx="14" cy="9" r="1.2"/><circle cx="16" cy="13" r="1.2"/>',
   trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>',
   frame: '<rect x="3" y="4" width="18" height="16" rx="3" stroke-dasharray="3 2"/><path d="M8 10h8M8 14h5"/>',
+  tab: '<path d="M3 19V7h7l2 3h9v9z"/><path d="M14 14h4M16 12v4"/>',
   beside: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/>',
 };
 
