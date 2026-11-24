@@ -181,9 +181,18 @@ test("易と発想カード", async () => {
   await page.locator(".node.deck-iching").first().click();
   await expect(page.locator(".side-panel")).toContainText("易の読み方");
   await page.locator(".draw-caret").click();
-  await page.locator(".dm-tabs button", { hasText: "発想カード" }).click();
-  await page.locator(".dm-tile", { hasText: "SCAMPER" }).click();
+  await page.locator(".dm-tabs button", { hasText: "発想" }).click();
+  await expect(page.locator(".drawmenu.narrow")).toBeVisible(); // 発想は細いメニュー(1 行ずつ)
+  await page.locator(".dm-row", { hasText: "SCAMPER" }).click();
   await expect(page.locator(".node.deck-prompt")).toHaveCount(7);
+  // 札(文字と同じ大きさ)。選ぶと下に問いが出て、右の欄は開かない
+  const chip = page.locator(".node.pchip", { hasText: "置き換える" });
+  expect((await chip.boundingBox())!.height).toBeLessThan(40);
+  await page.keyboard.press("Escape");
+  await chip.click();
+  await expect(chip.locator(".pchip-q")).toBeVisible();
+  await expect(chip.locator(".pchip-q")).toContainText("別のものに替えたら");
+  await expect(page.locator(".main.side-open")).toHaveCount(0);
   await shot("06-iching-prompt");
   // 「引く」ボタンは最後の引き方をもう一度
   await page.locator(".tbtn.draw").click();

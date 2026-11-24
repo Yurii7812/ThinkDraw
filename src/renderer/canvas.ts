@@ -4,6 +4,7 @@ import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
 import { LINK_KINDS, ROOT_ID, type LinkKind, type Stroke, type TDNode } from "../core/types";
 import { cardName, spreadDef } from "../decks";
+import { PROMPT_BY_ID } from "../decks/prompts";
 import { cardFace, faceHeight } from "./cardface";
 import { openPicker } from "./picker";
 import { PT, T } from "./strings";
@@ -547,6 +548,12 @@ export class Canvas {
       for (const side of ["t", "r", "b", "l"]) el.append(h("div", { class: `frame-edge e-${side}` }));
       el.append(h("div", { class: "frame-name" + (n.title ? "" : " empty"), text: n.title || T.frameName }));
       el.append(h("div", { class: "frame-resize", "data-act": "resize", title: T.frameResize }));
+    } else if (n.type === "card" && n.card?.deck === "prompt") {
+      // 発想カードは文字と同じ大きさの札(2026-11-24 利用者が見本 A を選んだ)。選ぶと下に問いが出る
+      const p = PROMPT_BY_ID[n.card.id];
+      el.classList.add("pchip", "deck-prompt", "pc" + (p?.color ?? 0));
+      el.append(h("span", { class: "pchip-dot" }), h("span", { class: "label", text: p?.name ?? n.title }));
+      if (p) el.append(h("div", { class: "pchip-q" }, h("div", { class: "pchip-set", text: p.setName }), p.question));
     } else if (n.type === "card" && n.card) {
       el.style.width = CARD_W + "px";
       el.classList.add("deck-" + n.card.deck);

@@ -94,15 +94,17 @@ export function runDraw(t: DrawTarget, cfg: DrawConfig, kind: DrawKind, question
     } else if (kind.k === "prompt") {
       const sets = kind.mode === "one" ? cfg.promptSets : PROMPT_SETS.map((s) => s.id);
       const p = drawPrompt(sets, rand);
-      const pos = t.anchor ? t.spotNear(t.anchor) : { x: Math.round(t.center.x - CARD_W / 2), y: Math.round(t.center.y - 60) };
+      const pos = t.anchor ? t.spotNear(t.anchor) : { x: Math.round(t.center.x - 50), y: Math.round(t.center.y - 14) };
       const n = v.create({ type: "card", title: p.name, group: t.group, x: pos.x, y: pos.y, card: { deck: "prompt", id: p.id, reversed: false } });
       if (t.anchor) v.addLink(t.anchor, n.id);
       ids.push(n.id);
     } else {
       // 発想カードの種類を、全部並べる(3 列の表。選んでいるものの下か、画面の真ん中)
       const set = PROMPT_SETS.find((s) => s.id === kind.set)!;
-      const hgt = faceHeight("prompt", CARD_H) + 30;
-      const cols = 3;
+      // 札は文字と同じ大きさなので、間を詰めて 2 列(2026-11-24)
+      const hgt = 56;
+      const CW = 150;
+      const cols = 2;
       let ox: number, oy: number;
       if (t.anchor) {
         const a = v.itemPos(t.group, t.anchor)!;
@@ -110,11 +112,11 @@ export function runDraw(t: DrawTarget, cfg: DrawConfig, kind: DrawKind, question
         oy = a.y + 80;
       } else {
         const rows = Math.ceil(set.items.length / cols);
-        ox = Math.round(t.center.x - (cols * (CARD_W + 30)) / 2);
+        ox = Math.round(t.center.x - (cols * CW) / 2);
         oy = Math.round(t.center.y - (rows * hgt) / 2);
       }
       set.items.forEach((p, i) => {
-        const n = v.create({ type: "card", title: p.name, group: t.group, x: ox + (i % cols) * (CARD_W + 30), y: oy + Math.floor(i / cols) * hgt, card: { deck: "prompt", id: p.id, reversed: false }, spread: { run } });
+        const n = v.create({ type: "card", title: p.name, group: t.group, x: ox + (i % cols) * CW, y: oy + Math.floor(i / cols) * hgt, card: { deck: "prompt", id: p.id, reversed: false }, spread: { run } });
         if (t.anchor) v.addLink(t.anchor, n.id);
         ids.push(n.id);
       });
@@ -181,12 +183,15 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
   };
   const render = (t: Tab) => {
     tab = t;
+    // 2026-11-24 見本 D: タブは小さな切り替え、設定は右の ⚙
     const head = h("div", { class: "dm-tabs" });
     for (const [k, label] of tabs) {
-      const b = h("button", { class: k === t ? "on" : "", text: label });
+      const b = h("button", { class: (k === t ? "on" : "") + (k === "settings" ? " dm-gear" : ""), text: k === "settings" ? "⚙" : label, title: label, "aria-label": label });
       b.addEventListener("click", () => render(k));
+      if (k === "settings") head.append(h("span", { class: "dm-gap" }));
       head.append(b);
     }
+    pop.classList.toggle("narrow", t === "prompt");
     const body = h("div", { class: "dm-body" });
     if (t === "tarot") {
       const groups: [string, string[]][] = [
@@ -223,16 +228,29 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
           h("li", {}, h("b", { text: T.ichingAfter }), " " + T.ichingAfterHint)),
       );
     } else if (t === "prompt") {
+      // 2026-11-24 見本 D: 小さく。上に「1 枚引く」「ランダム」、下に種類を 1 行ずつ(中身の言葉はマウスを乗せたとき)
+      const btn = (label: string, title: string, run: () => void) => {
+        const b = h("button", { class: "dm-btn", title, text: label });
+        b.addEventListener("click", () => {
+          closeDrawMenu();
+          run();
+        });
+        return b;
+      };
       body.append(
-        h("div", { class: "dm-grid" },
-          tile({ name: T.promptOne, sub: T.promptOneSub + (hasAnchor ? T.promptConnect : ""), run: () => go({ k: "prompt", mode: "one" }, "") }),
-          tile({ name: T.promptRandom, sub: T.promptRandomSub, run: () => go({ k: "prompt", mode: "random" }, "") })),
+        h("div", { class: "dm-btns" },
+          btn(T.promptOne, T.promptOneSub + (hasAnchor ? T.promptConnect : ""), () => go({ k: "prompt", mode: "one" }, "")),
+          btn(T.promptRandomShort, T.promptRandomSub, () => go({ k: "prompt", mode: "random" }, ""))),
         h("div", { class: "dm-h", text: hasAnchor ? T.promptAllNear : T.promptAll }),
       );
-      const grid = h("div", { class: "dm-grid" });
-      for (const s of PROMPT_SETS.filter((x) => x.id !== "word" && x.id !== "ask"))
-        grid.append(tile({ name: s.name, sub: s.items.map((i) => i.name).join("・"), n: `${s.items.length}枚`, pic: h("span", { class: `dm-sw c${s.color}` }), run: () => go({ k: "promptSet", set: s.id }, "") }));
-      body.append(grid);
+      for (const s of PROMPT_SETS.filter((x) => x.id !== "word" && x.id !== "ask")) {
+        const row = h("button", { class: "dm-row", title: s.desc + "\n" + s.items.map((i) => i.name).join("・") }, h("span", { class: `dm-dot c${s.color}` }), h("span", { class: "dm-row-t", text: s.name }), h("span", { class: "dm-row-n", text: `${s.items.length}枚` }));
+        row.addEventListener("click", () => {
+          closeDrawMenu();
+          go({ k: "promptSet", set: s.id }, "");
+        });
+        body.append(row);
+      }
     } else {
       const set = (patch: Partial<DrawConfig>) => {
         Object.assign(cfg, patch);

@@ -344,7 +344,9 @@ class App {
   private onSelection(ids: string[]): void {
     // カードを 1 つ選んだときだけ、右の欄の「詳細」を自動で開く(文字では開かない)。
     // 自動で開いた分は、選択を外すか別の種類を選ぶと閉じる(手で開いたものは閉じない・保存もしない)
-    const t = ids.length === 1 ? this.vault.get(ids[0])?.type : undefined;
+    const one = ids.length === 1 ? this.vault.get(ids[0]) : undefined;
+    // 発想カードは問いを札の下に出すので、右の欄は開かない(2026-11-24)
+    const t = one?.card?.deck === "prompt" ? "text" : one?.type;
     if (t === "card") {
       if (!this.sideVisible()) {
         this.sideAuto = true;

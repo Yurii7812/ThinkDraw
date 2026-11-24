@@ -393,9 +393,12 @@ input, textarea { font: inherit; color: inherit; }
 .tbtn.i-pen, .tbtn.export { white-space: nowrap; font-size: 13px; color: var(--fg); border: 1px solid var(--line); padding: 0 10px; }
 .tbtn.i-pen.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .drawmenu { position: fixed; z-index: 45; width: 470px; max-height: calc(100vh - 70px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
-.dm-tabs { display: flex; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
-.dm-tabs button { flex: 1; border: 0; background: none; padding: 8px; cursor: pointer; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; }
-.dm-tabs button.on { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+.dm-tabs { display: flex; align-items: center; gap: 2px; padding: 8px 8px 8px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.dm-tabs button { border: 0; background: none; padding: 4px 10px; cursor: pointer; font-size: 13px; color: var(--muted); border-radius: 6px; }
+.dm-tabs button:hover { background: var(--accent-soft); color: var(--fg); }
+.dm-tabs button.on { background: var(--fg); color: var(--bg); }
+.dm-tabs .dm-gap { flex: 1; }
+.dm-tabs .dm-gear { width: 28px; height: 28px; padding: 0; font-size: 15px; }
 .dm-body { padding: 10px 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .dm-h { font-size: 11px; color: var(--muted); font-weight: 600; margin-top: 4px; }
 .dm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -762,3 +765,27 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .popup.expanded .pop-head { padding-left: max(14px, calc((100% - 720px) / 2)); }
 .popup.expanded .pop-title { font-size: 22px; }
 .popup.expanded .pop-foot { padding-left: max(14px, calc((100% - 720px) / 2)); padding-right: max(14px, calc((100% - 720px) / 2)); }
+
+/* 発想カード: 文字と同じ大きさの札(2026-11-24 見本 A)。選ぶと下に問い */
+.node.pchip { display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border-radius: 999px; font-size: 15px; background: color-mix(in srgb, var(--pc) 16%, var(--canvas)); border: 1px solid color-mix(in srgb, var(--pc) 45%, transparent); --pc: var(--muted); }
+.node.pchip.pc1 { --pc: var(--c1); } .node.pchip.pc2 { --pc: var(--c2); } .node.pchip.pc3 { --pc: var(--c3); } .node.pchip.pc4 { --pc: var(--c4); }
+.node.pchip.pc5 { --pc: var(--c5); } .node.pchip.pc6 { --pc: var(--c6); } .node.pchip.pc7 { --pc: var(--c7); } .node.pchip.pc8 { --pc: var(--c8); }
+.pchip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pc); flex: none; }
+.node.pchip.selected { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 999px; }
+.pchip-q { display: none; position: absolute; left: -6px; top: calc(100% + 6px); width: max-content; max-width: 280px; white-space: normal; padding: 7px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; line-height: 1.5; color: var(--fg); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1); z-index: 3; cursor: default; }
+.node.pchip.selected .pchip-q { display: block; }
+.pchip-set { font-size: 11px; color: var(--muted); margin-bottom: 1px; }
+/* 引くメニューの発想(2026-11-24 見本 D): 細く、1 行ずつ */
+.drawmenu.narrow { width: 290px; }
+.dm-btns { display: flex; gap: 6px; }
+.dm-btn { flex: 1; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 6px; padding: 6px; font-size: 13px; cursor: pointer; }
+.dm-btn:hover { border-color: var(--accent); }
+.dm-row { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; color: var(--fg); padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 14px; text-align: left; }
+.dm-row:hover { background: var(--accent-soft); }
+.dm-row-t { flex: 1; }
+.dm-row-n { font-size: 12px; color: var(--muted); }
+.dm-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dm-dot.c1 { background: var(--c1); } .dm-dot.c2 { background: var(--c2); } .dm-dot.c3 { background: var(--c3); } .dm-dot.c4 { background: var(--c4); }
+.dm-dot.c5 { background: var(--c5); } .dm-dot.c6 { background: var(--c6); } .dm-dot.c7 { background: var(--c7); } .dm-dot.c8 { background: var(--c8); }
+.drawmenu.narrow .dm-body { gap: 4px; }
+.node.t-card.pchip { white-space: nowrap; text-align: left; } .node.t-card.pchip .label { font-size: 15px; margin-top: 0; line-height: 1.4; }
