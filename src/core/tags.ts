@@ -1,4 +1,5 @@
-// @ のしるし(2026-11-24 利用者): 文字やノートに「@読書」と書くと、それが時系列記録のしるしになる。
+// @ のしるし(2026-11-24 利用者): ボードの文字のノードの文に「@読書」と書くと、それが時系列記録のしるしになる。
+// ノートの題・本文の @ は拾わない(利用者「ノードの文です。ノートの題でもない」)。記録ノートは種類の名前で入る。
 // 日付グループのマーカー・記録の種類と同じ名前の集まりとして扱う(@ の候補も、Ctrl+J の一覧も同じ)。
 import type { Vault } from "./vault";
 import { parseDayGroup, parseRecordTitle } from "./records";
@@ -50,7 +51,7 @@ export function tagged(v: Vault, tag: string): { id: string; date: string; how: 
       continue;
     }
     if (n.type === "note") {
-      if (parseRecordTitle(n.title)?.kind === tag || tagsIn(n.title).includes(tag) || tagsIn(n.body).includes(tag)) out.push({ id: n.id, date: dateOf(v, n.id), how: "note" });
+      if (parseRecordTitle(n.title)?.kind === tag) out.push({ id: n.id, date: dateOf(v, n.id), how: "note" });
       continue;
     }
     if (n.type === "text" && tagsIn(n.title).includes(tag)) out.push({ id: n.id, date: dateOf(v, n.id), how: "text" });
@@ -68,7 +69,6 @@ export function allTags(v: Vault, extra: string[] = []): { tag: string; n: numbe
     if (n.type === "note") {
       const k = parseRecordTitle(n.title)?.kind;
       if (k) add(k);
-      new Set([...tagsIn(n.title), ...tagsIn(n.body)]).forEach(add);
     }
   }
   for (const e of extra) if (!count.has(e)) count.set(e, 0);

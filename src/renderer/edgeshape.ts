@@ -96,7 +96,7 @@ export function findHops(segs: Seg[], rad = 6): Map<string, number[]> {
       const u = (ex * A.dy - ey * A.dx) / den;
       if (t <= 0 || t >= 1 || u <= 0 || u >= 1) continue;
       const da = t * A.len, db = u * B.len;
-      const margin = rad + 8;
+      const margin = rad + 3;
       if (da < margin || A.len - da < margin || db < margin || B.len - db < margin) continue;
       const aHops = A.flat > B.flat + 1e-6 || (Math.abs(A.flat - B.flat) <= 1e-6 && A.s.key > B.s.key);
       const [who, dist] = aHops ? [A.s.key, da] : [B.s.key, db];
@@ -159,10 +159,11 @@ export function partEnd(box: { x: number; y: number; w: number; h: number }, fro
  * 文字(ノード)をよける道(2026-11-24 利用者「文字の枠に沿う感じ」): 線がノードの箱(+ pad)を通るなら、
  * 箱に入る所から出る所まで、箱の縁に沿って短い方を回る。よける物が無ければ null(まっすぐ)
  */
-export function routeAround(a: Pt, b: Pt, boxes: { x: number; y: number; w: number; h: number }[], pad = 7): Pt[] | null {
+export function routeAround(a: Pt, b: Pt, boxes: { x: number; y: number; w: number; h: number; pad?: number; avoid?: Pt[] }[], pad0 = 14): { pts: Pt[]; used: number[] } | null {
   const dx = b.x - a.x, dy = b.y - a.y;
-  const hits: { t0: number; t1: number; L: number; T: number; R: number; B: number }[] = [];
-  for (const bx of boxes) {
+  const hits: { t0: number; t1: number; L: number; T: number; R: number; B: number; bi: number; avoid: Pt[] }[] = [];
+  for (const [bi, bx] of boxes.entries()) {
+    const pad = bx.pad ?? pad0;
     const L = bx.x - pad, T = bx.y - pad, R = bx.x + bx.w + pad, B = bx.y + bx.h + pad;
     let t0 = 0, t1 = 1, ok = true;
     for (const [p, q] of [[-dx, a.x - L], [dx, R - a.x], [-dy, a.y - T], [dy, B - a.y]] as [number, number][]) {
@@ -175,11 +176,12 @@ export function routeAround(a: Pt, b: Pt, boxes: { x: number; y: number; w: numb
       else t1 = Math.min(t1, t);
     }
     if (!ok || t0 >= t1 || t0 <= 0.001 || t1 >= 0.999) continue; // 端がこの箱の中・かすりもしない
-    hits.push({ t0, t1, L, T, R, B });
+    hits.push({ t0, t1, L, T, R, B, bi, avoid: bx.avoid ?? [] });
   }
   if (!hits.length) return null;
   hits.sort((p, q) => p.t0 - q.t0);
   const pts: Pt[] = [a];
+  const used: number[] = [];
   let last = 0;
   for (const h of hits) {
     if (h.t0 < last) continue; // 重なった箱は、先のものだけ
@@ -193,7 +195,14 @@ export function routeAround(a: Pt, b: Pt, boxes: { x: number; y: number; w: numb
     const corners: [number, Pt][] = [[0, { x: h.L, y: h.T }], [w, { x: h.R, y: h.T }], [w + hh, { x: h.R, y: h.B }], [2 * w + hh, { x: h.L, y: h.B }]];
     const se = s(E), sx = s(X);
     const cw = (sx - se + P) % P;
-    const goCw = cw <= P - cw;
+    // その箱につながっているほかの線の端をまたがない側を選ぶ(またぐと、つながって見える。2026-11-24 利用者)。同じなら短い方
+    const onCw = (q: Pt) => {
+      // 箱の縁へ寄せてから、縁の上の位置で比べる
+      const c = { x: Math.min(h.R, Math.max(h.L, q.x)), y: Math.min(h.B, Math.max(h.T, q.y)) };
+      return (s(c) - se + P) % P < cw;
+    };
+    const nCw = h.avoid.filter(onCw).length, nCcw = h.avoid.length - nCw;
+    const goCw = nCw !== nCcw ? nCw < nCcw : cw <= P - cw;
     const pass: Pt[] = [];
     if (goCw) {
       for (const [cs, c] of [...corners, ...corners.map(([k, c]) => [k + P, c] as [number, Pt])]) if (cs > se && cs < se + cw) pass.push(c);
@@ -201,10 +210,11 @@ export function routeAround(a: Pt, b: Pt, boxes: { x: number; y: number; w: numb
       for (const [cs, c] of [...corners, ...corners.map(([k, c]) => [k + P, c] as [number, Pt])].reverse()) if (cs < se + P && cs > se + P - (P - cw)) pass.push(c);
     }
     pts.push(E, ...pass, X);
+    used.push(h.bi);
     last = h.t1;
   }
   pts.push(b);
-  return pts;
+  return { pts, used };
 }
 
 /** 折れ線を、角を半径 r で丸めた道に */
@@ -241,4 +251,34 @@ export function pointAlong(pts: Pt[], f: number): Pt {
     want -= seg[i];
   }
   return pts[pts.length - 1];
+}
+
+/**
+ * 折れ線(よけた線)を、角を丸め、交差の所は小さな弧で乗り越える道に。hops[i] = i 番目の区間の始まりからの距離
+ */
+export function polyPath(pts: Pt[], hops: number[][] = [], r = 7, rad = 6): string {
+  const n = pts.length;
+  const k: number[] = pts.map(() => 0);
+  for (let i = 1; i < n - 1; i++) {
+    const l1 = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y), l2 = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+    k[i] = Math.min(r, l1 / 2, l2 / 2);
+  }
+  let d = `M${rr(pts[0].x)},${rr(pts[0].y)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+    const n1x = uy, n1y = -ux;
+    const sweep = Math.abs(n1y) > 1e-3 ? (n1y < 0 ? 1 : 0) : n1x < 0 ? 1 : 0;
+    for (const t of (hops[i] ?? []).slice().sort((p, q) => p - q)) {
+      if (t - rad < k[i] || t + rad > len - k[i + 1]) continue;
+      d += ` L${rr(a.x + ux * (t - rad))},${rr(a.y + uy * (t - rad))} A${rad},${rad} 0 0 ${sweep} ${rr(a.x + ux * (t + rad))},${rr(a.y + uy * (t + rad))}`;
+    }
+    if (i < n - 2 && k[i + 1] >= 0.5) {
+      const c = pts[i + 1], nx = pts[i + 2];
+      const l2 = Math.hypot(nx.x - c.x, nx.y - c.y) || 1;
+      d += ` L${rr(c.x - ux * k[i + 1])},${rr(c.y - uy * k[i + 1])} Q${rr(c.x)},${rr(c.y)} ${rr(c.x + ((nx.x - c.x) / l2) * k[i + 1])},${rr(c.y + ((nx.y - c.y) / l2) * k[i + 1])}`;
+    } else d += ` L${rr(b.x)},${rr(b.y)}`;
+  }
+  return d;
 }

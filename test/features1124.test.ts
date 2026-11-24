@@ -172,3 +172,13 @@ describe("@しるし(2026-11-24)", () => {
     expect(allTags(v, ["日記"]).map((t) => t.tag)).toEqual(["読書", "夢", "日記"]);
   });
 });
+
+describe("@しるしはボードの文字のノードだけ", () => {
+  it("「@夢」と書いた文字のノードは拾う。ノートの題・本文の @ は拾わない", async () => {
+    const { allTags, tagged } = await import("../src/core/tags");
+    v.create({ type: "note", title: "メモ @題の", body: "本文の @本文 は拾わない", group: ROOT_ID, x: 0, y: 0 });
+    const a = text("@夢", ROOT_ID, 0, 100);
+    expect(allTags(v).map((t) => t.tag)).toEqual(["夢"]);
+    expect(tagged(v, "夢").map((x) => x.id)).toEqual([a]);
+  });
+});

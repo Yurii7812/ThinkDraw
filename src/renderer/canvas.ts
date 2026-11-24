@@ -3,7 +3,7 @@ import { gap, placeAround, segHitsRect, type Rect } from "../core/placement";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
 import { NEW_LINK_KINDS, ROOT_ID, type Link, type LinkKind, type Stroke, type TDNode } from "../core/types";
-import { edgeEnds, findHops, hopPath, kindPreview, partEnd, pointAlong, roundedPath, routeAround, type Pt } from "./edgeshape";
+import { edgeEnds, findHops, kindPreview, partEnd, pointAlong, polyPath, routeAround, type Pt, type Seg } from "./edgeshape";
 import { cardName, spreadDef } from "../decks";
 import { PROMPT_BY_ID } from "../decks/prompts";
 import { cardFace, faceHeight } from "./cardface";
@@ -682,6 +682,13 @@ export class Canvas {
     return out;
   }
 
+  /** 見た目の箱: グループは下に重ねた影(3px)・ノートは影の分を足す(よける余白が上・横・下でそろうように。2026-11-24 利用者) */
+  private visualBox(id: string, r: Rect): Rect {
+    const t = this.v.get(id)?.type;
+    const extra = t === "group" ? 4 : t === "note" ? 2 : 0;
+    return extra ? { ...r, h: r.h + extra } : r;
+  }
+
   /** 文字の位置(線の上の割合)。終わりの印を隠さないよう、端に寄せすぎない */
   private labelAt(key: string, l: Link): number {
     const at = this.labelAtLive?.key === key ? this.labelAtLive.at : l.at ?? 0.5;
@@ -695,23 +702,42 @@ export class Canvas {
     const geom = this.edgeGeom();
     const alive = new Set(geom.map((g) => g.key));
     for (const k of [...this.edgeSel]) if (!alive.has(k)) this.edgeSel.delete(k);
-    // 交差: 一方が小さな弧で乗り越える(2026-11-24 統合仕様 5)
-    const hops = findHops(geom.map((g) => ({ key: g.key, a: g.ends.start, b: g.ends.end, ends: [g.from, g.to] as [string, string] })));
+    // 文字(ノード)をよける: 枠は除く。線の両端のノードも除く(2026-11-24 利用者「文字の枠に沿う感じ」)。
+    // 回る線はノードにつながる線の端(4)より外(14)を通す。同じ箱を何本も回るときは 6 ずつ外へ(重ならないように)
+    const frs = this.frameIds();
+    const obstacles = [...this.rects.entries()].filter(([i]) => !frs.has(i));
+    const around = new Map<string, number>();
+    // 箱ごとの、つながっている線の端
+    const attach = new Map<string, Pt[]>();
+    for (const g of geom) for (const [id, p] of [[g.from, g.p1], [g.to, g.p2]] as [string, Pt][]) (attach.get(id) ?? attach.set(id, []).get(id)!).push(p);
+    const routes = new Map<string, Pt[]>();
+    for (const e of geom) {
+      const list = obstacles.filter(([i]) => i !== e.from && i !== e.to);
+      const rt = routeAround(e.ends.start, e.ends.end, list.map(([i, r]) => ({ ...this.visualBox(i, r), pad: 14 + 6 * (around.get(i) ?? 0), avoid: attach.get(i) })));
+      if (!rt) continue;
+      routes.set(e.key, rt.pts);
+      for (const bi of rt.used) around.set(list[bi][0], (around.get(list[bi][0]) ?? 0) + 1);
+    }
+    // 交差: 一方が小さな弧で乗り越える(2026-11-24 統合仕様 5)。よけて回る線も、回った所でまたぐ線を乗り越える
+    const segs: Seg[] = [];
+    for (const g of geom) {
+      const pl = routes.get(g.key) ?? [g.ends.start, g.ends.end];
+      for (let i = 0; i + 1 < pl.length; i++) segs.push({ key: g.key + "#" + i, a: pl[i], b: pl[i + 1], ends: [g.from, g.to] });
+    }
+    const hops = findHops(segs);
     // 線の本体・終わりの印(下)と、線の文字(上)を別の層に。ノードと線の文字の所は線を描かない(マスク。2026-11-24 修正8)
     const linesG = svg("g", { class: "edge-lines", mask: "url(#edge-mask)" });
     const labelsG = svg("g", { class: "edge-labels" });
     this.edgesSvg.append(linesG, labelsG);
     const labels: SVGGElement[] = [];
-    // 文字(ノード)をよける: 枠は除く。線の両端のノードも除く(2026-11-24 利用者「文字の枠に沿う感じ」)
-    const frs = this.frameIds();
-    const obstacles = [...this.rects.entries()].filter(([i]) => !frs.has(i));
     for (const e of geom) {
       const { l, p1, p2, ends } = e;
       const sel = this.edgeSel.has(e.key);
-      const route = routeAround(ends.start, ends.end, obstacles.filter(([i]) => i !== e.from && i !== e.to).map(([, r]) => r));
+      const route = routes.get(e.key) ?? null;
+      const pl = route ?? [ends.start, ends.end];
       const g = svg("g", { class: `edge k-${l.kind}${l.color ? " c" + l.color : ""}${sel ? " selected" : ""}`, "data-from": e.from, "data-to": e.to });
       g.append(svg("path", { d: `M${p1.x},${p1.y} L${p2.x},${p2.y}`, class: "hit" }));
-      g.append(svg("path", { d: route ? roundedPath(route) : hopPath(ends.start, ends.end, hops.get(e.key) ?? []), class: "vis" }));
+      g.append(svg("path", { d: polyPath(pl, pl.slice(1).map((_, i) => hops.get(e.key + "#" + i) ?? [])), class: "vis" }));
       if (ends.fill) g.append(svg("path", { d: ends.fill, class: "end-fill" }));
       if (ends.stroke) g.append(svg("path", { d: ends.stroke, class: "end-stroke" }));
       const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;

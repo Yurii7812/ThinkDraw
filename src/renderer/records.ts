@@ -293,7 +293,6 @@ export class RecordsView {
       for (const it of v.itemsOf(g)) {
         const c = v.get(it.id);
         if (c?.type === "text") tagsIn(c.title).forEach((x) => written.add(x));
-        if (c?.type === "note") [...tagsIn(c.title), ...tagsIn(c.body)].forEach((x) => written.add(x));
       }
     for (const x of written) if (!markers.includes(x)) chips.append(h("span", { class: "rec-chip written", "data-marker": x, title: T.recordsWrittenTag }, "@" + x));
     for (const x of markers) {
