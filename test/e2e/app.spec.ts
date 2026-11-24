@@ -515,7 +515,7 @@ test("空きの右クリックでグループを作る", async () => {
   await expect(page.locator(".node.t-group", { hasText: "新しい箱" })).toHaveCount(1);
 });
 
-test("記録一覧: 左に種類・右に記録。新しい種類を足す・上位を決める・今日を書く・日の右クリックで作る", async () => {
+test("記録一覧(Ctrl+J): 左にカレンダー・右にその日の中身。種類を足す・上位を決める・今日を書く・日の右クリックで作る", async () => {
   const d = new Date();
   const p2 = (n: number) => String(n).padStart(2, "0");
   const ymd = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
@@ -526,20 +526,18 @@ test("記録一覧: 左に種類・右に記録。新しい種類を足す・上
   expect(titles()).toEqual(expect.arrayContaining(["記録", `${ymd}-日記`]));
   await page.keyboard.press("Control+j");
   await expect(page.locator(".records")).toBeVisible();
-  await page.locator(".rec-k[data-kind='']").click(); // すべて
-  await expect(page.locator(".rec-card")).toHaveCount(1);
-  await expect(page.locator(".rec-card")).toContainText("今日あったこと");
-  // 左の「＋ 新しい種類」で名前を書いて Enter
-  await page.locator(".rec-add").click();
-  await page.keyboard.type("夢日記");
-  await page.keyboard.press("Enter");
-  await expect(page.locator(".rec-k.active")).toContainText("夢日記");
-  // この種類の設定で、上位 = 日記
-  await page.locator(".rec-settings").click();
+  // 今日が選ばれていて、点が付いている。右に今日の中身(タイトルだけ)
+  await expect(page.locator(`.rec-cell.sel.today.has[data-date='${ymd}']`)).toHaveCount(1);
+  await expect(page.locator(".rec-item")).toHaveCount(1);
+  await expect(page.locator(".rec-item")).toHaveText("日記");
+  // 種類…: 新しい種類を足し、押して設定(上位 = 日記)
+  await page.locator(".rec-kinds-btn").click();
+  await page.locator(".modal.kinds .rec-add-input").fill("夢日記");
+  await page.locator(".modal.kinds .rec-add-input").press("Enter");
+  await page.locator(".modal.kinds .rec-k[data-kind='夢日記']").click();
   await page.locator(".modal.kinds label", { hasText: "日記" }).click();
   await page.locator(".modal.kinds .btn.primary").click();
-  await expect(page.locator(".rec-head")).toContainText("上位: 日記");
-  await page.locator(".rec-write").click(); // ＋ 今日の夢日記を書く
+  await page.locator(".rec-write[data-kind='夢日記']").click(); // ＋ 夢日記(今日を選んでいるときだけ)
   await expect(page.locator(".popup.expanded")).toBeVisible();
   await page.keyboard.press("Escape");
   await settle();
@@ -547,7 +545,7 @@ test("記録一覧: 左に種類・右に記録。新しい種類を足す・上
   expect(mdFiles()[idOf(`${ymd}-日記`) + ".md"]).toContain(`to: ${idOf(`${ymd}-夢日記`)}`); // 上位から線
   // 日のグループの空きを右クリック: 記録を作る/開く・新しい種類で作る
   await page.mouse.click(900, 650, { button: "right" });
-  await page.locator(".ctxmenu .item", { hasText: "この日の記録" }).click(); // 日の記録は 1 つの項目にまとめた(押すと開いたまま)
+  await page.locator(".ctxmenu .item", { hasText: "この日の記録" }).click();
   await expect(page.locator(".ctxmenu .submenu .item", { hasText: "日記を開く" }).first()).toBeVisible();
   await page.locator(".ctxmenu .submenu .item", { hasText: "新しい種類で作る" }).click();
   await page.keyboard.type("読書記録");
@@ -556,18 +554,23 @@ test("記録一覧: 左に種類・右に記録。新しい種類を足す・上
   await page.keyboard.press("Escape");
   await settle();
   expect(titles()).toContain(`${ymd}-読書記録`);
-  // 一覧: 日記を選ぶと下位(夢日記)も出る
   await page.keyboard.press("Control+j");
-  await page.locator(".rec-k[data-kind='日記']").click();
-  await expect(page.locator(".rec-card")).toHaveCount(2);
-  await page.locator(".rec-k[data-kind='読書記録']").click();
-  await expect(page.locator(".rec-card")).toHaveCount(1);
-  await page.locator(".rec-k[data-kind='夢日記']").click();
+  await expect(page.locator(".rec-item")).toHaveCount(3);
   await shot("11-records");
-  await page.locator(".rec-card").click();
+  // ← で前の日(何もない)・→ で戻る
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.locator(".rec-cell.sel.today")).toHaveCount(0);
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator(".rec-cell.sel.today")).toHaveCount(1);
+  // 押すとそのノートを開く
+  await page.locator(".rec-item", { hasText: "夢日記" }).click();
   await expect(page.locator(".records")).toHaveCount(0);
   await expect(page.locator(".popup.expanded")).toBeVisible();
   await page.keyboard.press("Escape");
+  // 「この日のグループを開く」
+  await page.keyboard.press("Control+j");
+  await page.locator(".rec-open-day").click();
+  await expect(page.locator(".group-title")).toHaveText(ymd);
   await page.keyboard.press("Control+j");
   await page.keyboard.press("Escape");
   await expect(page.locator(".records")).toHaveCount(0);

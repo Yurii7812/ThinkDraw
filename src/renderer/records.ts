@@ -103,10 +103,12 @@ export interface RecordsHost {
 }
 
 const WEEK = ["日", "月", "火", "水", "木", "金", "土"];
-function todayStr(): string {
-  const d = new Date();
+function ymd(d: Date): string {
   const p2 = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+}
+function todayStr(): string {
+  return ymd(new Date());
 }
 /** 種類ごとの色(名前から決める。いつも同じ色) */
 const KIND_COLORS = ["#2f6fdf", "#0f8a7a", "#c2417f", "#c0691b", "#7c5cd6", "#2e8540", "#b8860b", "#4a6178"];
@@ -118,166 +120,187 @@ export function kindColor(k: string): string {
 
 export class RecordsView {
   readonly el: HTMLElement;
-  private side: HTMLElement;
-  private head: HTMLElement;
-  private body: HTMLElement;
+  private cal: HTMLElement;
+  private day: HTMLElement;
+  private month: string; // 2026-11
+  private sel: string; // 2026-11-24
   private adding = false;
-  private query = "";
-  private search!: HTMLInputElement;
   constructor(private host: RecordsHost) {
-    const close = h("button", { class: "tbtn rec-close", title: T.recordsClose + " (Esc)", "aria-label": T.recordsClose, text: "×" });
-    close.addEventListener("click", () => host.close());
-    this.side = h("nav", { class: "rec-side" });
-    this.head = h("div", { class: "rec-head" });
-    this.body = h("div", { class: "rec-body" });
-    this.el = h(
-      "section",
-      { class: "records", tabindex: "-1" },
-      h("div", { class: "rec-top" }, h("div", { class: "rec-title", text: T.recordsTitle }), this.makeSearch(), h("span", { class: "rec-gap" }), close),
-      h("div", { class: "rec-cols" }, this.side, h("div", { class: "rec-main-col" }, this.head, this.body)),
-    );
+    // 2026-11-24 利用者が見本 B を選んだ: 左に月のカレンダー(書いた物のある日に点)、右にその日の中身(タイトルだけ)
+    const today = todayStr();
+    this.sel = today;
+    this.month = today.slice(0, 7);
+    this.cal = h("div", { class: "rec-cal" });
+    this.day = h("div", { class: "rec-dayview" });
+    this.el = h("section", { class: "records", tabindex: "-1" }, h("div", { class: "rec-box", role: "dialog", "aria-label": T.recordsTitle }, this.cal, this.day));
+    this.el.addEventListener("mousedown", (e) => e.target === this.el && host.close());
+    this.el.addEventListener("keydown", (e) => this.onKey(e));
     this.render();
   }
 
-  private makeSearch(): HTMLElement {
-    this.search = h("input", { type: "search", class: "rec-search", placeholder: T.recordsSearch, "aria-label": T.recordsSearch }) as HTMLInputElement;
-    this.search.addEventListener("input", () => {
-      this.query = this.search.value;
-      this.render();
-    });
-    this.search.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && this.search.value) {
-        e.stopPropagation();
-        this.search.value = this.query = "";
-        this.render();
-      }
-    });
-    return this.search;
+  private onKey(e: KeyboardEvent): void {
+    if ((e.target as Element).closest?.("input")) return;
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+    if (step) {
+      e.preventDefault();
+      e.stopPropagation();
+      const d = new Date(this.sel + "T00:00:00");
+      d.setDate(d.getDate() + step);
+      this.pick(ymd(d));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      const g = this.dayId(this.sel);
+      if (g) this.host.open({ date: this.sel, day: g, id: g, kind: "", sub: "", type: "day", preview: "" });
+    }
   }
 
-  private select(k: string | null): void {
-    this.host.onKind(k);
-    this.host.kind = k;
+  private dayId(date: string): string | null {
+    return dayGroups(this.host.vault).find((d) => d.date === date)?.id ?? null;
+  }
+
+  private pick(date: string): void {
+    this.sel = date;
+    this.month = date.slice(0, 7);
     this.render();
   }
 
   render(): void {
     const v = this.host.vault;
-    const kinds = this.host.kinds;
-    const all = collectRecords(v);
-    const counts = new Map<string, number>();
-    for (const e of all) counts.set(e.kind, (counts.get(e.kind) ?? 0) + 1);
-    let kind = this.host.kind;
-    if (kind && !counts.has(kind) && !kinds.some((k) => k.name === kind)) kind = null;
-    const shown = kind ? withDescendants(kinds, kind) : null;
-    const count = (k: string) => [...withDescendants(kinds, k)].reduce((s, n) => s + (counts.get(n) ?? 0), 0);
-
-    // ---- 左: 種類の一覧(木)。いちばん下で新しい種類を足す
-    const item = (label: string, k: string | null, n: number, depth = 0, extra = "") => {
-      const b = h("button", { class: "rec-k" + (k === kind ? " active" : "") + extra, "data-kind": k ?? "", style: `padding-left:${10 + depth * 16}px` }, depth ? h("span", { class: "rec-sub", text: "└" }) : null, k ? h("span", { class: "rec-dot", style: `background:${kindColor(k)}` }) : null, h("span", { class: "rec-kname", text: label }), h("span", { class: "rec-n", text: String(n) }));
-      b.addEventListener("click", () => this.select(k));
-      return b;
-    };
-    const registered = new Set(kinds.map((k) => k.name));
-    const others = [...counts.keys()].filter((k) => !registered.has(k)).sort((a, b) => a.localeCompare(b, "ja"));
-    const add = this.adding ? this.addBox() : h("button", { class: "rec-add", text: T.recordsKindAdd });
-    if (!this.adding) add.addEventListener("click", () => ((this.adding = true), this.render()));
-    this.side.replaceChildren(
-      item(T.recordsAll, null, all.length),
-      h("div", { class: "rec-side-label", text: T.recordsKindsLabel }),
-      ...treeOrder(kinds).map(({ k, depth }) => item(k.name, k.name, count(k.name), depth)),
-      ...(others.length ? [h("div", { class: "rec-side-label", text: T.recordsOthersLabel }), ...others.map((k) => item(k, k, counts.get(k)!, 0, " other"))] : []),
-      add,
-    );
-    if (this.adding) this.side.querySelector<HTMLInputElement>("input")?.focus();
-
-    // ---- 右の上: いま見ている種類と、今日を書くボタン・設定
-    const def = kind ? kinds.find((k) => k.name === kind) : undefined;
-    const writeKind = def ? def.name : !kind ? (kinds[0]?.name ?? null) : null;
-    const btns: HTMLElement[] = [];
-    if (writeKind) {
-      const w = h("button", { class: "btn primary rec-write", "data-kind": writeKind, text: T.recordsWriteTodayKind(writeKind) });
-      w.addEventListener("click", () => this.host.writeToday(writeKind));
-      btns.push(w);
-    }
-    if (def) {
-      const set = h("button", { class: "btn small rec-settings", text: T.recordsKindSettings });
-      set.addEventListener("click", () => this.editKind(def.name));
-      btns.push(set);
-    }
-    const parentsNote = def?.parents.length ? h("div", { class: "muted small", text: T.recordsParentsNote(def.parents) }) : null;
-    this.head.replaceChildren(h("div", { class: "rec-head-row" }, h("div", { class: "rec-h", text: kind ?? T.recordsAll }), h("span", { class: "rec-gap" }), ...btns), parentsNote ?? "");
-
-    // ---- 右: 記録の一覧(日ごとにまとめたカード。上の欄で中身を探せる)
-    const q = this.query.trim().toLowerCase();
-    const list = all.filter((e) => (!shown || shown.has(e.kind)) && (!q || (e.kind + " " + e.sub + " " + e.preview).toLowerCase().includes(q)));
-    if (!list.length) {
-      this.body.replaceChildren(h("div", { class: "rec-empty" }, h("div", { class: "rec-empty-t", text: q ? T.recordsNoHit : kind ? T.recordsEmptyKind(kind) : T.recordsEmpty })));
-      return;
-    }
     const today = todayStr();
-    const blocks: HTMLElement[] = [];
-    let month = "";
-    let i = 0;
-    while (i < list.length) {
-      const date = list[i].date;
-      const day: RecordEntry[] = [];
-      while (i < list.length && list[i].date === date) day.push(list[i++]);
-      const m = date.slice(0, 7);
-      if (m !== month) {
-        month = m;
-        blocks.push(h("div", { class: "rec-month", text: `${m.slice(0, 4)}年${Number(m.slice(5))}月` }));
-      }
-      const d = new Date(date + "T00:00:00");
-      const wd = WEEK[d.getDay()] ?? "";
-      const cards = day.map((e) => {
-        const card = h(
-          "button",
-          { class: "rec-card", "data-id": e.id },
-          h("span", { class: "rec-card-top" }, h("span", { class: "rec-dot", style: `background:${kindColor(e.kind)}` }), h("span", { class: "rec-card-kind", text: e.kind }), e.sub ? h("span", { class: "rec-card-sub", text: e.sub }) : null),
-          h("span", { class: "rec-card-prev" + (e.preview ? "" : " empty"), text: e.preview || T.recordsNoText }),
-        );
-        card.addEventListener("click", () => this.host.open(e));
-        return card;
-      });
-      blocks.push(
-        h(
-          "section",
-          { class: "rec-day" + (date === today ? " today" : "") },
-          h(
-            "div",
-            { class: "rec-day-head" },
-            h("span", { class: "rec-day-d", text: String(d.getDate()) }),
-            h("span", { class: "rec-day-wd" + (wd === "日" ? " sun" : wd === "土" ? " sat" : ""), text: wd + "曜" }),
-            date === today ? h("span", { class: "rec-today", text: T.recordsToday }) : null,
-          ),
-          h("div", { class: "rec-cards" }, ...cards),
-        ),
+    const days = new Map<string, string>(); // 日付 → 日のグループ(中に何かある日だけ)
+    for (const d of dayGroups(v)) if (v.itemsOf(d.id).some((i) => v.exists(i.id))) days.set(d.date, d.id);
+
+    // ---- 左: 月のカレンダー
+    const [y, m] = this.month.split("-").map(Number);
+    const first = new Date(y, m - 1, 1);
+    const n = new Date(y, m, 0).getDate();
+    const prev = h("button", { class: "rec-nav", "aria-label": T.recordsPrevMonth, title: T.recordsPrevMonth, text: "‹" });
+    const next = h("button", { class: "rec-nav", "aria-label": T.recordsNextMonth, title: T.recordsNextMonth, text: "›" });
+    const shift = (k: number) => {
+      const d = new Date(y, m - 1 + k, 1);
+      this.month = ymd(d).slice(0, 7);
+      this.render();
+    };
+    prev.addEventListener("click", () => shift(-1));
+    next.addEventListener("click", () => shift(1));
+    const grid = h("div", { class: "rec-grid" }, ...WEEK.map((w, i) => h("span", { class: "rec-wd" + (i === 0 ? " sun" : i === 6 ? " sat" : ""), text: w })));
+    for (let i = 0; i < first.getDay(); i++) grid.append(h("span", { class: "rec-cell blank" }));
+    for (let d = 1; d <= n; d++) {
+      const date = `${this.month}-${String(d).padStart(2, "0")}`;
+      const has = days.has(date);
+      const b = h(
+        "button",
+        { class: "rec-cell" + (date === this.sel ? " sel" : "") + (date === today ? " today" : "") + (has ? " has" : ""), "data-date": date, "aria-label": date },
+        h("span", { class: "rec-num", text: String(d) }),
+        h("span", { class: "rec-mark" }),
       );
+      b.addEventListener("click", () => this.pick(date));
+      b.addEventListener("dblclick", () => {
+        const g = days.get(date);
+        if (g) this.host.open({ date, day: g, id: g, kind: "", sub: "", type: "day", preview: "" });
+      });
+      grid.append(b);
     }
-    this.body.replaceChildren(...blocks);
+    const kindsBtn = h("button", { class: "rec-kinds-btn", text: T.recordsKindsBtn });
+    kindsBtn.addEventListener("click", () => this.kindsDialog());
+    this.cal.replaceChildren(
+      h("div", { class: "rec-cal-head" }, prev, h("span", { class: "rec-month-name", text: `${y}年 ${m}月` }), next),
+      grid,
+      h("div", { class: "rec-cal-foot" }, h("span", { class: "rec-legend", text: T.recordsLegend }), h("span", { class: "rec-gap" }), kindsBtn),
+    );
+
+    // ---- 右: 選んだ日の中身(タイトルだけ)
+    const d = new Date(this.sel + "T00:00:00");
+    const close = h("button", { class: "rec-close", title: T.recordsClose + " (Esc)", "aria-label": T.recordsClose, text: "×" });
+    close.addEventListener("click", () => this.host.close());
+    const g = days.get(this.sel) ?? this.dayId(this.sel);
+    const head = h(
+      "div",
+      { class: "rec-day-title" },
+      h("span", { class: "rec-day-date", text: `${d.getMonth() + 1}月${d.getDate()}日` }),
+      h("span", { class: "rec-day-wd", text: WEEK[d.getDay()] + "曜日" }),
+      this.sel === today ? h("span", { class: "rec-today", text: T.recordsToday }) : null,
+      h("span", { class: "rec-gap" }),
+      close,
+    );
+    const parts: HTMLElement[] = [head];
+    if (g) {
+      const open = h("button", { class: "btn small rec-open-day", text: T.recordsOpenDay });
+      open.addEventListener("click", () => this.host.open({ date: this.sel, day: g, id: g, kind: "", sub: "", type: "day", preview: "" }));
+      parts.push(open);
+    }
+    const entries = collectRecords(v).filter((e) => e.date === this.sel && e.type !== "day");
+    const memos = g ? v.itemsOf(g).filter((i) => !i.ref && v.get(i.id)?.type === "text").length : 0;
+    const list = h("div", { class: "rec-items" });
+    for (const e of entries) {
+      const n = v.get(e.id);
+      const label = e.type === "group" ? n?.title || T.untitledGroup : e.sub ? `${e.kind} — ${e.sub}` : e.kind;
+      const row = h("button", { class: "rec-item" + (e.type === "group" ? " group" : ""), "data-id": e.id }, h("span", { class: "rec-ico" }), h("span", { class: "rec-item-t", text: label }));
+      row.addEventListener("click", () => this.host.open(e));
+      list.append(row);
+    }
+    if (memos) list.append(h("div", { class: "rec-memos", text: T.recordsMemos(memos) }));
+    if (!entries.length && !memos) list.append(h("div", { class: "rec-none", text: T.recordsNothing }));
+    parts.push(list);
+    if (this.sel === today && this.host.kinds.length) {
+      const w = h("div", { class: "rec-write-row" });
+      for (const k of this.host.kinds) {
+        const b = h("button", { class: "rec-write", "data-kind": k.name, text: "＋ " + k.name });
+        b.addEventListener("click", () => this.host.writeToday(k.name));
+        w.append(b);
+      }
+      parts.push(w);
+    }
+    this.day.replaceChildren(...parts);
   }
 
-  /** 左の一覧のいちばん下で、新しい種類の名前を書く(Enter で足す・Esc でやめる) */
-  private addBox(): HTMLElement {
+  /** 種類の一覧(足す・押すと設定)。カレンダーの下の「種類…」から */
+  private kindsDialog(): void {
+    const list = h("div", { class: "kind-list" });
     const input = h("input", { type: "text", class: "rec-add-input", placeholder: T.recordsKindName }) as HTMLInputElement;
-    const done = (ok: boolean) => {
-      const name = cleanKind(input.value);
-      this.adding = false;
-      if (ok && name && !this.host.kinds.some((k) => k.name === name)) {
-        this.host.saveKinds([...this.host.kinds, { name, parents: [] }]);
-        return this.select(name);
-      }
+    const back = h("div", { class: "backdrop" });
+    const close = () => {
+      back.remove();
+      removeEventListener("keydown", onKey, true);
       this.render();
+    };
+    const fill = () => {
+      list.replaceChildren(
+        ...treeOrder(this.host.kinds).map(({ k, depth }) => {
+          const b = h("button", { class: "rec-k", "data-kind": k.name, style: `padding-left:${10 + depth * 16}px` }, depth ? h("span", { class: "rec-sub", text: "└" }) : null, h("span", { class: "rec-dot", style: `background:${kindColor(k.name)}` }), h("span", { class: "rec-kname", text: k.name }));
+          b.addEventListener("click", () => {
+            close();
+            this.editKind(k.name);
+          });
+          return b;
+        }),
+      );
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        close();
+      }
     };
     input.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.isComposing || e.keyCode === 229) return;
-      if (e.key === "Enter") done(true);
-      else if (e.key === "Escape") done(false);
+      if (e.key === "Enter") {
+        const name = cleanKind(input.value);
+        if (name && !this.host.kinds.some((k) => k.name === name)) this.host.saveKinds([...this.host.kinds, { name, parents: [] }]);
+        input.value = "";
+        fill();
+      } else if (e.key === "Escape") close();
     });
-    input.addEventListener("blur", () => this.adding && done(true));
-    return h("div", { class: "rec-add-box" }, input, h("div", { class: "muted small", text: T.recordsAddHint }));
+    const done = h("button", { class: "btn", text: T.close });
+    done.addEventListener("click", close);
+    back.append(h("div", { class: "modal kinds" }, h("div", { class: "modal-title", text: T.recordsKindsLabel }), list, input, h("div", { class: "muted small", text: T.recordsAddHint }), h("p", { class: "muted small", text: T.recordsKindsHelp }), h("div", { class: "row-end" }, done)));
+    back.addEventListener("mousedown", (e) => e.target === back && close());
+    addEventListener("keydown", onKey, true);
+    fill();
+    document.body.append(back);
+    input.focus();
   }
 
   /** 1 つの種類の設定: 名前・上位(複数)・消す */
@@ -322,7 +345,7 @@ export class RecordsView {
     del.addEventListener("click", () => {
       close();
       this.host.saveKinds(kinds.filter((x) => x.name !== k.name).map((x) => ({ ...x, parents: x.parents.filter((p) => p !== k.name) })));
-      this.select(null);
+      this.render();
     });
     ok.addEventListener("click", () => {
       const nn = cleanKind(input.value) || k.name;
@@ -330,7 +353,7 @@ export class RecordsView {
       const parents = boxes.filter((b) => b.c.checked).map((b) => b.c.value);
       close();
       this.host.saveKinds(kinds.map((x) => (x.name === k.name ? { name: nn, parents } : { ...x, parents: x.parents.map((p) => (p === k.name ? nn : p)) })));
-      this.select(nn);
+      this.render();
     });
     document.body.append(back);
     input.focus();
