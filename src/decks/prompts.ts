@@ -279,3 +279,57 @@ export const PROMPT_SETS: PromptSet[] = DEF.map((s) => ({
 }));
 export const PROMPT_ITEMS: PromptItem[] = PROMPT_SETS.flatMap((s) => s.items);
 export const PROMPT_BY_ID: Record<string, PromptItem> = Object.fromEntries(PROMPT_ITEMS.map((p) => [p.id, p]));
+
+// ---- 自分で作る種類(2026-11-24)。vault の .thinkdraw/prompt-sets.json に保存。ID は my-<連番>、カードは my-<連番>-<行> ----
+export const CUSTOM_GROUP = "自分の種類";
+export const CUSTOM_FILE = "prompt-sets.json";
+export interface CustomPromptSet {
+  id: string;
+  name: string;
+  /** 1 行 1 枚。「言葉: 問い」か、問いだけ */
+  lines: string[];
+}
+
+/** 1 行を [言葉, 問い] に。「: 」か「：」で分ける。無ければ問いの頭を言葉にする */
+export function splitLine(line: string): [string, string] {
+  const m = line.match(/^(.{1,20}?)\s*[:：]\s*(.+)$/);
+  if (m) return [m[1].trim(), m[2].trim()];
+  const t = line.trim();
+  return [[...t].length > 12 ? [...t].slice(0, 12).join("") + "…" : t, t];
+}
+
+export function parseCustomSets(text: string | null): CustomPromptSet[] {
+  if (!text) return [];
+  try {
+    const d = JSON.parse(text) as { sets?: unknown };
+    if (!Array.isArray(d.sets)) return [];
+    return d.sets
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+      .map((x) => ({ id: String(x.id ?? ""), name: String(x.name ?? "").trim(), lines: Array.isArray(x.lines) ? x.lines.map(String).map((l) => l.trim()).filter(Boolean) : [] }))
+      .filter((x) => /^my-\d+$/.test(x.id) && x.name);
+  } catch {
+    return [];
+  }
+}
+
+export function nextCustomId(sets: CustomPromptSet[]): string {
+  return "my-" + (Math.max(0, ...sets.map((s) => Number(s.id.slice(3)) || 0)) + 1);
+}
+
+/** 自分の種類を差し替える(PROMPT_SETS・PROMPT_ITEMS・PROMPT_BY_ID をその場で直す) */
+export function setCustomPromptSets(sets: CustomPromptSet[]): void {
+  for (let i = PROMPT_SETS.length - 1; i >= 0; i--) if (PROMPT_SETS[i].id.startsWith("my-")) PROMPT_SETS.splice(i, 1);
+  sets.forEach((c, k) => {
+    const color = (k % 8) + 1;
+    PROMPT_SETS.push({
+      id: c.id, name: c.name, desc: "", color, group: CUSTOM_GROUP,
+      items: c.lines.map((l, i) => {
+        const [name, question] = splitLine(l);
+        return { id: `${c.id}-${i + 1}`, set: c.id, setName: c.name, name, question, color };
+      }),
+    });
+  });
+  PROMPT_ITEMS.splice(0, PROMPT_ITEMS.length, ...PROMPT_SETS.flatMap((s) => s.items));
+  for (const k of Object.keys(PROMPT_BY_ID)) delete PROMPT_BY_ID[k];
+  for (const p of PROMPT_ITEMS) PROMPT_BY_ID[p.id] = p;
+}

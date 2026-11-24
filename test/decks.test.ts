@@ -78,3 +78,22 @@ describe("タロットの詳しい読み(2026-11-24)", () => {
     }
   });
 });
+
+describe("自分の種類(2026-11-24)", () => {
+  it("1 行を言葉と問いに分ける・読み直す・差し替える", async () => {
+    const { splitLine, parseCustomSets, setCustomPromptSets, nextCustomId, PROMPT_SETS: S, PROMPT_BY_ID: B } = await import("../src/decks/prompts");
+    expect(splitLine("感謝: 今日ありがたいことは?")).toEqual(["感謝", "今日ありがたいことは?"]);
+    expect(splitLine("体：今どう感じる?")).toEqual(["体", "今どう感じる?"]);
+    expect(splitLine("一番大事なことは?")).toEqual(["一番大事なことは?", "一番大事なことは?"]);
+    const sets = parseCustomSets(JSON.stringify({ sets: [{ id: "my-1", name: "朝", lines: ["感謝: ありがたいことは?", " ", "体: どう?"] }, { id: "bad", name: "x", lines: [] }] }));
+    expect(sets).toEqual([{ id: "my-1", name: "朝", lines: ["感謝: ありがたいことは?", "体: どう?"] }]);
+    expect(nextCustomId(sets)).toBe("my-2");
+    const before = S.length;
+    setCustomPromptSets(sets);
+    expect(S.length).toBe(before + 1);
+    expect(B["my-1-2"]).toMatchObject({ name: "体", question: "どう?", setName: "朝" });
+    setCustomPromptSets([]);
+    expect(S.length).toBe(before);
+    expect(B["my-1-2"]).toBeUndefined();
+  });
+});

@@ -802,3 +802,10 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .d-item-n { font-weight: 600; }
 .d-item-m { color: var(--muted); }
 .d-qs .chip { white-space: normal; text-align: left; border-radius: 10px; padding: 3px 10px; line-height: 1.45; }
+/* 自分の種類(2026-11-24) */
+.dm-edit { border: 0; background: none; color: var(--muted); width: 24px; height: 24px; border-radius: 4px; cursor: pointer; opacity: 0; }
+.dm-row:hover .dm-edit { opacity: 1; }
+.dm-edit:hover { background: var(--line); color: var(--fg); }
+.dm-add { color: var(--accent); font-size: 13px; }
+.modal.custom-set { width: min(520px, 92vw); }
+.custom-lines { resize: vertical; font: inherit; line-height: 1.6; }

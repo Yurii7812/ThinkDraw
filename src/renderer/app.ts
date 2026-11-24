@@ -6,6 +6,7 @@ import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
 import { exportGroup, type ExportKind } from "./exporter";
 import { cleanKind, DATE } from "../core/records";
+import { CUSTOM_FILE, parseCustomSets, setCustomPromptSets, type CustomPromptSet } from "../decks/prompts";
 import { findRecordNote, KINDS_FILE, parseKinds, parseRecordTitle, RecordsView, type RecordEntry, type RecordKind } from "./records";
 import { showGroupTree } from "./grouptree";
 import type { Rect } from "../core/placement";
@@ -79,6 +80,7 @@ class App {
   /** 紙PKM の画面が出ているか(閉じても取り込みの途中は残すので、画面は消さずに外すだけ) */
   paperOpen = false;
   private kinds: RecordKind[] = [];
+  private customSets: CustomPromptSet[] = [];
   private leftPane!: HTMLElement;
   private leftTitle!: HTMLElement;
   private splitBar: HTMLElement | null = null;
@@ -171,6 +173,8 @@ class App {
       /* 壊れていたら初期値 */
     }
     this.kinds = parseKinds(await api().readApp(KINDS_FILE));
+    this.customSets = parseCustomSets(await api().readApp(CUSTOM_FILE));
+    setCustomPromptSets(this.customSets);
     this.buildUi();
     if (this.vault.broken.length) toast(T.brokenFiles(this.vault.broken.length), 5000);
     this.vault.onChange((ids) => this.onVaultChange(ids));
@@ -897,7 +901,15 @@ class App {
       return;
     }
     const lastTab = this.draw.last.k === "iching" ? "iching" : this.draw.last.k.startsWith("prompt") ? "prompt" : "tarot";
-    openDrawMenu(this.btnDraw.parentElement!, this.draw, tab ?? lastTab, this.canvas.selection.size === 1, (k, q) => this.doDraw(k, q), () => this.saveDraw());
+    openDrawMenu(this.btnDraw.parentElement!, this.draw, tab ?? lastTab, this.canvas.selection.size === 1, (k, q) => this.doDraw(k, q), () => this.saveDraw(), {
+      sets: () => this.customSets,
+      save: (sets) => {
+        this.customSets = sets;
+        setCustomPromptSets(sets);
+        void api().writeApp(CUSTOM_FILE, JSON.stringify({ sets }, null, 2));
+        this.canvas.renderNow();
+      },
+    });
   }
   drawAgain(): void {
     this.doDraw(this.draw.last, "");

@@ -7,11 +7,11 @@ import type { Vault } from "../core/vault";
 import { cardDef, DECKS, spreadDef } from "../decks";
 import { DEFAULT_DRAW, drawIching, drawPrompt, drawTarot, type DrawSettings } from "../decks/draw";
 import { HEX_BY_ID } from "../decks/iching";
-import { PROMPT_SETS } from "../decks/prompts";
+import { CUSTOM_GROUP, nextCustomId, PROMPT_SETS, type CustomPromptSet } from "../decks/prompts";
 import { makeRand, RNG_METHODS, type RngMethod } from "../decks/rng";
 import { faceHeight, hexSvg } from "./cardface";
 import { T } from "./strings";
-import { h, svg } from "./ui";
+import { h, svg, toast } from "./ui";
 
 /** 最後に使った引き方(「引く」ボタンで同じものをもう一度) */
 export type DrawKind =
@@ -162,7 +162,12 @@ export function drawMenuOpen(): boolean {
 /**
  * 引くメニューを開く。go(kind, question) で引く。設定を変えたら save(cfg)。
  */
-export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, hasAnchor: boolean, go: (k: DrawKind, q: string) => void, save: (c: DrawConfig) => void): void {
+export interface CustomSetsHost {
+  sets(): CustomPromptSet[];
+  save(sets: CustomPromptSet[]): void;
+}
+
+export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, hasAnchor: boolean, go: (k: DrawKind, q: string) => void, save: (c: DrawConfig) => void, customs?: CustomSetsHost): void {
   closeDrawMenu();
   const pop = h("div", { class: "drawmenu", role: "dialog" });
   let question = "";
@@ -249,12 +254,38 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
           lastGroup = s.group;
           body.append(h("div", { class: "dm-h", text: s.group }));
         }
+        if (s.id.startsWith("my-") && customs) {
+          // 自分の種類: 押すと並べる・✎ で直す
+          const edit = h("button", { class: "dm-edit", title: T.customEdit, "aria-label": T.customEdit, text: "✎" });
+          edit.addEventListener("click", (e) => {
+            e.stopPropagation();
+            closeDrawMenu();
+            editCustomSet(customs, s.id);
+          });
+          const row = h("div", { class: "dm-row", role: "button", tabindex: "0", title: s.items.map((i) => i.name).join("・") }, h("span", { class: `dm-dot c${s.color}` }), h("span", { class: "dm-row-t", text: s.name }), h("span", { class: "dm-row-n", text: `${s.items.length}枚` }), edit);
+          row.addEventListener("click", () => {
+            if (!s.items.length) return;
+            closeDrawMenu();
+            go({ k: "promptSet", set: s.id }, "");
+          });
+          body.append(row);
+          continue;
+        }
         const row = h("button", { class: "dm-row", title: s.desc + "\n" + s.items.map((i) => i.name).join("・") }, h("span", { class: `dm-dot c${s.color}` }), h("span", { class: "dm-row-t", text: s.name }), h("span", { class: "dm-row-n", text: `${s.items.length}枚` }));
         row.addEventListener("click", () => {
           closeDrawMenu();
           go({ k: "promptSet", set: s.id }, "");
         });
         body.append(row);
+      }
+      if (customs) {
+        if (!customs.sets().length) body.append(h("div", { class: "dm-h", text: CUSTOM_GROUP }));
+        const add = h("button", { class: "dm-row dm-add", text: T.customAdd });
+        add.addEventListener("click", () => {
+          closeDrawMenu();
+          editCustomSet(customs, null);
+        });
+        body.append(add);
       }
     } else {
       const set = (patch: Partial<DrawConfig>) => {
@@ -379,4 +410,48 @@ function position(e: MouseEvent): void {
   if (y + r.height > innerHeight - 8) y = Math.max(8, innerHeight - r.height - 8);
   tip.style.left = x + "px";
   tip.style.top = y + "px";
+}
+
+/** 自分の種類を作る・直す窓。名前と、1 行 1 枚(「言葉: 問い」か問いだけ) */
+function editCustomSet(host: CustomSetsHost, id: string | null): void {
+  const sets = host.sets();
+  const cur = id ? sets.find((s) => s.id === id) : undefined;
+  const name = h("input", { type: "text", class: "ask-input", placeholder: T.customNamePh, value: cur?.name ?? "" }) as HTMLInputElement;
+  const lines = h("textarea", { class: "ask-input custom-lines", rows: 10, placeholder: T.customLinesPh }) as HTMLTextAreaElement;
+  lines.value = (cur?.lines ?? []).join("\n");
+  const ok = h("button", { class: "btn primary", text: "OK" });
+  const cancel = h("button", { class: "btn", text: T.cancel });
+  const del = cur ? h("button", { class: "btn danger", text: T.customDelete }) : null;
+  const box = h(
+    "div",
+    { class: "modal custom-set" },
+    h("div", { class: "modal-title", text: cur ? T.customEditTitle : T.customAddTitle }),
+    h("label", { class: "kind-field" }, h("span", { class: "set-label", text: T.customName }), name),
+    h("label", { class: "kind-field" }, h("span", { class: "set-label", text: T.customLines }), lines),
+    h("p", { class: "muted small", text: T.customHelp }),
+    h("div", { class: "row-end" }, del, h("span", { class: "rec-gap" }), cancel, ok),
+  );
+  const back = h("div", { class: "backdrop" }, box);
+  const close = () => back.remove();
+  for (const el of [name, lines] as HTMLElement[]) el.addEventListener("keydown", (e: KeyboardEvent) => {
+    e.stopPropagation();
+    if (e.key === "Escape") close();
+  });
+  cancel.addEventListener("click", close);
+  del?.addEventListener("click", () => {
+    host.save(sets.filter((s) => s.id !== id));
+    close();
+  });
+  ok.addEventListener("click", () => {
+    const n = name.value.trim();
+    if (!n) return name.focus();
+    const ls = lines.value.split("\n").map((l) => l.trim()).filter(Boolean);
+    const next = cur ? sets.map((s) => (s.id === id ? { ...s, name: n, lines: ls } : s)) : [...sets, { id: nextCustomId(sets), name: n, lines: ls }];
+    host.save(next);
+    close();
+    toast(T.customSaved(n));
+  });
+  back.addEventListener("mousedown", (e) => e.target === back && close());
+  document.body.append(back);
+  name.focus();
 }

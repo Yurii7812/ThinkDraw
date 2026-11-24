@@ -925,3 +925,23 @@ test("2026-11-24: 引用は読むだけ。1 回クリックで選ぶだけ・ダ
   await expect(page.locator(".group-title")).toHaveText("元の箱");
   await expect(page.locator(".node.selected", { hasText: "元の文" })).toHaveCount(1);
 });
+
+test("2026-11-24: 自分の種類を作って、並べる・直す", async () => {
+  await page.locator(".draw-caret").click();
+  await page.locator(".dm-tabs button", { hasText: "発想" }).click();
+  await page.locator(".dm-add").click();
+  await page.locator(".modal.custom-set input").fill("朝の問い");
+  await page.locator(".modal.custom-set textarea").fill("感謝: 今日ありがたいことは?\n体: 今どう感じる?");
+  await page.locator(".modal.custom-set .btn.primary").click();
+  await expect(page.locator(".modal.custom-set")).toHaveCount(0);
+  await page.locator(".draw-caret").click();
+  await page.locator(".dm-tabs button", { hasText: "発想" }).click();
+  await page.locator(".dm-row", { hasText: "朝の問い" }).click();
+  await expect(page.locator(".node.pchip")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  const chip = page.locator(".node.pchip", { hasText: "感謝" });
+  await chip.click();
+  await expect(chip.locator(".pchip-q")).toContainText("今日ありがたいことは?");
+  expect(readFileSync(path.join(vault, ".thinkdraw", "prompt-sets.json"), "utf8")).toContain("朝の問い");
+  await shot("27-custom");
+});
