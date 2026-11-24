@@ -1545,7 +1545,7 @@ test("2026-11-24: グループをよける線は、上・横・下で同じく�
   await shot("36-around");
 });
 
-test("2026-11-24: 線の右クリックで、その種類のいつもの色を決める(色を付けていない線はその色・付けた線はそのまま)", async () => {
+test("2026-11-24: 線の右クリックの「線の設定…」で、種類ごとのいつもの色を決める(色を付けていない線はその色・付けた線はそのまま)", async () => {
   await write(250, 200, "甲");
   await write(650, 200, "乙");
   await write(250, 500, "丙");
@@ -1564,8 +1564,13 @@ test("2026-11-24: 線の右クリックで、その種類のいつもの色を�
   const upper = 1 - lower;
   m = await edgeMid(upper);
   await page.mouse.click(m.x, m.y, { button: "right" });
-  await page.locator(".ctxmenu .item", { hasText: "のいつもの色" }).click();
-  await page.locator(".ctxmenu .submenu .sw.c5").click();
+  await page.locator(".ctxmenu .item", { hasText: "線の設定" }).click();
+  // 種類ごとに 1 行(見本の線・名前・色)
+  await expect(page.locator(".modal.line-settings .ls-row")).toHaveCount(5);
+  await page.locator(".modal.line-settings .ls-row[data-kind='line'] .sw.c5").click();
+  await expect(page.locator(".modal.line-settings .ls-row[data-kind='line'] .sw.c5.active")).toHaveCount(1);
+  await shot("37-line-settings");
+  await page.keyboard.press("Escape");
   await expect(page.locator(`g.edge[data-from='${idOf("甲")}'].c5`)).toHaveCount(1);
   await expect(page.locator(`g.edge[data-from='${idOf("丙")}'].c2`)).toHaveCount(1);
   // 新しく引いた線も、いつもの色

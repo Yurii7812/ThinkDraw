@@ -987,3 +987,12 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .rec-tl-date { display: flex; align-items: baseline; gap: 10px; border: 0; background: none; color: var(--fg); font: inherit; font-size: 14px; font-weight: 600; padding: 12px 0 4px; text-align: left; cursor: pointer; border-bottom: 1px solid var(--line); }
 .rec-tl-date:hover { color: var(--accent); }
 .rec-tl-title { font-weight: 400; color: var(--muted); font-size: 13px; }
+/* 線の設定(2026-11-24) */
+.modal.line-settings { width: min(560px, 94vw); }
+.ls-rows { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 12px; }
+.ls-row { display: flex; align-items: center; gap: 12px; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.ls-preview { flex: none; color: var(--edge); }
+.ls-preview.c1 { color: var(--c1); } .ls-preview.c2 { color: var(--c2); } .ls-preview.c3 { color: var(--c3); } .ls-preview.c4 { color: var(--c4); }
+.ls-preview.c5 { color: var(--c5); } .ls-preview.c6 { color: var(--c6); } .ls-preview.c7 { color: var(--c7); } .ls-preview.c8 { color: var(--c8); }
+.ls-name { width: 6em; font-size: 13px; }
+.ls-sws { display: flex; gap: 6px; flex-wrap: wrap; }

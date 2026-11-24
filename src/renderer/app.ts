@@ -1,5 +1,6 @@
 // 画面全体: 上部バー・キャンバス・右の欄(詳細|グラフ)・ペン・履歴・状態の保存・自動保存
-import { ROOT_ID } from "../core/types";
+import { NEW_LINK_KINDS, ROOT_ID } from "../core/types";
+import { kindPreview } from "./edgeshape";
 import { Vault } from "../core/vault";
 import { Canvas, PRESET_COLORS, refClipboard, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
@@ -325,7 +326,7 @@ class App {
         openTabBehind: (id) => this.openInTab(id, false),
         jump: (target, from) => this.jump(target, from),
         tagCandidates: () => this.tagCandidates(),
-        setKindColor: (k, c) => this.setKindColor(k, c),
+        openLineSettings: () => this.lineSettings(),
         extraEmptyMenu: (g, x, y) => this.dayMenu(g, x, y),
         groupTree: (id, el) => showGroupTree(this.vault, id, el, (g) => this.openGroup(g)),
         openFile: (rel) => void api().openAsset(rel),
@@ -883,6 +884,49 @@ class App {
     const sel = (loc.sel ?? []).filter((i) => this.canvas.rectOf(i));
     if (sel.length) this.canvas.setSelection(sel);
     this.updateBar();
+  }
+
+  /** 線の設定: 種類ごとに、見本の線と色の見本を並べ、1 つずつ決める(2026-11-24 利用者) */
+  lineSettings(): void {
+    const rows = h("div", { class: "ls-rows" });
+    const fill = () => {
+      rows.replaceChildren(
+        ...NEW_LINK_KINDS.map((k) => {
+          const cur = this.config.edgeColors?.[k] ?? 0;
+          const pv = svg("svg", { class: "ls-preview" + (cur ? " c" + cur : ""), viewBox: "0 0 64 14", width: 96, height: 21, "aria-hidden": "true" });
+          pv.innerHTML = kindPreview(k);
+          const sws = h("div", { class: "ls-sws" });
+          for (let c = 0; c <= PRESET_COLORS; c++) {
+            const b = h("button", { class: `sw c${c}${c === cur ? " active" : ""}`, title: c ? `${T.color} ${c}` : T.colorNoDefault, "aria-label": `${T.kinds[k]}: ${c ? T.color + " " + c : T.colorNoDefault}` });
+            b.addEventListener("click", () => {
+              this.setKindColor(k, c);
+              fill();
+            });
+            sws.append(b);
+          }
+          return h("div", { class: "ls-row", "data-kind": k }, pv, h("span", { class: "ls-name", text: T.kinds[k] }), sws);
+        }),
+      );
+    };
+    fill();
+    const ok = h("button", { class: "btn primary", text: "OK" });
+    const box = h("div", { class: "modal line-settings" }, h("div", { class: "modal-title", text: T.lineSettingsTitle }), h("p", { class: "muted small", text: T.lineSettingsHelp }), rows, h("div", { class: "row-end" }, ok));
+    const back = h("div", { class: "backdrop" }, box);
+    const close = () => {
+      back.remove();
+      removeEventListener("keydown", onKey, true);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" || e.key === "Enter") {
+        e.stopPropagation();
+        close();
+      }
+    };
+    ok.addEventListener("click", close);
+    back.addEventListener("mousedown", (e) => e.target === back && close());
+    addEventListener("keydown", onKey, true);
+    document.body.append(back);
+    ok.focus();
   }
 
   /** 線の種類のいつもの色を変える(アプリの設定に覚える。開いている画面を描き直す) */
@@ -1525,6 +1569,8 @@ class App {
       return h("label", { class: "check" }, r, t === "system" ? T.themeSystem : t === "light" ? T.themeLight : T.themeDark);
     });
     const drawSet = h("button", { class: "btn", text: T.drawSettings });
+    const lineSet = h("button", { class: "btn", text: T.lineSettings });
+    lineSet.addEventListener("click", () => this.lineSettings());
     const open = h("button", { class: "btn", text: T.openFolder });
     open.addEventListener("click", async () => {
       const d = await api().chooseVault();
@@ -1557,6 +1603,7 @@ class App {
       h("div", { class: "modal-title", text: T.settingsTitle }),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.theme }), ...radios),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.draw }), drawSet),
+      h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.lineSettingsShort }), lineSet),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.vaultLabel }), h("code", { text: this.dir }), open),
       h("div", { class: "modal-title sub", text: T.shortcutsTitle }),
       table,

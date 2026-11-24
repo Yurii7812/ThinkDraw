@@ -66,7 +66,8 @@ export interface CanvasHost {
   jump?(target: string, from: string): void;
   /** 線の種類ごとのいつもの色(0 = 決めていない) */
   kindColor?(kind: LinkKind): number;
-  setKindColor?(kind: LinkKind, c: number): void;
+  /** 線の設定の画面(種類ごとのいつもの色) */
+  openLineSettings?(): void;
   /** @ を打ったときの候補(時系列記録のしるし・種類と同じ) */
   tagCandidates?(): string[];
 }
@@ -2525,28 +2526,8 @@ export class Canvas {
     for (const k of NEW_LINK_KINDS) items.push({ label: T.kinds[k], preview: kindPreview(k), checked: kind === k, action: () => set({ kind: k }) });
     // 古い種類(太線・対立)の線は、そのまま見せる(選び直すと新しい種類になる)
     if (kind && !NEW_LINK_KINDS.includes(kind)) items.push({ label: T.kinds[kind] + T.oldKind, preview: kindPreview(kind), checked: true, disabled: true });
-    // この種類のいつもの色(色を付けていない線は、この色で描く。2026-11-24 利用者)
-    if (kind && this.host.setKindColor) {
-      const cur = this.host.kindColor?.(kind) ?? 0;
-      items.push({ separator: true, label: "" });
-      items.push({
-        label: T.kindDefaultColor(T.kinds[kind]),
-        sub: [
-          {
-            label: "",
-            swatches: Array.from({ length: PRESET_COLORS + 1 }, (_, c) => ({ color: c, title: c ? `${T.color} ${c}` : T.colorDefault, active: c === cur, action: () => this.host.setKindColor!(kind, c) })),
-          },
-        ],
-      });
-    }
-    if (links.some((x) => x.l.label)) {
-      const size = same((l) => l.size ?? 0);
-      items.push({ separator: true, label: "" });
-      items.push({
-        label: T.labelSize,
-        sub: LABEL_SIZES.map(([name, px]) => ({ label: name, checked: size === px, action: () => set({ size: px || null }) })),
-      });
-    }
+    // 線の設定(種類ごとのいつもの色を、1 つずつ決める画面。2026-11-24 利用者)
+    if (this.host.openLineSettings) items.push({ separator: true, label: "" }, { label: T.lineSettings, action: () => this.host.openLineSettings!() });
     showMenu(x, y, items);
   }
 
