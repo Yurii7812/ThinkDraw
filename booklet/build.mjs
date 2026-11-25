@@ -186,6 +186,18 @@ const pageHtml = (p, n) => `<section class="page ${p.cls}">${p.html}<div class="
 writeFileSync(resolve(out, "book.html"), `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>タロット小冊子</title><style>${css}
 @page{size:105mm 148mm;margin:0}</style></head><body class="read">${pages.map((p, i) => pageHtml(p, i + 1)).join("")}</body></html>`);
 
+// アプリの中で読む用(assets/booklet/reader.html。絵は相対パス。#z=倍率 で拡大縮小)
+{
+  const assetsDir = resolve(root, "assets/booklet");
+  mkdirSync(assetsDir, { recursive: true });
+  const body = pages.map((p, i) => pageHtml(p, i + 1)).join("").replaceAll("file://" + resolve(root, "assets/decks/tarot") + "/", "../decks/tarot/");
+  writeFileSync(
+    resolve(assetsDir, "reader.html"),
+    `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>タロット小冊子</title><style>${css}
+body.read{background:#5b5670;padding:16px 0}body.read .page{box-shadow:0 2px 10px rgba(0,0,0,.35);margin:0 auto 16px}</style></head><body class="read">${body}<script>const z=()=>parseFloat(location.hash.slice(3))||1.8;const ap=()=>{document.body.style.zoom=z()};ap();addEventListener("hashchange",ap)</script></body></html>`,
+  );
+}
+
 // 印刷用: A4 の 1 面に A6 を 4 つ。切って 4 つの山にし、山の順に重ねて左を留める(1 山 = N/4 ページ)
 const per = N / 4; // 1 山のページ数
 const sheets = per / 2; // A4 の枚数(両面)

@@ -233,6 +233,37 @@ export function openCardSearch(current: { id: string; reversed: boolean }, pick:
   input.focus();
 }
 
+/** タロット小冊子を、アプリの中でそのまま読む(全画面。－ ＋ で大きさ・Esc で閉じる) */
+export function openBookletReader(): void {
+  let z = 1.8;
+  const frame = h("iframe", { class: "br-frame", title: T.bookletTitle }) as HTMLIFrameElement;
+  const set = (v: number) => {
+    z = Math.min(3, Math.max(0.8, Math.round(v * 10) / 10));
+    frame.src = `../../assets/booklet/reader.html#z=${z}`;
+    zl.textContent = Math.round(z * 100) + "%";
+  };
+  const zl = h("span", { class: "br-zoom" });
+  const mk = (t: string, label: string, fn: () => void) => {
+    const b = h("button", { class: "tbtn br-btn", title: label, "aria-label": label, text: t });
+    b.addEventListener("click", fn);
+    return b;
+  };
+  const close = () => {
+    root.remove();
+    removeEventListener("keydown", onKey, true);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      close();
+    }
+  };
+  const root = h("section", { class: "booklet-reader", role: "dialog", "aria-label": T.bookletTitle }, h("header", { class: "br-top" }, h("span", { class: "br-title", text: T.bookletTitle }), h("span", { class: "br-gap" }), mk("－", T.bookletSmaller, () => set(z - 0.2)), zl, mk("＋", T.bookletBigger, () => set(z + 0.2)), mk("×", T.close + " (Esc)", close)), frame);
+  addEventListener("keydown", onKey, true);
+  document.body.append(root);
+  set(z);
+}
+
 type Tab = "tarot" | "iching" | "prompt" | "settings";
 let openPop: HTMLElement | null = null;
 export function closeDrawMenu(): void {
@@ -327,11 +358,16 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
           toast(T.bookletFail((e as Error).message));
         }
       };
+      const bv = h("button", { class: "btn small primary", title: T.bookletViewTip, text: T.bookletView });
+      bv.addEventListener("click", () => {
+        closeDrawMenu();
+        openBookletReader();
+      });
       const bp = h("button", { class: "btn small", title: T.bookletPrintTip, text: T.bookletPrint });
       const br = h("button", { class: "btn small", title: T.bookletReadTip, text: T.bookletRead });
       bp.addEventListener("click", save("print"));
       br.addEventListener("click", save("read"));
-      body.append(h("div", { class: "dm-h", text: T.bookletHead }), h("div", { class: "row" }, bp, br), h("div", { class: "dm-note", text: T.bookletHint }));
+      body.append(h("div", { class: "dm-h", text: T.bookletHead }), h("div", { class: "row" }, bv, bp, br), h("div", { class: "dm-note", text: T.bookletHint }));
     } else if (t === "iching") {
       body.append(
         qInput(),

@@ -1870,3 +1870,20 @@ test("2026-11-25: タロット小冊子(PDF)を、デッキのメニューから
   expect(pdf.subarray(0, 4).toString()).toBe("%PDF");
   expect(pdf.length).toBeGreaterThan(1_000_000);
 });
+
+test("2026-11-25: タロット小冊子を、アプリの中でそのまま読める(全画面・拡大縮小・Esc で閉じる)", async () => {
+  await page.locator(".tbtn.draw").click();
+  await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
+  await page.locator(".drawmenu button", { hasText: /^読む$/ }).click();
+  await expect(page.locator(".booklet-reader")).toBeVisible();
+  const fr = page.frameLocator(".br-frame");
+  await expect(fr.locator(".page")).toHaveCount(64);
+  await expect(fr.locator(".page").first()).toContainText("タロット");
+  // 絵が読み込まれている(相対パスで)
+  await expect.poll(() => fr.locator(".cell img").first().evaluate((i) => (i as HTMLImageElement).naturalWidth)).toBeGreaterThan(100);
+  await shot("43-booklet-reader");
+  await page.locator(".br-btn", { hasText: "＋" }).click();
+  await expect(page.locator(".br-zoom")).toHaveText("200%");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".booklet-reader")).toHaveCount(0);
+});
