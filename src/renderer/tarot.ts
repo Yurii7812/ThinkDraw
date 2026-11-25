@@ -15,7 +15,7 @@ import { h, svg, toast } from "./ui";
 
 /** 最後に使った引き方(「引く」ボタンで同じものをもう一度) */
 export type DrawKind =
-  | { k: "tarot"; spread: string | null; count: number }
+  | { k: "tarot"; spread: string | null; count: number; blank?: boolean }
   | { k: "iching" }
   | { k: "prompt"; mode: "one" | "random" }
   | { k: "promptSet"; set: string };
@@ -60,7 +60,8 @@ export function runDraw(t: DrawTarget, cfg: DrawConfig, kind: DrawKind, question
     if (kind.k === "tarot") {
       const sp = kind.spread ? DECKS.tarot.spreads.find((s) => s.id === kind.spread) : undefined;
       const places: Placement[] = sp ? placeSpread(sp, t.center) : placeFree(Math.max(1, Math.min(78, kind.count)), t.center);
-      const cards = drawTarot(places.length, cfg, rand);
+      // 出たものを並べるモード: まだ選んでいない(空の)カードを、形のとおりに置く
+      const cards = kind.blank ? places.map(() => ({ def: { id: "", ja: T.cardBlankName }, reversed: false })) : drawTarot(places.length, cfg, rand);
       const top = Math.min(...places.map((p) => p.y));
       const q = putQuestion(Math.round(t.center.x - 60), Math.round(top - 90));
       places.slice(0, cards.length).forEach((p, i) => {
@@ -157,6 +158,8 @@ export function cardCode(id: string): string {
   if (m[1] === "m") return "M" + n;
   return m[1].toUpperCase() + (n > 10 ? "PNQK"[n - 11] : n);
 }
+/** 大アルカナのカタカナの呼び名(「デビル」「タワー」でも探せる) */
+const KANA: Record<string, string> = { m0: "フール", m1: "マジシャン", m2: "ハイプリエステス", m3: "エンプレス", m4: "エンペラー", m5: "ハイエロファント", m6: "ラバーズ", m7: "チャリオット", m8: "ストレングス", m9: "ハーミット", m10: "ホイールオブフォーチュン", m11: "ジャスティス", m12: "ハングドマン", m13: "デス", m14: "テンパランス", m15: "デビル", m16: "タワー", m17: "スター", m18: "ムーン", m19: "サン", m20: "ジャッジメント", m21: "ワールド" };
 /** 検索: 略号(S1・WP・M0。W11 のような数でも)・日本語名・英語名 */
 export function searchTarot(q: string): CardDefLite[] {
   const t = q.trim().toLowerCase();
@@ -167,7 +170,7 @@ export function searchTarot(q: string): CardDefLite[] {
   const code = num ? u[0] + "PNQK"[Number(num[2]) - 11] : u;
   const exact = all.filter((c) => cardCode(c.id) === code);
   if (exact.length) return exact;
-  return all.filter((c) => cardCode(c.id).startsWith(u) || c.ja.includes(q.trim()) || c.en.toLowerCase().includes(t));
+  return all.filter((c) => cardCode(c.id).startsWith(u) || c.ja.includes(q.trim()) || (KANA[c.id] ?? "").includes(q.trim()) || c.en.toLowerCase().includes(t));
 }
 type CardDefLite = (typeof DECKS.tarot.cards)[number];
 
@@ -253,12 +256,21 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
   const pop = h("div", { class: "drawmenu", role: "dialog" });
   let question = "";
   const tabs: [Tab, string][] = [["tarot", T.deckTarot], ["iching", T.deckIching], ["prompt", T.deckPrompt], ["settings", T.settingsTitle]];
-  const tile = (o: { name: string; sub?: string; pic?: Element | null; big?: boolean; n?: string; run: () => void }) => {
+  const tile = (o: { name: string; sub?: string; pic?: Element | null; big?: boolean; n?: string; run: () => void; blank?: () => void }) => {
     const b = h("button", { class: "dm-tile" + (o.big ? " big" : "") }, o.pic ?? null, h("span", { class: "dm-tx" }, h("b", { text: o.name }), o.sub ? h("small", { text: o.sub }) : null), o.n ? h("i", { class: "dm-n", text: o.n }) : null);
     b.addEventListener("click", () => {
       closeDrawMenu();
       o.run();
     });
+    // 右クリック: 引かずに、紙で出たものを並べるモード(空のカードを形のとおりに置く)
+    if (o.blank) {
+      b.title = T.drawBlankTip;
+      b.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        closeDrawMenu();
+        o.blank!();
+      });
+    }
     return b;
   };
   const qInput = () => {
@@ -285,14 +297,14 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
         ["4〜7 枚", ["diamond", "five", "choice", "hexagram", "horseshoe"]],
         ["たくさん", ["celtic", "tree", "year", "horoscope"]],
       ];
-      body.append(qInput());
+      body.append(qInput(), h("div", { class: "dm-note", text: T.drawBlankHint }));
       for (const [g, ids] of groups) {
         body.append(h("div", { class: "dm-h", text: g }));
         const grid = h("div", { class: "dm-grid" });
         for (const id of ids) {
           const s = DECKS.tarot.spreads.find((x) => x.id === id);
           if (!s) continue;
-          grid.append(tile({ name: s.name.replace(/(.+?)(（.*）)$/, "$1"), sub: s.pos.map((p) => p.name).join("・"), pic: mini(s), n: `${s.pos.length}枚`, run: () => go({ k: "tarot", spread: s.id, count: s.pos.length }, question) }));
+          grid.append(tile({ name: s.name.replace(/(.+?)(（.*）)$/, "$1"), sub: s.pos.map((p) => p.name).join("・"), pic: mini(s), n: `${s.pos.length}枚`, run: () => go({ k: "tarot", spread: s.id, count: s.pos.length }, question), blank: () => go({ k: "tarot", spread: s.id, count: s.pos.length, blank: true }, question) }));
         }
         body.append(grid);
       }
@@ -427,7 +439,7 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
 }
 
 addEventListener("pointerdown", (e) => {
-  if (openPop && !openPop.contains(e.target as Node) && !(e.target as Element).closest?.(".draw-caret")) closeDrawMenu();
+  if (openPop && !openPop.contains(e.target as Node) && !(e.target as Element).closest?.(".tbtn.draw")) closeDrawMenu();
 }, true);
 addEventListener("keydown", (e) => {
   if (e.key === "Escape" && openPop) {

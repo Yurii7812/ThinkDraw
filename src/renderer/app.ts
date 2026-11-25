@@ -259,8 +259,7 @@ class App {
     });
     const search = h("button", { class: "searchbox", text: T.searchPlaceholder });
     search.addEventListener("click", () => this.search());
-    this.btnDraw = btn("draw", "", () => this.drawAgain(), T.draw, "draw");
-    const caret = btn("draw-caret", T.drawMenu, () => this.openDraw(), "▾");
+    this.btnDraw = btn("draw", T.drawMenu, () => this.openDraw(), T.draw, "draw");
     this.btnPen = btn("i-pen", T.penOn, () => this.togglePen(), T.pen, "pen");
     // ボードに添付(ファイル・チェックリスト・表をノードとして置く)。いま使っている画面に入る
     const attachBtn = btn("attach-btn", T.attachBtnTip, () => (this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas).openAttachMenu(attachBtn), T.attachBtn, "attach");
@@ -280,7 +279,7 @@ class App {
         btn("surround-btn", T.surroundTip, () => this.toggleSurround(), T.surroundBtn, "surround"),
         btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn, "whole"),
         btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn, "export"),
-        h("div", { class: "split" }, this.btnDraw, caret),
+        h("div", { class: "split" }, this.btnDraw),
         btn("i-theme", T.theme, () => this.setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")),
         btn("i-settings", T.settings + " (Ctrl+/)", () => this.settings()),
       ),
@@ -1124,7 +1123,7 @@ class App {
   }
 
   private updateDrawTitle(): void {
-    this.btnDraw.title = `${T.draw}: ${drawLabel(this.draw.last)}(▾ で種類を選ぶ)`;
+    this.btnDraw.title = T.drawMenu;
   }
   private saveDraw(): void {
     this.config.draw = this.draw;
@@ -1151,8 +1150,10 @@ class App {
     this.doDraw(this.draw.last, "");
   }
   private doDraw(k: DrawKind, question: string): void {
-    this.draw.last = k;
-    this.saveDraw();
+    if (!(k.k === "tarot" && k.blank)) {
+      this.draw.last = k;
+      this.saveDraw();
+    }
     const anchor = this.canvas.selection.size === 1 ? [...this.canvas.selection][0] : null;
     const ids = runDraw(
       { vault: this.vault, group: this.canvas.group, center: this.canvas.visibleCenter(), anchor, spotNear: (id) => this.canvas.spot(id), obstacles: this.canvas.obstacles() },

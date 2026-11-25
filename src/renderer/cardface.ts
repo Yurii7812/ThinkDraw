@@ -1,4 +1,5 @@
 // カードの絵(タロットの画像・易の卦・発想カード)。キャンバス・右の欄・引くメニューで同じものを使う
+import { T } from "./strings";
 import type { CardRef } from "../core/types";
 import { cardDef } from "../decks";
 import { HEX_BY_ID } from "../decks/iching";
@@ -42,6 +43,8 @@ export function cardFace(c: CardRef, height: number): HTMLElement {
     );
   }
   const def = cardDef(c.deck, c.id);
+  // まだ選んでいないカード(出たものを並べるモード。押すと入力画面)
+  if (c.deck === "tarot" && !c.id) return h("div", { class: "face cardblank", style: `height:${height}px`, title: T.cardBlankTip }, h("span", { text: "？" }));
   const img = h("img", { src: def ? cardImageUrl(c.deck, def.file) : "", alt: def?.ja ?? "", draggable: "false" });
   if (c.reversed) img.classList.add("reversed");
   return h("div", { class: "face cardimg", style: `height:${height}px` }, img);

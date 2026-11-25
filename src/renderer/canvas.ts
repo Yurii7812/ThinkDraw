@@ -1630,6 +1630,11 @@ export class Canvas {
       this.setSelection([id]);
       return this.host.openBody(id);
     }
+    // まだ選んでいないタロットカード(出たものを並べるモード): 押すと入力画面
+    if (node.type === "card" && node.card?.deck === "tarot" && !node.card.id && !this.readOnly) {
+      this.setSelection([id]);
+      return this.assignCard(id);
+    }
     if (node.type === "text" && !node.file && !node.paper) {
       this.setSelection([id]);
       return this.open(id, target);
@@ -1640,6 +1645,19 @@ export class Canvas {
       return;
     }
     this.open(id, target);
+  }
+
+  /** 紙で出たカードを、略号・名前で探して当てはめる(まだ選んでいないカードを押したときも) */
+  assignCard(id: string): void {
+    const cur = this.v.get(id)?.card;
+    if (!cur || cur.deck !== "tarot") return;
+    openCardSearch({ id: cur.id, reversed: cur.reversed }, (cid, rev) => {
+      const def = cardDef("tarot", cid);
+      this.v.tx(() => {
+        this.v.setCard(id, { ...cur, id: cid, reversed: rev });
+        if (def) this.v.update(id, { title: def.ja });
+      });
+    });
   }
 
   /** 開く: 文字は書き直し、グループは中へ、ノート・カードは本文 */
@@ -2232,18 +2250,7 @@ export class Canvas {
     items.push({ ...this.colorItem(ids), label: texts ? T.textColorShort : T.color });
     if (texts) items.push({ ...this.fillItem(ids), label: T.fillShort });
     if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") {
-      const cur = n.card;
-      items.push({
-        label: T.cardAssign,
-        action: () =>
-          openCardSearch({ id: cur.id, reversed: cur.reversed }, (cid, rev) => {
-            const def = cardDef("tarot", cid);
-            this.v.tx(() => {
-              this.v.setCard(id, { ...cur, id: cid, reversed: rev });
-              if (def) this.v.update(id, { title: def.ja });
-            });
-          }),
-      });
+      items.push({ label: T.cardAssign, action: () => this.assignCard(id) });
     }
     items.push({ separator: true, label: "" });
     // 別のグループへ(移す・入れる・引用・外す)

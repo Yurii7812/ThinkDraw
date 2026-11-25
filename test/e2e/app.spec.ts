@@ -148,7 +148,7 @@ test("ノートは大画面で開く・Ctrl+L で検索してリンク・バッ�
 });
 
 test("タロット: 引くメニューから置き、右の欄に解説、押すとつながった文字", async () => {
-  await page.locator(".draw-caret").click();
+  await page.locator(".tbtn.draw").click();
   await expect(page.locator(".drawmenu")).toBeVisible();
   await page.locator(".dm-q").fill("仕事はどうなる?");
   await page.locator(".dm-tile", { hasText: "ケルト十字" }).click();
@@ -181,13 +181,13 @@ test("タロット: 引くメニューから置き、右の欄に解説、押す
 });
 
 test("易と発想カード", async () => {
-  await page.locator(".draw-caret").click();
+  await page.locator(".tbtn.draw").click();
   await page.locator(".dm-tabs button", { hasText: "易" }).click();
   await page.locator(".dm-tile", { hasText: "卦を立てる" }).click();
   await expect(page.locator(".node.deck-iching").first()).toBeVisible();
   await page.locator(".node.deck-iching").first().click();
   await expect(page.locator(".side-panel")).toContainText("易の読み方");
-  await page.locator(".draw-caret").click();
+  await page.locator(".tbtn.draw").click();
   await page.locator(".dm-tabs button", { hasText: "発想" }).click();
   await expect(page.locator(".drawmenu.narrow")).toBeVisible(); // 発想は細いメニュー(1 行ずつ)
   await page.locator(".dm-row", { hasText: "SCAMPER" }).click();
@@ -201,9 +201,10 @@ test("易と発想カード", async () => {
   await expect(chip.locator(".pchip-q")).toContainText("別のものに替えたら");
   await expect(page.locator(".main.side-open")).toHaveCount(0);
   await shot("06-iching-prompt");
-  // 「引く」ボタンは最後の引き方をもう一度
+  // デッキのボタンは、押すと一覧が出る(引いたものがいきなり出ない)
   await page.locator(".tbtn.draw").click();
-  await expect(page.locator(".node.deck-prompt")).toHaveCount(14);
+  await expect(page.locator(".drawmenu")).toBeVisible();
+  await expect(page.locator(".node.deck-prompt")).toHaveCount(7);
 });
 
 test("ペン: 描く・選んで消す・元に戻す", async () => {
@@ -304,7 +305,7 @@ test("外部のエディタの変更を取り込む・ダーク・設定の画�
   writeFileSync(path.join(vault, name), src.replace("title: 外から直す", "title: 直された"));
   await expect(page.locator(".node", { hasText: "直された" })).toBeVisible();
   await page.locator(".i-theme").click();
-  await page.locator(".draw-caret").click();
+  await page.locator(".tbtn.draw").click();
   await page.locator(".dm-tile", { hasText: "過去・現在・未来" }).click();
   await page.locator(".node.t-card").first().click();
   await shot("09-dark");
@@ -318,7 +319,7 @@ test("右の欄: 文字では開かない・カードを選ぶと自動で開く
   await expect(page.locator("textarea.draft")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(page.locator(".main.side-open")).toHaveCount(0);
-  await page.locator(".draw-caret").click();
+  await page.locator(".tbtn.draw").click();
   await page.locator(".dm-tile", { hasText: "過去・現在・未来" }).click();
   await page.locator(".node.t-card").first().click();
   await expect(page.locator(".main.side-open")).toHaveCount(1);
@@ -969,14 +970,14 @@ test("2026-11-24: 引用は読むだけ。1 回クリックで選ぶだけ・ダ
 });
 
 test("2026-11-24: 自分の種類を作って、並べる・直す", async () => {
-  await page.locator(".draw-caret").click();
+  await page.locator(".tbtn.draw").click();
   await page.locator(".dm-tabs button", { hasText: "発想" }).click();
   await page.locator(".dm-add").click();
   await page.locator(".modal.custom-set input").fill("朝の問い");
   await page.locator(".modal.custom-set textarea").fill("感謝: 今日ありがたいことは?\n体: 今どう感じる?");
   await page.locator(".modal.custom-set .btn.primary").click();
   await expect(page.locator(".modal.custom-set")).toHaveCount(0);
-  await page.locator(".draw-caret").click();
+  await page.locator(".tbtn.draw").click();
   await page.locator(".dm-tabs button", { hasText: "発想" }).click();
   await page.locator(".dm-row", { hasText: "朝の問い" }).click();
   await expect(page.locator(".node.pchip")).toHaveCount(2);
@@ -1641,27 +1642,31 @@ test("2026-11-25 修正9: Ctrl+J は、その日のボードが無くても作�
   await expect(page.locator(".rec-task")).toHaveCount(0);
 });
 
-test("2026-11-25 修正9: 並べたカードを右クリックして、紙で出たカードに略号(S1・WP)で当てはめる", async () => {
-  await page.locator(".draw-caret").click();
+test("2026-11-25 修正9: 形を右クリックで、空のカードを並べる → 押して S1・WP・愚者 などを入れる", async () => {
+  await page.locator(".tbtn.draw").click();
   await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
-  await page.locator(".dm-tile").first().click(); // 1 枚引く
-  await expect(page.locator(".node.t-card")).toHaveCount(1);
-  const pick = async (q: string, shift = false) => {
-    await page.locator(".node.t-card").click({ button: "right" });
-    await page.locator(".ctxmenu .item", { hasText: "紙で出たカードにする" }).click();
-    await page.locator(".modal.manual .manual-card").fill(q);
-    await page.keyboard.press(shift ? "Shift+Enter" : "Enter");
-  };
-  await pick("WP");
+  await page.locator(".dm-tile", { hasText: "過去・現在・未来" }).first().click({ button: "right" });
+  await expect(page.locator(".node.t-card")).toHaveCount(3);
+  await expect(page.locator(".face.cardblank")).toHaveCount(3);
+  await shot("39-blank-cards");
+  // 空のカードを押すと入力画面
+  await page.locator(".node.t-card").nth(0).click();
+  await page.locator(".modal.manual .manual-card").fill("WP");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".face.cardblank")).toHaveCount(2);
+  await page.locator(".face.cardblank").first().click();
+  await page.locator(".modal.manual .manual-card").fill("s1");
+  await page.keyboard.press("Shift+Enter"); // 逆位置
+  await page.locator(".face.cardblank").first().click();
+  await page.locator(".modal.manual .manual-card").fill("デビル");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".face.cardblank")).toHaveCount(0);
   await settle();
-  expect(Object.values(mdFiles()).find((t) => t.includes("type: card"))!).toContain("id: w11");
-  await shot("39-card-assign");
-  await pick("s1", true); // 逆位置
-  await settle();
-  const md = Object.values(mdFiles()).find((t) => t.includes("type: card"))!;
-  expect(md).toContain("id: s1");
-  expect(md).toContain("reversed: true");
-  await pick("m0");
-  await settle();
-  expect(Object.values(mdFiles()).find((t) => t.includes("type: card"))!).toContain("id: m0");
+  const cards = Object.values(mdFiles()).filter((t) => t.includes("type: card"));
+  expect(cards.length).toBe(3);
+  for (const id of ["w11", "s1", "m15"]) expect(cards.some((t) => t.includes(`id: ${id}`))).toBe(true);
+  expect(cards.filter((t) => t.includes("reversed: true")).length).toBe(1);
+  // 入れたあとも、右クリックで入れ替えられる
+  await page.locator(".node.t-card").first().click({ button: "right" });
+  await expect(page.locator(".ctxmenu .item", { hasText: "紙で出たカードにする" })).toBeVisible();
 });

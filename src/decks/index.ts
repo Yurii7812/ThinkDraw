@@ -64,5 +64,6 @@ export function cardName(c: CardRef): string {
     return h ? `第${h.num}卦 ${h.name}` : c.id;
   }
   if (c.deck === "prompt") return PROMPT_BY_ID[c.id]?.name ?? c.id;
+  if (c.deck === "tarot" && !c.id) return "(まだ選んでいない)";
   return (cardDef(c.deck, c.id)?.ja ?? c.id) + (c.reversed ? "(逆位置)" : "");
 }

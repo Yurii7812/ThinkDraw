@@ -408,7 +408,7 @@ input, textarea { font: inherit; color: inherit; }
 
 /* ---------- 引くメニュー ---------- */
 .split { display: inline-flex; }
-.tbtn.draw { border-radius: 6px 0 0 6px; }
+.tbtn.draw { border-radius: 6px; }
 .tbtn.draw-caret { border: 1px solid var(--line); border-left: 0; border-radius: 0 6px 6px 0; font-size: 11px; min-width: 22px; padding: 0 4px; color: var(--fg); }
 .tbtn.i-pen, .tbtn.export { white-space: nowrap; font-size: 13px; color: var(--fg); border: 1px solid var(--line); padding: 0 10px; }
 .tbtn.i-pen.on { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -1023,3 +1023,5 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .card-result { display: flex; align-items: baseline; gap: 10px; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
 .card-result.on, .card-result:hover { background: var(--accent-soft); }
 .card-code { width: 36px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.face.cardblank { width: 100%; display: flex; align-items: center; justify-content: center; border: 2px dashed var(--line); border-radius: 8px; background: var(--card); color: var(--muted); font-size: 28px; cursor: pointer; box-sizing: border-box; }
+.face.cardblank:hover { border-color: var(--accent); color: var(--accent); }
