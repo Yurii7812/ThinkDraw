@@ -2016,3 +2016,20 @@ test("2026-11-25 修正11: Tab で書く文字は、グループと囲いをよ�
 
 
 
+
+test("2026-11-25: 画像や HTML に書き出すと、タロットの絵柄も入る", async () => {
+  await page.locator(".tbtn.draw").click();
+  await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
+  await page.locator(".dm-tile").first().click();
+  await expect(page.locator(".node.t-card")).toHaveCount(1);
+  await page.locator(".tbtn.export").click();
+  await page.getByText("HTML(.html)").first().click(); // 選んでいるカードを書き出す
+  await page.locator(".tbtn.export").click();
+  await page.getByText("画像(.png)").first().click();
+  await expect.poll(() => readdirSync(exportDir).sort()).toEqual(["ホーム-選択.html", "ホーム-選択.png"]);
+  const html = readFileSync(path.join(exportDir, "ホーム-選択.html"), "utf8");
+  expect(html).toMatch(/<image [^>]*href="data:image\/jpeg;base64,/);
+  // 絵が入った PNG は、文字だけのときよりずっと大きい
+  expect(readFileSync(path.join(exportDir, "ホーム-選択.png")).length).toBeGreaterThan(30_000);
+  if (shots) writeFileSync(path.join(shots, "44-export-tarot.png"), readFileSync(path.join(exportDir, "ホーム-選択.png")));
+});

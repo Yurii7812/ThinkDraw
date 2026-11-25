@@ -169,6 +169,12 @@ function registerIpc(): void {
     if (!/^(full|upright)-(A6|print-\d{1,2})$/.test(kind)) throw new Error("bad booklet kind");
     return new Uint8Array(await fs.readFile(path.join(__dirname, "../../assets/booklet", `tarot-${kind}.pdf`)));
   });
+  // 書き出しに埋め込むために、デッキのカードの絵を読む(アプリに同梱の assets/decks の中だけ)
+  ipcMain.handle("deck:image", async (_e, deck: string, file: string) => {
+    if (!/^[a-z]+$/.test(deck) || !/^[\w.-]+$/.test(file)) return null;
+    const f = path.join(__dirname, "../../assets/decks", deck, file);
+    return existsSync(f) ? new Uint8Array(await fs.readFile(f)) : null;
+  });
   ipcMain.handle("booklet:volumes", async () => JSON.parse(await fs.readFile(path.join(__dirname, "../../assets/booklet/volumes.json"), "utf8")));
   ipcMain.handle("vault:saveAttachment", (_e, name: string, data: Uint8Array) => needIO().saveAttachment(name, data));
   // 書き出しに埋め込むために、添付の中身を読む(vault の assets の中だけ)

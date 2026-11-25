@@ -5,6 +5,8 @@ import { ROOT_ID } from "../core/types";
 import type { Vault } from "../core/vault";
 import { strokeD, type Canvas } from "./canvas";
 import { api, toast } from "./ui";
+import { cardDef, spreadDef } from "../decks";
+import { CARD_H } from "../core/spreadLayout";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -18,6 +20,11 @@ export interface ExportSel {
 }
 
 const IMG_MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", avif: "image/avif" };
+function b64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode(...bytes.subarray(k, k + 0x8000));
+  return btoa(bin);
+}
 /** 添付した画像を、書き出しの SVG に埋め込める形(data URL)で読み込む。id → data URL */
 export async function loadImages(v: Vault, group: string, sel?: ExportSel): Promise<Map<string, string>> {
   const out = new Map<string, string>();
@@ -26,15 +33,25 @@ export async function loadImages(v: Vault, group: string, sel?: ExportSel): Prom
     v.itemsOf(group).map(async (i) => {
       const n0 = v.get(i.id);
       const n = n0?.type === "alias" && n0.target ? v.get(n0.target) : n0;
-      if (!n || n.type !== "text" || !n.file || (only && !only.has(i.id))) return;
+      if (!n || (only && !only.has(i.id))) return;
+      // タロットのカードの絵(2026-11-25 利用者「画像で出力するときにタロットの絵柄が出ない」)
+      const def = n.type === "card" && n.card?.deck === "tarot" ? cardDef("tarot", n.card.id) : undefined;
+      if (def) {
+        try {
+          const bytes = await api().deckImage("tarot", def.file);
+          if (bytes) out.set(i.id, `data:${IMG_MIME[(def.file.split(".").pop() ?? "jpg").toLowerCase()] ?? "image/jpeg"};base64,${b64(bytes)}`);
+        } catch {
+          /* 読めないときは名前の文字で出す */
+        }
+        return;
+      }
+      if (n.type !== "text" || !n.file) return;
       const mime = IMG_MIME[(n.file.split(".").pop() ?? "").toLowerCase()];
       if (!mime) return;
       try {
         const bytes = await api().readAsset(n.file);
         if (!bytes) return;
-        let bin = "";
-        for (let k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode(...bytes.subarray(k, k + 0x8000));
-        out.set(i.id, `data:${mime};base64,${btoa(bin)}`);
+        out.set(i.id, `data:${mime};base64,${b64(bytes)}`);
       } catch {
         /* 読めない画像は、名前の文字で出す */
       }
@@ -116,6 +133,15 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
       if (n.fill) parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="4" fill="${col(n.fill)}" fill-opacity="0.28"/>`);
       const lines = (n.title || "(無題)").split("\n");
       parts.push(text(lines, r.y + 19 + (r.h - lines.length * 22) / 2 - 2, col(n.color)));
+    } else if (n.type === "card" && images.has(i.id)) {
+      // タロット: 絵(逆位置は逆さ)と、その下に名前・位置の名前
+      const fh = CARD_H, cxm = r.x + r.w / 2, cym = r.y + fh / 2;
+      const rot = n.card?.reversed ? ` transform="rotate(180 ${cxm} ${cym})"` : "";
+      parts.push(`<image x="${r.x}" y="${r.y}" width="${r.w}" height="${fh}" preserveAspectRatio="xMidYMid slice" href="${images.get(i.id)}"${rot}/>`);
+      parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${fh}" rx="6" fill="none" stroke="${n.color ? col(n.color) : line}" stroke-width="${n.color ? 3 : 1}"/>`);
+      parts.push(`<text x="${cxm}" y="${r.y + fh + 16}" text-anchor="middle" fill="${fg}" font-size="12">${esc(labelOf(n))}</text>`);
+      const pos = n.spread?.pos ? spreadDef("tarot", n.spread.spread)?.pos.find((p) => p.id === n.spread!.pos) : undefined;
+      if (pos) parts.push(`<text x="${cxm}" y="${r.y + fh + 31}" text-anchor="middle" fill="${edge}" font-size="11">${esc(pos.name)}</text>`);
     } else if (n.type === "group" || n.type === "note" || n.card) {
       const fillc = n.type === "group" ? grp : card;
       parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${n.type === "group" ? 10 : 8}" fill="${fillc}" stroke="${n.color ? col(n.color) : line}" stroke-width="${n.color ? 2 : 1}"/>`);
@@ -124,7 +150,7 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
       parts.push(text([lab], body ? r.y + 26 : r.y + r.h / 2 + 5, fg, "600"));
       if (body) parts.push(text([body], r.y + 50, edge));
     }
-    if (i.ref || isAlias) parts.push(`<rect x="${r.x - 4}" y="${r.y - 4}" width="${r.w + 8}" height="${r.h + 8}" rx="6" fill="none" stroke="${edge}" stroke-dasharray="5 4"/>`);
+    if (i.ref || isAlias) parts.push(`<rect x="${r.x - 4}" y="${r.y - 4}" width="${r.w + 8}" height="${r.h + 8}" rx="6" fill="none" stroke="#3f9f5f" stroke-width="2"/>`); // 引用は緑の枠(修正11)
   }
   parts.push("</g>");
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join("")}</svg>`;

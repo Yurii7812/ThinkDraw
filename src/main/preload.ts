@@ -16,6 +16,7 @@ const api = {
   saveAttachment: (name: string, data: Uint8Array): Promise<string> => ipcRenderer.invoke("vault:saveAttachment", name, data),
   bookletRead: (kind: string): Promise<Uint8Array> => ipcRenderer.invoke("booklet:read", kind),
   bookletVolumes: (): Promise<Record<"full" | "upright", { pages: number; vols: { n: number; from: number; to: number; pages: number; sheets: number }[] }>> => ipcRenderer.invoke("booklet:volumes"),
+  deckImage: (deck: string, file: string): Promise<Uint8Array | null> => ipcRenderer.invoke("deck:image", deck, file),
   readAsset: (rel: string): Promise<Uint8Array | null> => ipcRenderer.invoke("asset:read", rel),
   openAsset: (rel: string): Promise<string> => ipcRenderer.invoke("asset:open", rel),
   urlTitle: (url: string): Promise<string | null> => ipcRenderer.invoke("url:title", url),
