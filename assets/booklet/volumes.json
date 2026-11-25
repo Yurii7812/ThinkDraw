@@ -1,20 +1,54 @@
-[
- {
-  "n": 1,
-  "name": "入門・スプレッド・大アルカナ",
-  "pages": 64,
-  "sheets": 8
+{
+ "full": {
+  "pages": 144,
+  "vols": [
+   {
+    "n": 1,
+    "from": 1,
+    "to": 48,
+    "pages": 48,
+    "sheets": 6
+   },
+   {
+    "n": 2,
+    "from": 49,
+    "to": 96,
+    "pages": 48,
+    "sheets": 6
+   },
+   {
+    "n": 3,
+    "from": 97,
+    "to": 144,
+    "pages": 48,
+    "sheets": 6
+   }
+  ]
  },
- {
-  "n": 2,
-  "name": "ワンドとカップ",
-  "pages": 48,
-  "sheets": 6
- },
- {
-  "n": 3,
-  "name": "ソードとペンタクル",
-  "pages": 48,
-  "sheets": 6
+ "upright": {
+  "pages": 120,
+  "vols": [
+   {
+    "n": 1,
+    "from": 1,
+    "to": 40,
+    "pages": 40,
+    "sheets": 5
+   },
+   {
+    "n": 2,
+    "from": 41,
+    "to": 80,
+    "pages": 40,
+    "sheets": 5
+   },
+   {
+    "n": 3,
+    "from": 81,
+    "to": 120,
+    "pages": 40,
+    "sheets": 5
+   }
+  ]
  }
-]
+}

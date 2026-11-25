@@ -1058,4 +1058,10 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .cardtip .ct-meaning { margin-top: 4px; }
 .d-tarot-top .d-face.big, .d-tarot-top .d-face.big .face { width: 66px; }
 .d-tarot-top { padding-bottom: 6px; }
-.bk-vols { flex-wrap: wrap; gap: 4px; }
+.bk-eds { display: flex; flex-direction: column; gap: 4px; }
+.bk-ed { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.bk-name { font-size: 12px; font-weight: 600; min-width: 9.5em; }
+.bk-print { font-size: 11px; color: var(--muted); margin-left: 4px; }
+.br-ed { display: flex; gap: 2px; margin-left: 12px; padding: 2px; background: var(--line); border-radius: 7px; }
+.br-ed button { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 3px 10px; border-radius: 5px; cursor: pointer; }
+.br-ed button.on { background: var(--bg); color: var(--fg); }

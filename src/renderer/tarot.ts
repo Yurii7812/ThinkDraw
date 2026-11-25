@@ -233,14 +233,18 @@ export function openCardSearch(current: { id: string; reversed: boolean }, pick:
   input.focus();
 }
 
-/** タロット小冊子を、アプリの中でそのまま読む(全画面。－ ＋ で大きさ・Esc で閉じる) */
-export function openBookletReader(): void {
+/** タロット解説書を、アプリの中でそのまま読む(全画面。正逆／正位置だけを切り替え・－ ＋ で大きさ・Esc で閉じる) */
+export function openBookletReader(ed: "full" | "upright" = "full"): void {
   let z = 1.8;
   const frame = h("iframe", { class: "br-frame", title: T.bookletTitle }) as HTMLIFrameElement;
+  const load = () => {
+    frame.src = `../../assets/booklet/reader-${ed}.html#z=${z}`;
+    zl.textContent = Math.round(z * 100) + "%";
+    for (const b of sw.querySelectorAll<HTMLElement>("button")) b.classList.toggle("on", b.dataset.ed === ed);
+  };
   const set = (v: number) => {
     z = Math.min(3, Math.max(0.8, Math.round(v * 10) / 10));
-    frame.src = `../../assets/booklet/reader.html#z=${z}`;
-    zl.textContent = Math.round(z * 100) + "%";
+    load();
   };
   const zl = h("span", { class: "br-zoom" });
   const mk = (t: string, label: string, fn: () => void) => {
@@ -248,6 +252,14 @@ export function openBookletReader(): void {
     b.addEventListener("click", fn);
     return b;
   };
+  const sw = h("div", { class: "br-ed" }, ...(["full", "upright"] as const).map((e) => {
+    const b = h("button", { "data-ed": e, text: T.bookletEdShort(e) });
+    b.addEventListener("click", () => {
+      ed = e;
+      load();
+    });
+    return b;
+  }));
   const close = () => {
     root.remove();
     removeEventListener("keydown", onKey, true);
@@ -258,10 +270,10 @@ export function openBookletReader(): void {
       close();
     }
   };
-  const root = h("section", { class: "booklet-reader", role: "dialog", "aria-label": T.bookletTitle }, h("header", { class: "br-top" }, h("span", { class: "br-title", text: T.bookletTitle }), h("span", { class: "br-gap" }), mk("－", T.bookletSmaller, () => set(z - 0.2)), zl, mk("＋", T.bookletBigger, () => set(z + 0.2)), mk("×", T.close + " (Esc)", close)), frame);
+  const root = h("section", { class: "booklet-reader", role: "dialog", "aria-label": T.bookletTitle }, h("header", { class: "br-top" }, h("span", { class: "br-title", text: T.bookletTitle }), sw, h("span", { class: "br-gap" }), mk("－", T.bookletSmaller, () => set(z - 0.2)), zl, mk("＋", T.bookletBigger, () => set(z + 0.2)), mk("×", T.close + " (Esc)", close)), frame);
   addEventListener("keydown", onKey, true);
   document.body.append(root);
-  set(z);
+  load();
 }
 
 type Tab = "tarot" | "iching" | "prompt" | "settings";
@@ -347,7 +359,7 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
         go({ k: "tarot", spread: null, count: Math.max(1, Math.min(78, Number(count.value) || 1)) }, question);
       });
       body.append(h("div", { class: "dm-h", text: T.drawFree }), h("div", { class: "row" }, count, h("span", { text: "枚" }), free));
-      // タロット小冊子(A6・カラー。カードをクリックしたときの表示を全部載せた解説つき)
+      // ウェイト版タロット解説書(A6)。正逆の版と、正位置だけの版。どちらも読める・PDF で保存できる・コンビニで印刷できる
       const saveAs = (kind: string, file: string) => async () => {
         closeDrawMenu();
         try {
@@ -358,22 +370,25 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
           toast(T.bookletFail((e as Error).message));
         }
       };
-      const bv = h("button", { class: "btn small primary", title: T.bookletViewTip, text: T.bookletView });
-      bv.addEventListener("click", () => {
-        closeDrawMenu();
-        openBookletReader();
-      });
-      const br = h("button", { class: "btn small", title: T.bookletReadTip, text: T.bookletRead });
-      br.addEventListener("click", saveAs("read", T.bookletReadFile));
-      const vols = h("div", { class: "row bk-vols" });
-      void api().bookletVolumes().then((list) => {
-        for (const v of list) {
-          const b = h("button", { class: "btn small", "data-vol": String(v.n), title: T.bookletVolTip(v.pages, v.sheets), text: `${v.n} ${v.name}` });
-          b.addEventListener("click", saveAs(`print-${v.n}`, T.bookletPrintFile(v.n, v.name)));
-          vols.append(b);
+      const eds = h("div", { class: "bk-eds" });
+      void api().bookletVolumes().then((info) => {
+        for (const ed of ["full", "upright"] as const) {
+          const bv = h("button", { class: "btn small primary", title: T.bookletViewTip, text: T.bookletView });
+          bv.addEventListener("click", () => {
+            closeDrawMenu();
+            openBookletReader(ed);
+          });
+          const br = h("button", { class: "btn small", title: T.bookletReadTip, text: T.bookletRead });
+          br.addEventListener("click", saveAs(`${ed}-A6`, T.bookletReadFile(ed)));
+          const vols = info[ed].vols.map((v) => {
+            const b = h("button", { class: "btn small", "data-ed": ed, "data-vol": String(v.n), title: T.bookletVolTip(v.from, v.to, v.sheets), text: T.bookletVol(v.n) });
+            b.addEventListener("click", saveAs(`${ed}-print-${v.n}`, T.bookletPrintFile(ed, v.n)));
+            return b;
+          });
+          eds.append(h("div", { class: "bk-ed", "data-ed": ed }, h("span", { class: "bk-name", text: T.bookletEd(ed, info[ed].pages) }), bv, br, h("span", { class: "bk-print", text: T.bookletPrintHead }), ...vols));
         }
       });
-      body.append(h("div", { class: "dm-h", text: T.bookletHead }), h("div", { class: "row" }, bv, br), h("div", { class: "dm-note", text: T.bookletPrintHead }), vols, h("div", { class: "dm-note", text: T.bookletHint }));
+      body.append(h("div", { class: "dm-h", text: T.bookletHead }), eds, h("div", { class: "dm-note", text: T.bookletHint }));
     } else if (t === "iching") {
       body.append(
         qInput(),

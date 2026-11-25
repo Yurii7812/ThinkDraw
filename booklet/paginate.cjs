@@ -1,4 +1,4 @@
-// electron booklet/paginate.cjs → out/measure.html のブロックの高さを測り、ページの切れ目を booklet/pages.json に書く
+// electron booklet/paginate.cjs <full|upright> → out/measure-<版>.html のブロックの高さを測り、ページの切れ目を booklet/pages-<版>.json に書く
 // 決まり: 見出しは次と一緒に・カードの頭は見出しと最初の 1 行まで一緒に・スートが変わったら新しいページ
 const { app, BrowserWindow } = require("electron");
 const { writeFileSync } = require("node:fs");
@@ -6,7 +6,8 @@ const path = require("node:path");
 app.disableHardwareAcceleration();
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, width: 800, height: 1000, webPreferences: { offscreen: true } });
-  await win.loadFile(path.resolve(__dirname, "out/measure.html"));
+  const ed = process.argv[process.argv.length - 1] === "upright" ? "upright" : "full";
+  await win.loadFile(path.resolve(__dirname, `out/measure-${ed}.html`));
   await new Promise((r) => setTimeout(r, 1500));
   const r = await win.webContents.executeJavaScript(`(() => {
     const H = document.querySelector(".probe .fbody").getBoundingClientRect().height - 2;
@@ -30,7 +31,7 @@ app.whenReady().then(async () => {
     if (cur.length) pages.push(cur);
     return { pages, sig: window.__sig, H };
   })()`);
-  writeFileSync(path.resolve(__dirname, "pages.json"), JSON.stringify({ sig: r.sig, pages: r.pages }));
-  console.log("各論 " + r.pages.length + " ページ(1 ページの高さ " + Math.round(r.H) + "px)");
+  writeFileSync(path.resolve(__dirname, `pages-${ed}.json`), JSON.stringify({ sig: r.sig, pages: r.pages }));
+  console.log(ed + ": 解説 " + r.pages.length + " ページ(1 ページの高さ " + Math.round(r.H) + "px)");
   app.exit(0);
 });

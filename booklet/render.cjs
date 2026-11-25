@@ -1,10 +1,10 @@
-// electron booklet/render.cjs [read|print] → assets/booklet/ に PDF を書く(読む用 1 冊・印刷用 巻ごと)
+// electron booklet/render.cjs read:<版> | print:<版>:<巻> → assets/booklet/ に PDF を書く(1 回の起動で 1 つ。2 つ目の読み込みが失敗するため)
 const { app, BrowserWindow } = require("electron");
-const { writeFileSync, readFileSync } = require("node:fs");
+const { writeFileSync } = require("node:fs");
 const path = require("node:path");
 app.disableHardwareAcceleration();
 const out = path.resolve(__dirname, "out");
-const dest = path.resolve(__dirname, "../assets/booklet"); // アプリに同梱する PDF
+const dest = path.resolve(__dirname, "../assets/booklet");
 async function pdf(html, name, w, h) {
   const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
   await win.loadFile(path.join(out, html));
@@ -14,13 +14,8 @@ async function pdf(html, name, w, h) {
   win.destroy();
 }
 app.whenReady().then(async () => {
-  const which = process.argv[process.argv.length - 1];
-  if (which.startsWith("print")) {
-    // 1 回の起動で 1 巻だけ(2 つ目の読み込みが失敗するため)。print:N。引数なしの print は巻の数を出す
-    const vols = JSON.parse(readFileSync(path.join(out, "volumes.json"), "utf8"));
-    const n = Number(which.split(":")[1]);
-    if (!n) console.log("VOLS " + vols.length);
-    else await pdf(vols[n - 1].file, `tarot-booklet-print-${n}.pdf`, 210, 297);
-  } else await pdf("book.html", "tarot-booklet-read-A6.pdf", 105, 148);
+  const [kind, ed, n] = process.argv[process.argv.length - 1].split(":");
+  if (kind === "print") await pdf(`print-${ed}-${n}.html`, `tarot-${ed}-print-${n}.pdf`, 210, 297);
+  else await pdf(`book-${ed}.html`, `tarot-${ed}-A6.pdf`, 105, 148);
   app.quit();
 });
