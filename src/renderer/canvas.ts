@@ -11,7 +11,7 @@ import { cardFace, faceHeight } from "./cardface";
 import { openPicker } from "./picker";
 import { PT, T } from "./strings";
 import { paperStore } from "./paperstore";
-import { isCheckOrTable, makeChecklist, makeTable, renderBodyDom, schema as mdSchema, serializeMarkdown, toggleTask } from "./mdschema";
+import { bodyFromPaste, isCheckOrTable, makeChecklist, makeTable, renderBodyDom, schema as mdSchema, serializeMarkdown, toggleTask } from "./mdschema";
 import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
 import { pickIslands, placeIslands } from "../core/islands";
 import { selectionToMarkdown } from "../core/export";
@@ -2029,6 +2029,14 @@ export class Canvas {
         return true;
       }
     }
+    // 数字キー: 選んだ文字・ノートの背景色(1〜8、0 で色なし)。線を選んでいるときは線の種類
+    if (ids.length && !this.edgeSel.size && !e.ctrlKey && !e.altKey && !e.metaKey && /^[0-8]$/.test(e.key)) {
+      const tg = ids.filter((i) => this.fillable(i));
+      if (tg.length) {
+        this.v.tx(() => tg.forEach((i) => this.v.update(i, { fill: Number(e.key) })));
+        return true;
+      }
+    }
     if (e.key === "Escape" && (ids.length || this.strokeSel.size)) {
       this.setSelection([]); // 選択を外す
       return true;
@@ -2317,13 +2325,18 @@ export class Canvas {
     };
   }
 
+  private fillable(id: string): boolean {
+    const n = this.v.get(id);
+    return !!n && !this.isQuote(id) && ((n.type === "text" && !n.file && !n.paper) || n.type === "note");
+  }
+
   /** 文字の背景の色 */
   private fillItem(ids: string[]): MenuItem {
     const cur = this.v.get(ids[0])?.fill ?? 0;
     const set = (c: number) => this.v.tx(() => ids.forEach((i) => this.v.update(i, { fill: c })));
     return {
       label: T.fill,
-      swatches: Array.from({ length: PRESET_COLORS + 1 }, (_, c) => ({ color: c, title: c ? `${T.fill} ${c}` : T.fillNone, active: c === cur, action: () => set(c) })),
+      swatches: Array.from({ length: PRESET_COLORS + 1 }, (_, c) => ({ color: c, title: c ? `${T.fill} ${c}` : T.fillNone, active: c === cur, key: String(c), action: () => set(c) })),
     };
   }
 
@@ -2364,7 +2377,18 @@ export class Canvas {
     items.push({ label: "", bar });
     const texts = ids.every((i) => this.v.get(i)?.type === "text" && !this.v.get(i)?.file && !this.v.get(i)?.paper);
     items.push({ ...this.colorItem(ids), label: texts ? T.textColorShort : T.color });
-    if (texts) items.push({ ...this.fillItem(ids), label: T.fillShort });
+    const fills = ids.filter((i) => this.fillable(i));
+    if (fills.length) items.push({ ...this.fillItem(fills), label: T.fillShort });
+    // ノート(チェックリスト・表も)の名前: 右クリックして R(題が無いものは、ここで付ける)
+    if (!many && !isRef && n.type === "note")
+      items.push({
+        label: T.rename,
+        key: "r",
+        action: async () => {
+          const t = await askText(T.rename, n.title);
+          if (t !== null) this.v.update(id, { title: t.trim() });
+        },
+      });
     if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") {
       items.push({ label: T.cardAssign, action: () => this.assignCard(id) });
     }
@@ -2393,14 +2417,6 @@ export class Canvas {
     if (!many && !isRef && n.type === "group") more.push({ label: T.rename, action: () => this.renameGroup(id) }, { label: T.unbundle, desc: T.unbundleDesc, action: () => this.v.unbundle(id) });
     if (!many && !isRef && n.type === "frame") more.push({ label: T.rename, action: () => this.renameFrame(id) });
     if (!many && !isRef && n.type === "text" && n.file) more.push({ label: T.rename, action: () => this.editText(id) });
-    if (!many && !isRef && n.type === "note")
-      more.push({
-        label: T.rename,
-        action: async () => {
-          const t = await askText(T.rename, n.title);
-          if (t !== null) this.v.update(id, { title: t.trim() });
-        },
-      });
     if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") more.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
     items.push({ label: T.mMoreMenu, sub: more });
     showMenu(x, y, items);
@@ -2482,9 +2498,9 @@ export class Canvas {
     toast(T.attached(made.length));
   }
   /** チェックリスト・表を、その場所にノードとして置いて開く(題だけがキャンバスに出る) */
-  attachNodeAt(kind: "check" | "table", x: number, y: number): void {
+  attachNodeAt(kind: "check" | "table", x: number, y: number, pasted?: string): void {
     const content = kind === "check" ? makeChecklist() : makeTable(2, 2); // 最初は 2 列(2026-11-25 修正11)
-    const body = serializeMarkdown(mdSchema.nodes.doc.create(null, [content, mdSchema.nodes.paragraph.create()]));
+    const body = pasted ?? serializeMarkdown(mdSchema.nodes.doc.create(null, [content, mdSchema.nodes.paragraph.create()]));
     const n = this.v.create({ type: "note", title: "", group: this.group, x: Math.round(x), y: Math.round(y) }); // 題は最初は無し(「表」などとも出さない)
     this.v.setBody(n.id, body);
     this.renderNow();
@@ -2498,7 +2514,15 @@ export class Canvas {
       this.renderNow();
     }
     this.setSelection([n.id]);
-    this.openNote(n.id);
+    if (!pasted) this.openNote(n.id);
+  }
+  /** 貼った文字が表(タブ・CSV・空白区切り)か 2 行以上なら、表・チェックリストのノードにする。作ったら true */
+  pasteText(text: string): boolean {
+    const body = bodyFromPaste(text);
+    if (!body) return false;
+    const c = this.visibleCenter();
+    this.attachNodeAt(body.startsWith("|") ? "table" : "check", c.x - 60, c.y - 40, body);
+    return true;
   }
   /** 添付の選び方(右上の「添付」と空きの右クリックで共通) */
   attachItems(x: number, y: number): MenuItem[] {

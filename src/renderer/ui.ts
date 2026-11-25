@@ -49,7 +49,7 @@ export interface MenuItem {
   action?: () => void;
   disabled?: boolean;
   /** 色の見本など、横並びの小さなボタン */
-  swatches?: { color: number; title: string; action: () => void; active?: boolean }[];
+  swatches?: { color: number; title: string; action: () => void; active?: boolean; key?: string }[];
   sub?: MenuItem[];
   separator?: boolean;
   checked?: boolean;
@@ -113,6 +113,7 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
             closeMenu();
             s.action();
           });
+          if (s.key) menuKeys.set(s.key, () => b.click());
           row.append(b);
         }
         parent.append(row);

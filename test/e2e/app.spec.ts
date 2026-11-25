@@ -404,12 +404,11 @@ test("右上の「添付」から チェックリスト・表をノードとし�
   await page.keyboard.type("名前");
   await page.keyboard.press("Tab");
   await page.keyboard.type("値");
-  await page.keyboard.press("Tab");
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab"); // 右のはしで Tab → 右に列が広がる(修正12)
   await page.keyboard.type("x");
-  await expect(page.locator(".ProseMirror table")).toContainText("名前値");
+  await expect(page.locator(".ProseMirror table")).toContainText("名前値x");
   await page.keyboard.press("Control+Enter"); // 右に列を足す
-  await expect(page.locator(".ProseMirror tr").first().locator("th")).toHaveCount(3); // 最初は 2 列(修正11)
+  await expect(page.locator(".ProseMirror tr").first().locator("th")).toHaveCount(4);
   await settle();
   const md = Object.values(mdFiles()).find((t) => t.includes("牛乳"))!;
   expect(md).toContain("[x] 牛乳");
@@ -430,7 +429,7 @@ test("右上の「添付」から チェックリスト・表をノードとし�
   await settle();
   expect(Object.values(mdFiles()).find((t) => t.includes("牛乳"))!).toContain("[x] パン");
   const tbl = page.locator(".node.t-note", { has: page.locator("table") });
-  await expect(tbl.locator("th")).toHaveCount(3);
+  await expect(tbl.locator("th")).toHaveCount(4);
   await expect(tbl).toContainText("値");
 });
 
@@ -1738,8 +1737,7 @@ test("2026-11-25 修正9: ノートの題は折り返さない・ノートの右
   // 名前: 題の無い表は右クリックの「名前を変える」で付ける。付いたあとは、書いている間に題をそのまま直せる
   await page.keyboard.press("Escape");
   await tb.click({ button: "right", position: { x: 4, y: 4 } });
-  await page.locator(".ctxmenu .item", { hasText: "その他" }).hover();
-  await page.locator(".ctxmenu .item", { hasText: "名前を変える" }).click();
+  await page.keyboard.press("r"); // 右クリックして R で名前
   await page.locator(".modal.ask .ask-input").fill("成績");
   await page.keyboard.press("Enter");
   await expect(page.locator(".node.t-note .label", { hasText: "成績" })).toHaveCount(1);
@@ -2032,4 +2030,49 @@ test("2026-11-25: 画像や HTML に書き出すと、タロットの絵柄も�
   // 絵が入った PNG は、文字だけのときよりずっと大きい
   expect(readFileSync(path.join(exportDir, "ホーム-選択.png")).length).toBeGreaterThan(30_000);
   if (shots) writeFileSync(path.join(shots, "44-export-tarot.png"), readFileSync(path.join(exportDir, "ホーム-選択.png")));
+});
+
+test("2026-11-26 修正12: 数字キーで背景色・貼り付けで表とチェックリスト・Tab で表が右に広がる・空の列は Backspace で消える", async () => {
+  await write(300, 200, "色をつける");
+  const nd = page.locator(".node", { hasText: "色をつける" });
+  await nd.click({ modifiers: ["Control"] });
+  await page.keyboard.press("3");
+  await expect(nd).toHaveClass(/\bf3\b/);
+  await page.keyboard.press("0");
+  await expect(nd).not.toHaveClass(/\bf3\b/);
+  // 右クリック中の数字キー
+  await nd.click({ button: "right" });
+  await page.keyboard.press("5");
+  await expect(nd).toHaveClass(/\bf5\b/);
+  await page.keyboard.press("Escape");
+  // 貼り付け: タブ区切り → 表、複数行 → チェックリスト
+  const paste = (t: string) => page.evaluate((txt) => {
+    const dt = new DataTransfer();
+    dt.setData("text/plain", txt);
+    document.body.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, t);
+  await page.mouse.click(900, 500);
+  await paste("名前\t値\nA\t1");
+  await expect(page.locator(".node.t-note table")).toHaveCount(1);
+  await expect(page.locator(".node.t-note td", { hasText: "A" })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await paste("牛乳\n卵\nパン");
+  await expect(page.locator(".node.t-note li.task")).toHaveCount(3);
+  // Tab で右に広がる・空の列で Backspace
+  const tb = page.locator(".node.t-note", { has: page.locator("table") });
+  await tb.locator("td", { hasText: "1" }).click();
+  if (!(await page.locator(".popup.inline").count())) await tb.locator("td", { hasText: "1" }).click();
+  await expect(page.locator(".popup .ProseMirror-focused")).toBeVisible();
+  await page.locator(".popup.inline td", { hasText: "1" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".popup.inline tr").first().locator("th, td")).toHaveCount(3);
+  await page.keyboard.press("Backspace");
+  await expect(page.locator(".popup.inline tr").first().locator("th, td")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  // 右クリック → R で名前
+  await tb.click({ button: "right", position: { x: 4, y: 4 } });
+  await page.keyboard.press("r");
+  await expect(page.locator(".modal.ask .ask-input")).toBeVisible();
+  await page.keyboard.press("Escape");
 });

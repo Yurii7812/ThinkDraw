@@ -219,11 +219,20 @@ export const nextCell: Command = (state, dispatch) => {
     if (dispatch) dispatch(cursorTo(state.tr, c.tablePos, c.table, c.row, c.col + 1).scrollIntoView());
     return true;
   }
-  if (c.row + 1 < c.table.childCount) {
-    if (dispatch) dispatch(cursorTo(state.tr, c.tablePos, c.table, c.row + 1, 0).scrollIntoView());
-    return true;
-  }
-  return addRowBelow(state, dispatch);
+  return addColRight(state, dispatch); // 右のはしで Tab → 右に列が広がる(2026-11-26)
+};
+
+/** 空のセルで Backspace: その行がぜんぶ空なら行ごと、その列がぜんぶ空なら列ごと消す(表は残す) */
+export const backspaceEmpty: Command = (state, dispatch, view) => {
+  const c = cellAt(state);
+  if (!c || !state.selection.empty) return false;
+  if (c.table.child(c.row).child(c.col).content.size > 0) return false;
+  const rowEmpty = (() => { let e = true; c.table.child(c.row).forEach((x) => x.content.size && (e = false)); return e; })();
+  if (rowEmpty && c.table.childCount > 1) return deleteRow(state, dispatch, view);
+  let colEmpty = true;
+  c.table.forEach((r) => r.child(c.col).content.size && (colEmpty = false));
+  if (colEmpty && c.table.child(0).childCount > 1) return deleteCol(state, dispatch, view);
+  return false;
 };
 export const prevCell: Command = (state, dispatch) => {
   const c = cellAt(state);
@@ -344,4 +353,46 @@ export function openTasks(body: string): { text: string; index: number }[] {
     return true;
   });
   return out;
+}
+
+// ---------- 貼り付けた文字から作る(2026-11-26 修正12) ----------
+const cellMd = (t: string) => t.trim().replace(/\|/g, "\\|");
+
+/** タブ・カンマ(「"」で囲んだ所も)・空白で区切った行の並び。どの行も同じ数(2 つ以上)に割れたときだけ */
+function splitRows(lines: string[]): string[][] | null {
+  const csv = (l: string): string[] => {
+    const out: string[] = [];
+    let cur = "", q = false;
+    for (let i = 0; i < l.length; i++) {
+      const c = l[i];
+      if (q) {
+        if (c === '"' && l[i + 1] === '"') (cur += '"', i++);
+        else if (c === '"') q = false;
+        else cur += c;
+      } else if (c === '"') q = true;
+      else if (c === ",") (out.push(cur), (cur = ""));
+      else cur += c;
+    }
+    out.push(cur);
+    return out;
+  };
+  const seps: ((l: string) => string[])[] = [(l) => l.split("\t"), csv, (l) => l.trim().split(/[ 　]+/)];
+  for (const f of seps) {
+    const rows = lines.map(f);
+    if (rows[0].length >= 2 && rows.every((r) => r.length === rows[0].length)) return rows;
+  }
+  return null;
+}
+
+/** 貼った文字を、表(タブ・CSV・空白区切り)かチェックリスト(2 行以上)の本文にする。どちらでもなければ null */
+export function bodyFromPaste(text: string): string | null {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n").filter((l) => l.trim());
+  if (lines.length < 2 || lines.length > 500) return null;
+  const rows = splitRows(lines);
+  if (rows) {
+    const [head, ...rest] = rows;
+    const line = (r: string[]) => "| " + r.map(cellMd).join(" | ") + " |";
+    return [line(head), "| " + head.map(() => "---").join(" | ") + " |", ...rest.map(line)].join("\n") + "\n";
+  }
+  return lines.map((l) => "- [ ] " + l.trim().replace(/^(?:[-*・●○□☐]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, "")).join("\n") + "\n";
 }

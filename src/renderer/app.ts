@@ -1734,7 +1734,11 @@ class App {
         c.pasteRefs();
         return;
       }
-      if (!files?.length) return;
+      if (!files?.length) {
+        // 2 行以上の文字(表・チェックリストの形)を貼ったら、表・チェックリストにする
+        if (!c.readOnly && c.pasteText(e.clipboardData?.getData("text/plain") ?? "")) e.preventDefault();
+        return;
+      }
       e.preventDefault();
       const p = c.visibleCenter();
       void c.attachFilesAt(files, p.x, p.y);

@@ -13,7 +13,7 @@ import type { Vault } from "../core/vault";
 import { cardName } from "../decks";
 import { openPicker } from "./picker";
 import { T } from "./strings";
-import { addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
+import { backspaceEmpty, addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
 import { api, h, showMenu, svg, toast } from "./ui";
 
 export interface EditorHost {
@@ -201,7 +201,7 @@ export class BodyPopup {
         history(),
         markdownInputRules(),
         keymap({
-          Backspace: undoInputRule, // 「# 」で見出しになった直後の Backspace で元の文字に戻す
+          Backspace: (st, d, v) => backspaceEmpty(st, d, v) || undoInputRule(st, d, v), // 「# 」で見出しになった直後の Backspace で元の文字に戻す
           "Mod-z": undo,
           "Mod-y": redo,
           "Mod-Shift-z": redo,
@@ -294,8 +294,8 @@ export class BodyPopup {
             { label: T.tableDelCol, action: run(deleteCol) },
             { label: T.tableDelRow, action: run(deleteRow) },
             { separator: true, label: "" },
-            { label: T.tableAddCol, hint: "Ctrl+Enter", action: run(addColRight) },
-            { label: T.tableAddRow, hint: "Tab", action: run(addRowBelow) },
+            { label: T.tableAddCol, hint: "Tab", action: run(addColRight) },
+            { label: T.tableAddRow, hint: "Enter", action: run(addRowBelow) },
             { separator: true, label: "" },
             { label: T.tableDelete, danger: true, action: run(deleteTable) },
           ]);
