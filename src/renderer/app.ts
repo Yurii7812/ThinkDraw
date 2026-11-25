@@ -2,7 +2,7 @@
 import { NEW_LINK_KINDS, ROOT_ID } from "../core/types";
 import { kindPreview } from "./edgeshape";
 import { Vault } from "../core/vault";
-import { Canvas, PRESET_COLORS, refClipboard, type PenState, type View } from "./canvas";
+import { isImageFile, Canvas, PRESET_COLORS, refClipboard, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
 import { DEFAULT_IMAGE, exportGroup, type ExportKind, type ImageOpts } from "./exporter";
@@ -62,6 +62,8 @@ interface Config {
   /** 画像の書き出しの画質(2026-11-25) */
   image?: Partial<ImageOpts>;
 }
+/** 線の種類のいつもの色の初期値(2026-11-25 利用者の設定から): 矢印 6・点線 4・両矢印 1・部分と全体 5・通常の線は色なし */
+const DEFAULT_EDGE_COLORS: Record<string, number> = { arrow: 6, dashed: 4, double: 1, part: 5 };
 const STATE_FILE = "state.json";
 const HISTORY_MAX = 50; // 戻る・進むで覚える数
 const HISTORY_MENU = 12; // 右クリックの一覧に出す数
@@ -136,6 +138,8 @@ class App {
 
   async boot(): Promise<void> {
     this.config = (await api().getConfig()) ?? {};
+    // 線の種類のいつもの色の初期値(利用者が決めた色。2026-11-25 修正11)。設定で変えたらそちら
+    if (!this.config.edgeColors) this.config.edgeColors = { ...DEFAULT_EDGE_COLORS };
     this.draw = { ...DEFAULT_CONFIG, ...(this.config.draw ?? {}) };
     this.applyTheme();
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => this.applyTheme());
@@ -1106,7 +1110,7 @@ class App {
     );
   }
   /** キャンバスの上でそのまま書く編集欄(チェックリスト・表) */
-  private editInline(id: string, mount: HTMLElement, done: () => void): () => void {
+  private editInline(id: string, mount: HTMLElement, done: () => void): { close(): void; focus(): void } {
     this.closePopup();
     const ed = new BodyPopup(
       { vault: this.vault, goToGroup: (g, focus) => this.openGroup(g, focus), goToNode: (n, ob) => this.goToNode(n, ob), closedEditor: done, openSearch: () => this.search() },
@@ -1115,7 +1119,7 @@ class App {
       false,
       true,
     );
-    return () => ed.close();
+    return { close: () => ed.close(), focus: () => ed.focus() };
   }
   private closePopup(): void {
     this.popup?.close();
@@ -1472,6 +1476,18 @@ class App {
         const b = from.rectOf(id);
         const x = Math.round(p.x + (b && base ? b.x - base.x : 0));
         const y = Math.round(p.y + (b && base ? b.y - base.y : 0));
+        // 画像は引用にせず、ふつうに複製する(大きさもそのまま。2026-11-25 修正11)
+        const n = this.vault.get(id)!;
+        if (n.type === "text" && n.file && isImageFile(n.file)) {
+          const fromGroup = (from as { group?: string }).group;
+          const w = fromGroup ? this.vault.itemPos(fromGroup, id)?.w : undefined;
+          const copy = this.vault.duplicateImage(id, to.group, x, y, w);
+          if (copy) {
+            placed.push(copy);
+            if (link && over && over !== id) this.vault.addLink(over, copy);
+          }
+          continue;
+        }
         if (!this.vault.itemPos(to.group, id)) this.vault.addRef(to.group, id, x, y);
         placed.push(id);
         if (link && over && over !== id) this.vault.addLink(over, id);

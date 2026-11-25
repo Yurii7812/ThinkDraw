@@ -346,15 +346,18 @@ export class Vault {
   setFrameSize(id: string, w: number, h: number): void {
     this.tx(() => {
       const n = this.mut(id);
-      if (n.type !== "frame" && n.type !== "group") return; // 枠と、四方で大きさを変えたグループ
+      if (n.type !== "frame") return;
       n.size = { w: Math.max(40, Math.round(w)), h: Math.max(30, Math.round(h)) };
     });
   }
-  /** グループの大きさを自動(中身に合わせる)に戻す */
-  clearGroupSize(id: string): void {
-    this.tx(() => {
-      const n = this.mut(id);
-      if (n.type === "group") delete n.size;
+  /** 画像(添付の絵)を、引用ではなく別の物として複製する。絵のファイルは同じものを使う(2026-11-25 修正11) */
+  duplicateImage(src: string, group: string, x: number, y: number, w?: number): string | null {
+    const n = this.nodes.get(src);
+    if (!n?.file) return null;
+    return this.tx(() => {
+      const id = this.create({ type: "text", title: n.title, file: n.file, group, x, y }).id;
+      if (w) this.setItemWidth(group, id, w);
+      return id;
     });
   }
 

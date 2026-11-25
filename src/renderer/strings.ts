@@ -124,6 +124,9 @@ export const T = {
   attachTable: "表",
   attachTableTip: "表(3×3。Tab で次のセル、いちばん最後で Tab すると行が増える)",
   tableHead: "表",
+  titleOptional: "名前(なくてもよい)",
+  tableDelCol: "この列を消す",
+  tableDelRow: "この行を消す",
   tableAddRow: "下に行を足す",
   tableAddCol: "右に列を足す",
   tableDelete: "この表を消す",
@@ -298,8 +301,6 @@ export const T = {
   recordsNotes: "記録ノート",
   recordsOtherGroups: "この日のほかのグループ",
   groupRename: "名前を変える",
-  grpAutoSize: "大きさを自動に戻す",
-  grpResize: "ドラッグで大きさを変える",
   imgResize: "ドラッグで大きさを変える(縦横の比はそのまま)",
 
   editText: "文字を直す",

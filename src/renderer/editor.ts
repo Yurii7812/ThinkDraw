@@ -13,7 +13,7 @@ import type { Vault } from "../core/vault";
 import { cardName } from "../decks";
 import { openPicker } from "./picker";
 import { T } from "./strings";
-import { addColRight, addRowBelow, cellAt, cellBelow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
+import { addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
 import { api, h, showMenu, svg, toast } from "./ui";
 
 export interface EditorHost {
@@ -277,6 +277,30 @@ export class BodyPopup {
           e.stopPropagation();
           return false;
         },
+        // 表のセルの右クリック: 列・行を消す・足す(2026-11-25 修正11)
+        contextmenu: (v, e) => {
+          const at = v.posAtCoords({ left: e.clientX, top: e.clientY });
+          if (!at) return false;
+          const st = v.state.apply(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(at.pos))));
+          if (!cellAt(st)) return false;
+          e.preventDefault();
+          e.stopPropagation();
+          v.dispatch(v.state.tr.setSelection(TextSelection.near(v.state.doc.resolve(at.pos))));
+          const run = (c: (s: EditorState, d?: EditorView["dispatch"]) => boolean) => () => {
+            v.focus();
+            c(v.state, v.dispatch);
+          };
+          showMenu(e.clientX, e.clientY, [
+            { label: T.tableDelCol, action: run(deleteCol) },
+            { label: T.tableDelRow, action: run(deleteRow) },
+            { separator: true, label: "" },
+            { label: T.tableAddCol, hint: "Ctrl+Enter", action: run(addColRight) },
+            { label: T.tableAddRow, hint: "Tab", action: run(addRowBelow) },
+            { separator: true, label: "" },
+            { label: T.tableDelete, danger: true, action: run(deleteTable) },
+          ]);
+          return true;
+        },
         click: (_v, e) => {
           const a = (e.target as Element).closest("a");
           if (a) this.showLinkBubble(a as HTMLAnchorElement);
@@ -318,6 +342,11 @@ export class BodyPopup {
       const li = $f.node(d);
       this.view.dispatch(st.tr.setNodeMarkup($f.before(d), undefined, { ...li.attrs, checked: li.attrs.checked == null ? false : null }));
     }
+    this.view.focus();
+  }
+
+  /** 本文にカーソルを戻す(ProseMirror が覚えている位置へ) */
+  focus(): void {
     this.view.focus();
   }
 

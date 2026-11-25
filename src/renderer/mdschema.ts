@@ -167,6 +167,41 @@ export const addColRight: Command = (state, dispatch) => {
   return true;
 };
 
+/** この行を消す(最後の 1 行なら表ごと。見出しの行を消したら、次の行が見出しになる) */
+export const deleteRow: Command = (state, dispatch) => {
+  const c = cellAt(state);
+  if (!c) return false;
+  if (c.table.childCount <= 1) return deleteTable(state, dispatch);
+  if (dispatch) {
+    const rows: PMNode[] = [];
+    c.table.forEach((r, _o, i) => i !== c.row && rows.push(r));
+    if (c.row === 0) rows[0] = schema.nodes.table_row.create(null, (() => { const cs: PMNode[] = []; rows[0].forEach((cell) => cs.push(schema.nodes.table_header.create(null, cell.content))); return cs; })());
+    const table = schema.nodes.table.create(null, rows);
+    const tr = state.tr.replaceWith(c.tablePos, c.tablePos + c.table.nodeSize, table);
+    dispatch(cursorTo(tr, c.tablePos, table, Math.min(c.row, rows.length - 1), Math.min(c.col, rows[0].childCount - 1)).scrollIntoView());
+  }
+  return true;
+};
+
+/** この列を消す(最後の 1 列なら表ごと) */
+export const deleteCol: Command = (state, dispatch) => {
+  const c = cellAt(state);
+  if (!c) return false;
+  if (c.table.child(0).childCount <= 1) return deleteTable(state, dispatch);
+  if (dispatch) {
+    const rows: PMNode[] = [];
+    c.table.forEach((r) => {
+      const cs: PMNode[] = [];
+      r.forEach((cell, _o, i) => i !== c.col && cs.push(cell));
+      rows.push(schema.nodes.table_row.create(null, cs));
+    });
+    const table = schema.nodes.table.create(null, rows);
+    const tr = state.tr.replaceWith(c.tablePos, c.tablePos + c.table.nodeSize, table);
+    dispatch(cursorTo(tr, c.tablePos, table, c.row, Math.min(c.col, rows[0].childCount - 1)).scrollIntoView());
+  }
+  return true;
+};
+
 /** 表ごと消す */
 export const deleteTable: Command = (state, dispatch) => {
   const c = cellAt(state);

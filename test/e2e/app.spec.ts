@@ -388,7 +388,7 @@ test("Esc で選択が外れる/R で名前を変える/Ctrl+C → 別のグル�
 test("右上の「添付」から チェックリスト・表をノードとして置く。キャンバスには中身が全部見える(2026-11-25)", async () => {
   await page.locator(".tbtn.attach-btn").click();
   await page.locator(".ctxmenu .mb-btn", { hasText: "チェック" }).click();
-  await expect(page.locator(".popup")).toBeVisible();
+  await expect(page.locator(".popup .ProseMirror-focused")).toBeVisible();
   await page.keyboard.type("牛乳");
   await page.keyboard.press("Enter");
   await page.keyboard.type("パン");
@@ -400,6 +400,7 @@ test("右上の「添付」から チェックリスト・表をノードとし�
   await page.locator(".tbtn.attach-btn").click();
   await page.locator(".ctxmenu .mb-btn", { hasText: "表" }).click();
   await expect(page.locator(".ProseMirror table")).toHaveCount(1);
+  await expect(page.locator(".popup .ProseMirror-focused")).toBeVisible();
   await page.keyboard.type("名前");
   await page.keyboard.press("Tab");
   await page.keyboard.type("値");
@@ -408,18 +409,18 @@ test("右上の「添付」から チェックリスト・表をノードとし�
   await page.keyboard.type("x");
   await expect(page.locator(".ProseMirror table")).toContainText("名前値");
   await page.keyboard.press("Control+Enter"); // 右に列を足す
-  await expect(page.locator(".ProseMirror tr").first().locator("th")).toHaveCount(4);
+  await expect(page.locator(".ProseMirror tr").first().locator("th")).toHaveCount(3); // 最初は 2 列(修正11)
   await settle();
-  const md = Object.values(mdFiles()).find((t) => t.includes("title: チェックリスト"))!;
+  const md = Object.values(mdFiles()).find((t) => t.includes("牛乳"))!;
   expect(md).toContain("[x] 牛乳");
   expect(md).toContain("[ ] パン");
-  const tb = Object.values(mdFiles()).find((t) => t.includes("title: 表\n"))!;
+  const tb = Object.values(mdFiles()).find((t) => t.includes("| 名前 |"))!;
   expect(tb).toContain("| 名前 |");
   expect(tb).toContain("| --- |");
   await page.keyboard.press("Escape");
   await page.locator(".popup").waitFor({ state: "detached" }).catch(() => {});
   await expect(page.locator(".node.t-note .excerpt")).toHaveCount(0);
-  const cv = page.locator(".node.t-note", { hasText: "チェックリスト" });
+  const cv = page.locator(".node.t-note", { has: page.locator("li.task") });
   await expect(cv).toContainText("牛乳");
   await expect(cv).toContainText("パン");
   await expect(cv.locator("li.task.done")).toHaveCount(1);
@@ -427,9 +428,9 @@ test("右上の「添付」から チェックリスト・表をノードとし�
   await cv.locator(".task-box").nth(1).click();
   await expect(cv.locator("li.task.done")).toHaveCount(2);
   await settle();
-  expect(Object.values(mdFiles()).find((t) => t.includes("title: チェックリスト"))!).toContain("[x] パン");
-  const tbl = page.locator(".node.t-note", { hasText: "名前" });
-  await expect(tbl.locator("th")).toHaveCount(4);
+  expect(Object.values(mdFiles()).find((t) => t.includes("牛乳"))!).toContain("[x] パン");
+  const tbl = page.locator(".node.t-note", { has: page.locator("table") });
+  await expect(tbl.locator("th")).toHaveCount(3);
   await expect(tbl).toContainText("値");
 });
 
@@ -945,7 +946,7 @@ test("2026-11-24: 大画面のノートは本文が真ん中の幅", async () =>
   await shot("26-note-center");
 });
 
-test("2026-11-24: 引用は読むだけ。1 回クリックで選ぶだけ・ダブルクリックで引用元へ", async () => {
+test("2026-11-24→11-25 修正11: 引用は 1 回クリックで引用元へ(書き直しにはならない)", async () => {
   await write(300, 200, "元の文");
   await page.locator(".node", { hasText: "元の文" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+g");
@@ -962,8 +963,6 @@ test("2026-11-24: 引用は読むだけ。1 回クリックで選ぶだけ・ダ
   await page.keyboard.press("Escape");
   await ref.click();
   await expect(page.locator("textarea.draft")).toHaveCount(0); // 書き直しにならない
-  await expect(page.locator(".node.ref.selected")).toHaveCount(1);
-  await ref.dblclick();
   await expect(page.locator(".group-title")).toHaveText("元の箱");
   await expect(page.locator(".node.selected", { hasText: "元の文" })).toHaveCount(1);
 });
@@ -988,7 +987,7 @@ test("2026-11-24: 自分の種類を作って、並べる・直す", async () =>
   await shot("27-custom");
 });
 
-test("2026-11-24: 引用の右上の ↗ で元の場所へ・戻るボタンで戻る・ふつうのクリックは選ぶだけ", async () => {
+test("2026-11-24→11-25 修正11: 引用のクリックで元の場所へ・戻るボタンで戻る・選ぶのは Ctrl+クリック", async () => {
   await write(300, 200, "元の文");
   await page.locator(".node", { hasText: "元の文" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+g");
@@ -1001,10 +1000,12 @@ test("2026-11-24: 引用の右上の ↗ で元の場所へ・戻るボタンで
   const ref = page.locator(".node.ref", { hasText: "元の文" });
   await expect(ref).toHaveCount(1);
   await page.keyboard.press("Escape");
-  await ref.click();
+  await ref.click({ modifiers: ["Control"] }); // Ctrl+クリックは選ぶだけ
   await expect(page.locator(".group-title")).toHaveText("ホーム");
   await expect(page.locator(".node.ref.selected")).toHaveCount(1);
-  await ref.locator(".jump-btn").click();
+  await expect(ref.locator(".jump-btn")).toHaveCount(0); // 文字の引用に ↗ は無い
+  await page.keyboard.press("Escape");
+  await ref.click();
   await expect(page.locator(".group-title")).toHaveText("元の箱");
   await expect(page.locator(".return-btn")).toHaveCount(1);
   await page.locator(".return-btn").click();
@@ -1013,7 +1014,7 @@ test("2026-11-24: 引用の右上の ↗ で元の場所へ・戻るボタンで
   await expect(page.locator(".return-btn")).toHaveCount(0);
 });
 
-test("2026-11-24: 同じボードに Ctrl+C → Ctrl+V でボードの中の引用・↗ でその場所へ・Ctrl+[ で戻る", async () => {
+test("2026-11-24: 同じボードに Ctrl+C → Ctrl+V でボードの中の引用・クリックでその場所へ・Ctrl+[ で戻る", async () => {
   await write(200, 150, "ここの元");
   await write(700, 600, "遠く");
   await page.locator(".node", { hasText: "ここの元" }).click({ modifiers: ["Control"] });
@@ -1025,11 +1026,9 @@ test("2026-11-24: 同じボードに Ctrl+C → Ctrl+V でボードの中の引�
   await expect(alias).toHaveCount(1);
   await settle();
   expect(Object.values(mdFiles()).some((s) => s.includes("type: alias") && s.includes(`target: ${idOf("ここの元")}`))).toBe(true);
-  // ふつうのクリックは選ぶだけ(書き直しにならない)
+  // クリックで元の場所へ(書き直しにはならない。2026-11-25 修正11)
   await alias.click();
   await expect(page.locator("textarea.draft")).toHaveCount(0);
-  await expect(page.locator(".node.alias.selected")).toHaveCount(1);
-  await alias.locator(".jump-btn").click();
   await expect(page.locator(".node.selected:not(.alias)", { hasText: "ここの元" })).toHaveCount(1);
   await expect(page.locator(".return-btn")).toHaveCount(1);
   await page.keyboard.press("Control+[");
@@ -1264,8 +1263,7 @@ test("2026-11-24 統合仕様 1・2・7: Ctrl+←/→ の履歴(ボードの中�
   await page.waitForTimeout(300);
   await expect(page.locator(".node.alias")).toHaveCount(1);
   // ボードの中で飛んで、Ctrl+← で飛ぶ前の場所(選んでいた引用)へ
-  await page.locator(".node.alias").click();
-  await page.locator(".node.alias .jump-btn").click();
+  await page.locator(".node.alias").click(); // クリックで元の場所へ(2026-11-25 修正11)
   await expect(page.locator(".node.selected:not(.alias)", { hasText: "外へ貼る文" })).toHaveCount(1);
   await page.keyboard.press("Control+ArrowLeft");
   await expect(page.locator(".node.alias.selected")).toHaveCount(1);
@@ -1693,6 +1691,7 @@ test("2026-11-25 修正9: ノートの題は折り返さない・ノートの右
   await page.locator(".ctxmenu .mb-btn", { hasText: "チェック" }).click();
   await expect(page.locator(".popup.inline")).toBeVisible();
   await expect(page.locator(".popup:not(.inline)")).toHaveCount(0);
+  await expect(page.locator(".popup .ProseMirror-focused")).toBeVisible();
   await page.keyboard.type("牛乳");
   await page.keyboard.press("Enter");
   await page.keyboard.type("卵");
@@ -1706,7 +1705,7 @@ test("2026-11-25 修正9: ノートの題は折り返さない・ノートの右
   const before = await cv.boundingBox();
   const fsBefore = await cv.locator("li.task .task-body").first().evaluate((e) => getComputedStyle(e).fontSize);
   const rowsBefore = await cv.locator("li.task").evaluateAll((es) => es.map((e) => Math.round(e.getBoundingClientRect().top)));
-  await cv.locator(".note-head").click();
+  await cv.click({ position: { x: 4, y: 4 } }); // 題の無いチェックリストは、端を押す
   await expect(page.locator(".popup.inline")).toBeVisible();
   await expect(page.locator(".popup.inline .pop-head")).toHaveCount(0); // 道具は出さない
   const after = await cv.boundingBox();
@@ -1721,6 +1720,7 @@ test("2026-11-25 修正9: ノートの題は折り返さない・ノートの右
   await page.keyboard.press("Escape");
   await page.locator(".tbtn.attach-btn").click();
   await page.locator(".ctxmenu .mb-btn", { hasText: "表" }).click();
+  await expect(page.locator(".popup .ProseMirror-focused")).toBeVisible();
   await page.keyboard.type("名前");
   await page.keyboard.press("Tab");
   await page.keyboard.type("値");
@@ -1728,14 +1728,22 @@ test("2026-11-25 修正9: ノートの題は折り返さない・ノートの右
   const tb = page.locator(".node.t-note", { has: page.locator("table") });
   await expect(tb.locator(".cv-body table")).toBeVisible();
   const tb0 = await tb.boundingBox();
-  await tb.locator(".note-head").click();
+  await tb.click({ position: { x: 4, y: 4 } });
   await expect(page.locator(".popup.inline")).toBeVisible();
   const tb1 = await tb.boundingBox();
   await shot("41-inline-table");
   expect(Math.abs(tb1!.width - tb0!.width)).toBeLessThanOrEqual(2);
   expect(Math.abs(tb1!.height - tb0!.height)).toBeLessThanOrEqual(3);
   await shot("41-inline-table");
-  // 名前: 書いている間に題を直せる(Enter で本文へ)
+  // 名前: 題の無い表は右クリックの「名前を変える」で付ける。付いたあとは、書いている間に題をそのまま直せる
+  await page.keyboard.press("Escape");
+  await tb.click({ button: "right", position: { x: 4, y: 4 } });
+  await page.locator(".ctxmenu .item", { hasText: "その他" }).hover();
+  await page.locator(".ctxmenu .item", { hasText: "名前を変える" }).click();
+  await page.locator(".modal.ask .ask-input").fill("成績");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".node.t-note .label", { hasText: "成績" })).toHaveCount(1);
+  await tb.locator(".note-head").click();
   await tb.locator(".cv-title").fill("成績表");
   await page.keyboard.press("Enter");
   await page.keyboard.type("Z");
@@ -1824,41 +1832,6 @@ test("2026-11-25 修正10: 画像は JPG でも出せる・画質を決められ
   expect(readFileSync(path.join(exportDir, "ホーム.html"), "utf8")).toContain("data:image/png;base64,");
 });
 
-test("2026-11-25 修正10: グループも画像のように四方の角で大きさを変えられる(覚える・自動に戻せる)", async () => {
-  await write(400, 300, "中");
-  await page.keyboard.press("Control+a");
-  await page.keyboard.press("Control+g");
-  const g = page.locator(".node.t-group");
-  await expect(g).toHaveCount(1);
-  await page.keyboard.type("箱"); // 束ねた直後は名前を書く
-  await page.keyboard.press("Escape");
-  if (!(await g.evaluate((e) => e.classList.contains("selected")))) await g.click({ modifiers: ["Control"] });
-  await expect(g.locator(".img-h.se")).toBeVisible();
-  const b0 = (await g.boundingBox())!;
-  const se = (await g.locator(".img-h.se").boundingBox())!;
-  await page.mouse.move(se.x + 5, se.y + 5);
-  await page.mouse.down();
-  await page.mouse.move(se.x + 125, se.y + 85, { steps: 5 });
-  await page.mouse.up();
-  await page.waitForTimeout(300);
-  const b1 = (await g.boundingBox())!;
-  expect(b1.width).toBeGreaterThan(b0.width + 100);
-  expect(b1.height).toBeGreaterThan(b0.height + 70);
-  expect(Math.abs(b1.x - b0.x)).toBeLessThanOrEqual(2); // 左上は動かない
-  // 左上の角: 向かいの角(右下)が動かない
-  const nw = (await g.locator(".img-h.nw").boundingBox())!;
-  await page.mouse.move(nw.x + 5, nw.y + 5);
-  await page.mouse.down();
-  await page.mouse.move(nw.x - 55, nw.y - 35, { steps: 5 });
-  await page.mouse.up();
-  await page.waitForTimeout(300);
-  const b2 = (await g.boundingBox())!;
-  expect(Math.abs(b2.x + b2.width - (b1.x + b1.width))).toBeLessThanOrEqual(2);
-  expect(b2.width).toBeGreaterThan(b1.width + 40);
-  await settle();
-  expect(Object.values(mdFiles()).some((t) => /type: group/.test(t) && /size: \{ w: \d+, h: \d+ \}/.test(t))).toBe(true);
-});
-
 test("2026-11-25: タロット解説書(PDF)を、デッキのメニューから保存できる(正逆・正位置だけ。読む用 A6 と、印刷用は巻ごと)", async () => {
   await page.locator(".tbtn.draw").click();
   await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
@@ -1896,3 +1869,150 @@ test("2026-11-25: タロット解説書を、アプリの中でそのまま読�
   await page.keyboard.press("Escape");
   await expect(page.locator(".booklet-reader")).toHaveCount(0);
 });
+
+test("2026-11-25 修正11: 囲いは四方の角で大きさを変えられる・中の物を動かしても囲いは広がらない・グループは大きさを変えられない", async () => {
+  await write(300, 250, "中の文字");
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+b");
+  const f = page.locator(".node.t-frame");
+  await expect(f).toHaveCount(1);
+  await expect(f.locator(".img-h")).toHaveCount(4);
+  const b0 = (await f.boundingBox())!;
+  const nw = (await f.locator(".img-h.nw").boundingBox())!;
+  await page.mouse.move(nw.x + 5, nw.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(nw.x - 55, nw.y - 45, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const b1 = (await f.boundingBox())!;
+  expect(b1.width).toBeGreaterThan(b0.width + 40);
+  expect(Math.abs(b1.x + b1.width - (b0.x + b0.width))).toBeLessThanOrEqual(2); // 右下は動かない
+  // 中の文字を囲いの外まで動かしても、囲いは広がらない
+  const t = (await page.locator(".node.t-text", { hasText: "中の文字" }).boundingBox())!;
+  await page.mouse.move(t.x + 10, t.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(t.x + 400, t.y + 300, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const b2 = (await f.boundingBox())!;
+  expect(Math.abs(b2.width - b1.width)).toBeLessThanOrEqual(2);
+  expect(Math.abs(b2.height - b1.height)).toBeLessThanOrEqual(2);
+  // グループには大きさを変える取っ手を出さない
+  await write(600, 500, "束ねる物");
+  await page.locator(".node", { hasText: "束ねる物" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("箱");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".node.t-group .img-h")).toHaveCount(0);
+});
+
+test("2026-11-25 修正11: 引用は緑の枠・1 回クリックで元の場所へ(カードの引用はクリック=選ぶ・右上の ↗=飛ぶ)", async () => {
+  await write(300, 200, "元の文");
+  await page.keyboard.press("Escape");
+  await page.locator(".node", { hasText: "元の文" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+c");
+  await page.waitForTimeout(300); // コピーが書き終わるまで
+  await page.keyboard.press("Control+v"); // 同じボードに貼る = ボードの中の引用
+  const al = page.locator(".node.alias", { hasText: "元の文" });
+  await expect(al).toHaveCount(1);
+  await page.keyboard.press("Escape"); // 選びを外して、ふだんの見た目で
+  expect(await al.evaluate((e) => getComputedStyle(e).outlineStyle)).toBe("solid");
+  expect(await al.evaluate((e) => getComputedStyle(e).outlineColor)).toBe("rgb(63, 159, 95)");
+  await expect(al.locator(".jump-btn")).toHaveCount(0); // 文字の引用には ↗ を出さない
+  await al.click();
+  await expect(page.locator(".node.t-text.selected", { hasText: "元の文" })).toHaveCount(1); // 元の物が選ばれている(飛んだ)
+  await expect(page.locator(".node.alias.selected")).toHaveCount(0);
+  // カード: 引用のクリックは選ぶ、↗ は飛ぶ
+  await page.keyboard.press("Escape");
+  await page.locator(".tbtn.draw").click();
+  await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
+  await page.locator(".dm-tile").first().click();
+  const card = page.locator(".node.t-card").first();
+  // 右クリックの「その他 › コピー」でコピー
+  await card.click({ button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "その他" }).hover();
+  await page.locator(".ctxmenu .item", { hasText: "コピー" }).filter({ hasNotText: "その他" }).first().click();
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+v");
+  const cal = page.locator(".node.t-card.alias");
+  await expect(cal).toHaveCount(1);
+  await expect(cal.locator(".jump-btn")).toHaveCount(1);
+  await cal.locator(".face").click();
+  await expect(page.locator(".node.t-card.alias.selected")).toHaveCount(1);
+});
+
+test("2026-11-25 修正11: 画像は貼ると引用ではなく複製(大きさも別々)", async () => {
+  await page.mouse.click(400, 300, { button: "right" });
+  const chooser = page.waitForEvent("filechooser");
+  await page.locator(".ctxmenu .mb-btn", { hasText: "ファイル" }).click();
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await (await chooser).setFiles([{ name: "絵.png", mimeType: "image/png", buffer: png }]);
+  await expect(page.locator(".node.image")).toHaveCount(1);
+  await page.keyboard.press("Control+c");
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Control+v");
+  await expect(page.locator(".node.image")).toHaveCount(2);
+  await expect(page.locator(".node.image.alias, .node.image.ref")).toHaveCount(0);
+  await settle();
+  const imgs = Object.values(mdFiles()).filter((t) => /file: assets\//.test(t));
+  expect(imgs.length).toBe(2);
+});
+
+test("2026-11-25 修正11: 表とチェックリストは最初は題が無く「表」とも出ない・表は 2 列で始まり、セルの右クリックで列と行を消せる", async () => {
+  await page.locator(".tbtn.attach-btn").click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "表" }).click();
+  await expect(page.locator(".popup.inline")).toBeVisible();
+  await expect(page.locator(".popup.inline tr").first().locator("th")).toHaveCount(2);
+  await expect(page.locator(".popup .ProseMirror-focused")).toBeVisible();
+  await page.keyboard.type("名前");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("値");
+  await page.keyboard.press("Control+Enter"); // 3 列に
+  await expect(page.locator(".popup.inline tr").first().locator("th")).toHaveCount(3);
+  await page.locator(".popup.inline th").nth(2).click({ button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "この列を消す" }).click();
+  await expect(page.locator(".popup.inline tr").first().locator("th")).toHaveCount(2);
+  await page.locator(".popup.inline td").first().click({ button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "この行を消す" }).click();
+  await expect(page.locator(".popup.inline tr")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".popup")).toHaveCount(0);
+  const tb = page.locator(".node.t-note", { has: page.locator("table") });
+  await expect(tb.locator(".note-head")).toHaveCount(0);
+  await expect(tb).not.toContainText("表");
+  await settle();
+  expect(Object.values(mdFiles()).find((t) => t.includes("| 名前 |"))).toMatch(/title: ""|title: \n|title:\s*\n/);
+});
+
+test("2026-11-25 修正11: Tab で書く文字は、グループと囲いをよける", async () => {
+  await write(500, 300, "まんなか");
+  // まんなかの右と下にグループと囲いを置く
+  await write(640, 300, "右の物");
+  await page.locator(".node", { hasText: "右の物" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await page.keyboard.type("右の箱");
+  await page.keyboard.press("Escape");
+  await write(500, 420, "下の物");
+  await page.locator(".node", { hasText: "下の物" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+b");
+  for (const t of ["一つ目", "二つ目", "三つ目", "四つ目"]) {
+    await page.keyboard.press("Escape");
+    await page.locator(".node", { hasText: "まんなか" }).click({ modifiers: ["Control"] });
+    await page.keyboard.press("Tab");
+    await page.keyboard.type(t);
+    await page.keyboard.press("Escape");
+  }
+  const hit = await page.evaluate(() => {
+    const big = [...document.querySelectorAll(".node.t-group, .node.t-frame")].map((e) => e.getBoundingClientRect());
+    return [...document.querySelectorAll(".node.t-text")].filter((n) => /目$/.test(n.textContent ?? "")).some((n) => {
+      const r = n.getBoundingClientRect();
+      return big.some((b) => r.left < b.right && b.left < r.right && r.top < b.bottom && b.top < r.bottom);
+    });
+  });
+  expect(hit).toBe(false);
+});
+
+
+
+

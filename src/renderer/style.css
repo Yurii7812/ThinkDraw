@@ -187,7 +187,8 @@ input, textarea { font: inherit; color: inherit; }
 .node.t-card .label { font-size: 12px; margin-top: 4px; }
 .poslabel { font-size: 11px; color: var(--muted); }
 /* 引用(ほかのグループの物を見せているだけ): 点線の枠 */
-.node.ref { outline: 1.5px dashed var(--edge); outline-offset: 3px; border-radius: 6px; }
+/* 引用は緑の枠(2026-11-25 修正11) */
+.node.ref { outline: 2px solid var(--quote, #3f9f5f); outline-offset: 3px; border-radius: 6px; }
 .node.ref.selected { outline: 2px solid var(--accent); }
 .face { border-radius: 6px; overflow: hidden; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25); background: var(--card); }
 .hexface { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); color: var(--fg); }
@@ -912,7 +913,7 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .node:hover > .jump-btn, .node.selected > .jump-btn { opacity: 1; }
 .jump-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
 .node.outer .jump-btn { display: none; }
-.node.alias { outline-style: dotted; }
+
 .node.alias.missing { color: var(--muted); font-size: 12px; }
 .node.cut { opacity: 0.35; }
 .node.found { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 6px; }
@@ -1041,8 +1042,7 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .note-head .cv-title { font: inherit; font-weight: 600; color: inherit; background: transparent; border: 0; padding: 0; margin: 0; outline: none; field-sizing: content; min-width: 2em; }
 .draft.for-frame { font-size: 16px; font-weight: 700; line-height: 24px; padding: 0 8px; min-width: 60px; }
 .node.t-frame.editing .frame-name { visibility: hidden; }
-.node.t-group.selected .img-h { display: block; }
-.node.t-group.sized { box-sizing: border-box; }
+.node.t-frame.selected .img-h { display: block; pointer-events: auto; }
 
 /* タロット小冊子を読む画面 */
 .booklet-reader { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: var(--panel); }
@@ -1065,3 +1065,5 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .br-ed { display: flex; gap: 2px; margin-left: 12px; padding: 2px; background: var(--line); border-radius: 7px; }
 .br-ed button { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 3px 10px; border-radius: 5px; cursor: pointer; }
 .br-ed button.on { background: var(--bg); color: var(--fg); }
+.cv-body:first-child { margin-top: 0; }
+.cv-body[hidden]:first-child ~ .cv-edit .popup.inline { margin-top: 0; }
