@@ -1862,9 +1862,9 @@ test("2026-11-25 修正10: グループも画像のように四方の角で大�
 test("2026-11-25: タロット小冊子(PDF)を、デッキのメニューから保存できる(印刷用 A4 は巻ごと・読む用 A6)", async () => {
   await page.locator(".tbtn.draw").click();
   await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
-  await expect(page.locator(".bk-vols button")).toHaveCount(4);
+  await expect(page.locator(".bk-vols button")).toHaveCount(3);
   await page.locator(".bk-vols button[data-vol='2']").click();
-  await expect.poll(() => readdirSync(exportDir).some((f) => /印刷用_第2巻_大アルカナ\.pdf$/.test(f))).toBe(true);
+  await expect.poll(() => readdirSync(exportDir).some((f) => /印刷用_第2巻_ワンドとカップ\.pdf$/.test(f))).toBe(true);
   await page.locator(".tbtn.draw").click();
   await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
   await page.locator(".drawmenu button", { hasText: "読む用(A6)を保存" }).click();
@@ -1881,7 +1881,7 @@ test("2026-11-25: タロット小冊子を、アプリの中でそのまま読�
   await expect(page.locator(".booklet-reader")).toBeVisible();
   const fr = page.frameLocator(".br-frame");
   await expect(fr.locator(".page").first()).toBeVisible();
-  expect(await fr.locator(".page").count()).toBeGreaterThan(150); // 全カードの解説入り
+  expect(await fr.locator(".page").count()).toBeGreaterThan(120); // 全カードの解説入り
   await expect(fr.locator(".page").first()).toContainText("タロット");
   // 絵が読み込まれている(相対パスで)
   await expect.poll(() => fr.locator(".ctop img").first().evaluate((i) => (i as HTMLImageElement).naturalWidth)).toBeGreaterThan(100);

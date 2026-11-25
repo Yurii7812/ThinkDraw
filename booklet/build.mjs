@@ -158,51 +158,71 @@ for (const f of readdirSync(deepDir).filter((f) => f.endsWith(".json"))) {
   Object.assign(f.startsWith("kw-") ? kw : deep, j);
 }
 const depict = JSON.parse(readFileSync(resolve(root, "src/decks/tarot/depict.json"), "utf8"));
-let layout = {};
-try { layout = JSON.parse(readFileSync(resolve(root, "booklet/layout.json"), "utf8")); } catch {}
 
 const meaningList = (list) =>
   `<ul class="ml">${list.map((m) => { const i = m.indexOf(": "); return i > 0 && i < 8 ? `<li><span class="mk">${esc(m.slice(0, i))}</span>${esc(m.slice(i + 2))}</li>` : `<li>${esc(m)}</li>`; }).join("")}</ul>`;
 const words = (arr) => `<p class="words">${arr.map(esc).join("・")}</p>`;
 
-function cardPages(c) {
+// カードの中身を「ブロック」に分け、ページをまたいで続けて流し込む(内容は削らず、ページの空きをなくす。2026-11-25 利用者)。
+// ページの切れ目は booklet/paginate.cjs が実際の高さを測って決める(booklet/pages.json)
+function cardBlocks(c) {
   const d = deep[c.id], w = kw[c.id], [suit, col] = SUIT[suitOf(c.id)];
-  const mode = layout[c.id] ?? "normal"; // normal | tight | split
-  const top = `<div class="ctop"><img src="${img(c.file)}"><div class="cmeta"><div class="cn"><span class="code" style="background:${col}">${cardCode(c.id)}</span><b>${esc(c.ja)}</b></div><div class="en">${esc(c.en)}・${suit}</div>
-    <div class="dir"><i>正</i>${esc(c.kwUp)}</div><div class="dir rv"><i>逆</i>${esc(c.kwRv)}</div></div></div>`;
-  const dep = `<p class="depict">${esc(depict[c.id] ?? "")}</p>`;
-  const read =
-    `<h4>正位置の意味</h4>${meaningList(d.up)}<h5>意味の言葉</h5>${words(w.up)}` +
-    `<h4 class="rvh">逆位置の意味</h4>${meaningList(d.rv)}<h5>意味の言葉</h5>${words(w.rv)}`;
-  const items = `<h4>絵の中のもの(${d.items.length})</h4><div class="items">${d.items.map(([n, m]) => `<div class="it"><b>${esc(n)}</b>${esc(m)}</div>`).join("")}</div>`;
-  const qs = `<h4>自分への問い(${d.questions.length})</h4><ol class="qs">${d.questions.map((q) => `<li>${esc(q)}</li>`).join("")}</ol>`;
-  const bar = `<div class="cardhead" style="border-color:${col};color:${col}">${suit}</div>`;
-  const readUp = `<h4>正位置の意味</h4>${meaningList(d.up)}<h5>意味の言葉</h5>${words(w.up)}`;
-  const readRv = `<h4 class="rvh">逆位置の意味</h4>${meaningList(d.rv)}<h5>意味の言葉</h5>${words(w.rv)}`;
-  const cont = `<div class="cont">${esc(c.ja)}(${cardCode(c.id)})のつづき</div>`;
-  if (mode === "split3") {
-    return [
-      { html: `${bar}${top}${dep}${readUp}`, cls: "card1 splitb", id: c.id },
-      { html: `${bar}${cont}${readRv}${qs}`, cls: "card1 splitb", id: c.id + "b" },
-      { html: `${bar}${cont}${items}`, cls: "card1 splitb", id: c.id + "c" },
-    ];
-  }
-  if (mode === "split") {
-    return [
-      { html: `${bar}${top}${dep}${read}`, cls: "card1 splita", id: c.id },
-      { html: `${bar}<div class="cont">${esc(c.ja)}(${cardCode(c.id)})のつづき</div>${items}${qs}`, cls: "card1 splitb", id: c.id + "b" },
-    ];
-  }
-  return [{ html: `${bar}${top}${dep}${read}${items}${qs}`, cls: "card1 " + mode, id: c.id }];
+  const B = [];
+  const add = (html, o = {}) => B.push({ html, card: c.id, suit: suitOf(c.id), ...o });
+  // 頭: 絵(左に回り込み)・名前・略号・キーワード・絵の説明
+  add(`<div class="ctop"><img src="${img(c.file)}"><div class="cn"><span class="code" style="background:${col}">${cardCode(c.id)}</span><b>${esc(c.ja)}</b></div><div class="en">${esc(c.en)}・${suit}</div>
+    <div class="dir"><i>正</i>${esc(c.kwUp)}</div><div class="dir rv"><i>逆</i>${esc(c.kwRv)}</div><p class="depict">${esc(depict[c.id] ?? "")}</p></div>`, { start: true });
+  const meanings = (list) => list.forEach((m) => { const i = m.indexOf(": "); add(i > 0 && i < 8 ? `<div class="mli"><span class="mk">${esc(m.slice(0, i))}</span><span>${esc(m.slice(i + 2))}</span></div>` : `<div class="mli"><span>${esc(m)}</span></div>`); });
+  add(`<h4>正位置の意味</h4>`, { kwn: true });
+  meanings(d.up);
+  add(`<h5>意味の言葉</h5>`, { kwn: true });
+  add(words(w.up));
+  add(`<h4 class="rvh">逆位置の意味</h4>`, { kwn: true });
+  meanings(d.rv);
+  add(`<h5>意味の言葉</h5>`, { kwn: true });
+  add(words(w.rv));
+  add(`<h4>絵の中のもの(${d.items.length})</h4>`, { kwn: true });
+  for (const [n, m] of d.items) add(`<div class="it"><b>${esc(n)}</b>${esc(m)}</div>`);
+  add(`<h4>自分への問い(${d.questions.length})</h4>`, { kwn: true });
+  d.questions.forEach((q, i) => add(`<div class="qi"><span class="qn">${i + 1}.</span>${esc(q)}</div>`));
+  add(`<div class="csep"></div>`, { sep: true });
+  return B;
 }
+const blocks = [];
+for (const g of ["m", "w", "c", "s", "p"]) for (const c of cards.filter((c) => suitOf(c.id) === g)) blocks.push(...cardBlocks(c));
+const sig = String(blocks.length) + ":" + blocks.reduce((h, b) => (h * 31 + b.html.length) % 1e9, 7);
+// 測る用(1 段に全部並べる)。paginate.cjs が読む
+writeFileSync(
+  resolve(out, "measure.html"),
+  `<!doctype html><html lang="ja"><head><meta charset="utf-8"><style>${readFileSync(resolve(root, "booklet/book.css"), "utf8")}</style></head><body class="read">
+<section class="page cardflow probe"><div class="rh">x</div><div class="fbody"></div></section>
+<section class="page cardflow measure"><div class="rh">x</div><div class="fbody mcol">${blocks.map((b, i) => `<div class="b" data-i="${i}">${b.html}</div>`).join("")}</div></section>
+<script>window.__blocks=${JSON.stringify(blocks.map((b) => ({ kwn: !!b.kwn, start: !!b.start, sep: !!b.sep, suit: b.suit })))};window.__sig=${JSON.stringify(sig)}</script></body></html>`,
+);
+let paging = null;
+try {
+  const j = JSON.parse(readFileSync(resolve(root, "booklet/pages.json"), "utf8"));
+  if (j.sig === sig) paging = j.pages;
+} catch {}
+if (!paging) {
+  // まだ測っていない: 仮に 1 枚 2 ページ相当で切る(make.sh が測り直す)
+  paging = [];
+  let cur = [];
+  blocks.forEach((b, i) => {
+    if (b.start && cur.length) { paging.push(cur); cur = []; }
+    cur.push(i);
+  });
+  if (cur.length) paging.push(cur);
+}
+const cardName = (id) => { const c = cards.find((x) => x.id === id); return `${cardCode(id)} ${c.ja}`; };
+const cardPagesList = paging.map((idx, k) => {
+  const first = blocks[idx[0]];
+  const [suit, col] = SUIT[first.suit];
+  const cont = first.start ? "" : `<span class="rh-cont">${esc(cardName(first.card))} のつづき</span>`;
+  const body = idx.filter((i, j) => !(blocks[i].sep && (j === 0 || j === idx.length - 1))).map((i) => blocks[i].html).join("");
+  return { html: `<div class="rh" style="border-color:${col};color:${col}">${suit}${cont}</div><div class="fbody">${body}</div>`, cls: "cardflow", id: first.suit + k };
+});
 
-const sections = []; // { key, name, color, start, end } 各論のページ範囲
-const cardPagesList = [];
-for (const g of ["m", "w", "c", "s", "p"]) {
-  const start = pages.length + cardPagesList.length;
-  for (const c of cards.filter((c) => suitOf(c.id) === g)) cardPagesList.push(...cardPages(c));
-  sections.push({ key: g, name: SUIT[g][0], start: start - pages.length, end: pages.length + cardPagesList.length - pages.length });
-}
 // 本(読む用)は、入門・スプレッド → 各論 → おわり・メモ・奥付
 const frontPages = pages.splice(0, frontCount);
 const endPage = {
@@ -245,7 +265,7 @@ body.read{background:#5b5670;padding:16px 0}body.read .page{box-shadow:0 2px 10p
 
 // ===== 印刷用: 巻ごと(1 巻 = A4 の両面を重ねて切れる枚数。最大 64 ページ = 8 枚) =====
 // 巻の分け方: 入門・スプレッド / 大アルカナ / ワンド・カップ / ソード・ペンタクル(長ければ分ける)
-const cardsOf = (keys) => cardPagesList.filter((p) => keys.includes(suitOf(p.id)));
+const cardsOf = (keys) => cardPagesList.filter((p) => keys.includes(p.id[0]));
 const MAXP = 64;
 function chunk(list, nameFn) {
   // list を MAXP-2(表紙・奥付)ページ以下に分ける
@@ -254,11 +274,11 @@ function chunk(list, nameFn) {
   const size = Math.ceil(list.length / n);
   return Array.from({ length: n }, (_, i) => list.slice(i * size, (i + 1) * size));
 }
+// 巻: 表紙・奥付を入れて 8 の倍数・64 ページ以下(厚すぎると切って重ねた束が留められない)。余りのページが少なくなる分け方
 const volDefs = [
-  { name: "入門とスプレッド", pages: [...frontPages.slice(1)], end: endPage },
-  ...chunk(cardsOf(["m"])).map((l, i, a) => ({ name: "大アルカナ" + (a.length > 1 ? ` ${i + 1}` : ""), pages: l })),
+  ...chunk([...frontPages.slice(1), ...cardsOf(["m"])]).map((l, i, a) => ({ name: "入門・スプレッド・大アルカナ" + (a.length > 1 ? ` ${i + 1}` : ""), pages: l })),
   ...chunk(cardsOf(["w", "c"])).map((l, i, a) => ({ name: "ワンドとカップ" + (a.length > 1 ? ` ${i + 1}` : ""), pages: l })),
-  ...chunk(cardsOf(["s", "p"])).map((l, i, a) => ({ name: "ソードとペンタクル" + (a.length > 1 ? ` ${i + 1}` : ""), pages: l })),
+  ...chunk([...cardsOf(["s", "p"]), endPage]).map((l, i, a) => ({ name: "ソードとペンタクル" + (a.length > 1 ? ` ${i + 1}` : ""), pages: l })),
 ];
 const vols = volDefs.map((v, i) => {
   const arr = [coverOf(`第 ${i + 1} 巻 ${v.name}`), ...v.pages];

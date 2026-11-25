@@ -1,26 +1,20 @@
 [
  {
   "n": 1,
-  "name": "入門とスプレッド",
-  "pages": 24,
-  "sheets": 3
+  "name": "入門・スプレッド・大アルカナ",
+  "pages": 64,
+  "sheets": 8
  },
  {
   "n": 2,
-  "name": "大アルカナ",
+  "name": "ワンドとカップ",
   "pages": 48,
   "sheets": 6
  },
  {
   "n": 3,
-  "name": "ワンドとカップ",
-  "pages": 64,
-  "sheets": 8
- },
- {
-  "n": 4,
   "name": "ソードとペンタクル",
-  "pages": 64,
-  "sheets": 8
+  "pages": 48,
+  "sheets": 6
  }
 ]
