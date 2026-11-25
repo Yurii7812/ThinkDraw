@@ -149,73 +149,56 @@ function mini(s: SpreadDef): SVGSVGElement {
   return el;
 }
 
-/** 紙で出たカードを、出たとおりに置く(スプレッドの形に、カードは自分で選ぶ。2026-11-25 利用者) */
-export function placeManual(t: DrawTarget, spreadId: string | null, picks: { id: string; reversed: boolean }[]): string[] {
-  const v = t.vault;
-  const sp = spreadId ? DECKS.tarot.spreads.find((s) => s.id === spreadId) : undefined;
-  const places: Placement[] = sp ? placeSpread(sp, t.center) : placeFree(Math.max(1, picks.length), t.center);
-  const run = newId(() => false);
-  const ids: string[] = [];
-  v.tx(() => {
-    places.slice(0, picks.length).forEach((p, i) => {
-      const def = cardDef("tarot", picks[i].id)!;
-      const n = v.create({
-        type: "card", title: def.ja, group: t.group, x: p.x, y: p.y,
-        card: { deck: "tarot", id: def.id, reversed: picks[i].reversed },
-        spread: p.pos ? { run, pos: p.pos.id, spread: sp!.id } : { run },
-      });
-      ids.push(n.id);
-    });
-    const boxes = ids.map((id) => {
-      const p = v.itemPos(t.group, id)!;
-      return { x: p.x, y: p.y, w: CARD_W, h: faceHeight("tarot", CARD_H) + 34 };
-    });
-    const { dx, dy } = freeOffset(boxes, t.obstacles);
-    if (dx || dy) v.move(t.group, ids.map((id) => { const p = v.itemPos(t.group, id)!; return { id, x: p.x + dx, y: p.y + dy }; }));
-  });
-  return ids;
+/** カードの略号(検索用): 大アルカナ M0〜M21・小アルカナ S(ソード)W(ワンド)C(カップ)P(ペンタクル)+ 1〜10・P(ペイジ)N(ナイト)Q(クイーン)K(キング)。例 S1・WP */
+export function cardCode(id: string): string {
+  const m = /^([mwcsp])(\d+)$/.exec(id);
+  if (!m) return id.toUpperCase();
+  const n = Number(m[2]);
+  if (m[1] === "m") return "M" + n;
+  return m[1].toUpperCase() + (n > 10 ? "PNQK"[n - 11] : n);
 }
+/** 検索: 略号(S1・WP・M0。W11 のような数でも)・日本語名・英語名 */
+export function searchTarot(q: string): CardDefLite[] {
+  const t = q.trim().toLowerCase();
+  const all = DECKS.tarot.cards;
+  if (!t) return all;
+  const u = t.toUpperCase();
+  const num = /^([WCSP])(1[1-4])$/.exec(u);
+  const code = num ? u[0] + "PNQK"[Number(num[2]) - 11] : u;
+  const exact = all.filter((c) => cardCode(c.id) === code);
+  if (exact.length) return exact;
+  return all.filter((c) => cardCode(c.id).startsWith(u) || c.ja.includes(q.trim()) || c.en.toLowerCase().includes(t));
+}
+type CardDefLite = (typeof DECKS.tarot.cards)[number];
 
-/** 紙で出たカードを選ぶ画面: スプレッド → 位置ごとにカードの名前(正・逆) */
-export function openManualDialog(place: (spreadId: string | null, picks: { id: string; reversed: boolean }[]) => void): void {
-  const cards = DECKS.tarot.cards;
+/** 並べてあるカードに、紙で出たカードを当てはめる画面(略号・名前で探す。Enter で決める・Shift+Enter で逆位置) */
+export function openCardSearch(current: { id: string; reversed: boolean }, pick: (id: string, reversed: boolean) => void): void {
   const back = h("div", { class: "backdrop" });
-  const list = h("datalist", { id: "manual-cards" }, ...cards.map((c) => h("option", { value: c.ja }, c.en)));
-  const sel = h("select", { class: "manual-spread" }, h("option", { value: "" }, T.manualFree), ...DECKS.tarot.spreads.map((s) => h("option", { value: s.id }, `${s.name}(${s.pos.length}枚)`))) as HTMLSelectElement;
-  sel.value = "three";
-  const rows = h("div", { class: "manual-rows" });
-  const more = h("button", { class: "btn small", text: T.manualMore });
-  let freeN = 3;
-  const row = (label: string) => {
-    const input = h("input", { type: "text", class: "manual-card", list: "manual-cards", placeholder: T.manualCardPh, spellcheck: "false" }) as HTMLInputElement;
-    input.addEventListener("keydown", (e) => {
-      if (e.key !== "Escape") e.stopPropagation();
-    });
-    const rv = h("input", { type: "checkbox", class: "manual-rev" }) as HTMLInputElement;
-    return { input, rv, el: h("div", { class: "manual-row" }, h("span", { class: "manual-pos", text: label }), input, h("label", { class: "check" }, rv, T.manualReversed)) };
-  };
-  let cur: ReturnType<typeof row>[] = [];
-  const fill = () => {
-    const sp = DECKS.tarot.spreads.find((s) => s.id === sel.value);
-    const old = cur.map((r) => [r.input.value, r.rv.checked] as const);
-    cur = sp ? sp.pos.map((p) => row(p.name)) : Array.from({ length: freeN }, (_, i) => row(`${i + 1}`));
-    cur.forEach((r, i) => {
-      if (old[i]) [r.input.value, r.rv.checked] = old[i];
-    });
-    more.style.display = sp ? "none" : "";
-    rows.replaceChildren(...cur.map((r) => r.el));
-  };
-  sel.addEventListener("change", fill);
-  more.addEventListener("click", () => {
-    freeN = Math.min(78, freeN + 1);
-    fill();
-    cur[cur.length - 1].input.focus();
-  });
-  const ok = h("button", { class: "btn primary", text: T.manualPlace });
-  const cancel = h("button", { class: "btn", text: T.cancel });
+  const input = h("input", { type: "text", class: "manual-card", placeholder: T.cardSearchPh, spellcheck: "false" }) as HTMLInputElement;
+  const rv = h("input", { type: "checkbox", class: "manual-rev" }) as HTMLInputElement;
+  rv.checked = current.reversed;
+  const list = h("div", { class: "card-results" });
+  let hits: CardDefLite[] = [];
+  let at = 0;
   const close = () => {
     back.remove();
     removeEventListener("keydown", onKey, true);
+  };
+  const choose = (c: CardDefLite, reversed: boolean) => {
+    close();
+    pick(c.id, reversed);
+  };
+  const fill = () => {
+    hits = searchTarot(input.value).slice(0, 12);
+    at = Math.min(at, Math.max(0, hits.length - 1));
+    list.replaceChildren(
+      ...hits.map((c, i) => {
+        const b = h("button", { class: "card-result" + (i === at ? " on" : ""), "data-id": c.id }, h("span", { class: "card-code", text: cardCode(c.id) }), h("span", { text: c.ja }), h("span", { class: "muted small", text: c.en }));
+        b.addEventListener("click", () => choose(c, rv.checked));
+        return b;
+      }),
+    );
+    if (!hits.length) list.append(h("div", { class: "muted small", text: T.cardSearchNone }));
   };
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -223,30 +206,28 @@ export function openManualDialog(place: (spreadId: string | null, picks: { id: s
       close();
     }
   };
-  ok.addEventListener("click", () => {
-    const picks: { id: string; reversed: boolean }[] = [];
-    for (const r of cur) {
-      const q = r.input.value.trim().toLowerCase();
-      if (!q) {
-        if (sel.value) return toast(T.manualMissing);
-        continue;
-      }
-      const c = cards.find((x) => x.ja === r.input.value.trim() || x.en.toLowerCase() === q);
-      if (!c) return toast(T.manualUnknown(r.input.value.trim()));
-      picks.push({ id: c.id, reversed: r.rv.checked });
-    }
-    if (!picks.length) return toast(T.manualMissing);
-    if (new Set(picks.map((p) => p.id)).size < picks.length) return toast(T.manualDup);
-    close();
-    place(sel.value || null, picks);
+  input.addEventListener("input", () => {
+    at = 0;
+    fill();
   });
-  cancel.addEventListener("click", close);
-  back.append(h("div", { class: "modal manual" }, h("div", { class: "modal-title", text: T.manualTitle }), h("p", { class: "muted small", text: T.manualHelp }), sel, list, rows, more, h("div", { class: "row-end" }, cancel, ok)));
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") e.stopPropagation();
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      at = (at + (e.key === "ArrowDown" ? 1 : hits.length - 1)) % Math.max(1, hits.length);
+      fill();
+    } else if (e.key === "Enter" && hits[at]) {
+      e.preventDefault();
+      choose(hits[at], e.shiftKey ? !rv.checked : rv.checked);
+    }
+  });
+  back.append(h("div", { class: "modal manual" }, h("div", { class: "modal-title", text: T.cardSearchTitle }), h("p", { class: "muted small", text: T.cardSearchHelp }), h("div", { class: "manual-row" }, input, h("label", { class: "check" }, rv, T.manualReversed)), list));
   back.addEventListener("mousedown", (e) => e.target === back && close());
   addEventListener("keydown", onKey, true);
   fill();
   document.body.append(back);
-  (cur[0]?.input ?? sel).focus();
+  input.focus();
 }
 
 type Tab = "tarot" | "iching" | "prompt" | "settings";
@@ -267,7 +248,7 @@ export interface CustomSetsHost {
   save(sets: CustomPromptSet[]): void;
 }
 
-export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, hasAnchor: boolean, go: (k: DrawKind, q: string) => void, save: (c: DrawConfig) => void, customs?: CustomSetsHost, manual?: () => void): void {
+export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, hasAnchor: boolean, go: (k: DrawKind, q: string) => void, save: (c: DrawConfig) => void, customs?: CustomSetsHost): void {
   closeDrawMenu();
   const pop = h("div", { class: "drawmenu", role: "dialog" });
   let question = "";
@@ -323,14 +304,6 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
         go({ k: "tarot", spread: null, count: Math.max(1, Math.min(78, Number(count.value) || 1)) }, question);
       });
       body.append(h("div", { class: "dm-h", text: T.drawFree }), h("div", { class: "row" }, count, h("span", { text: "枚" }), free));
-      if (manual) {
-        const mb = h("button", { class: "btn small", title: T.manualTip, text: T.manualBtn });
-        mb.addEventListener("click", () => {
-          closeDrawMenu();
-          manual();
-        });
-        body.append(h("div", { class: "dm-h", text: T.manualHead }), mb);
-      }
     } else if (t === "iching") {
       body.append(
         qInput(),

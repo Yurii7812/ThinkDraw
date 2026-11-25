@@ -4,7 +4,8 @@ import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
 import { NEW_LINK_KINDS, ROOT_ID, type Link, type LinkKind, type Stroke, type TDNode } from "../core/types";
 import { edgeEnds, findHops, kindPreview, partEnd, pointAlong, polyPath, routeAround, type Pt, type Seg } from "./edgeshape";
-import { cardName, spreadDef } from "../decks";
+import { cardDef, cardName, spreadDef } from "../decks";
+import { openCardSearch } from "./tarot";
 import { PROMPT_BY_ID } from "../decks/prompts";
 import { cardFace, faceHeight } from "./cardface";
 import { openPicker } from "./picker";
@@ -2230,6 +2231,20 @@ export class Canvas {
     const texts = ids.every((i) => this.v.get(i)?.type === "text" && !this.v.get(i)?.file && !this.v.get(i)?.paper);
     items.push({ ...this.colorItem(ids), label: texts ? T.textColorShort : T.color });
     if (texts) items.push({ ...this.fillItem(ids), label: T.fillShort });
+    if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") {
+      const cur = n.card;
+      items.push({
+        label: T.cardAssign,
+        action: () =>
+          openCardSearch({ id: cur.id, reversed: cur.reversed }, (cid, rev) => {
+            const def = cardDef("tarot", cid);
+            this.v.tx(() => {
+              this.v.setCard(id, { ...cur, id: cid, reversed: rev });
+              if (def) this.v.update(id, { title: def.ja });
+            });
+          }),
+      });
+    }
     items.push({ separator: true, label: "" });
     // 別のグループへ(移す・入れる・引用・外す)
     const rel: MenuItem[] = [...this.groupMenuItems(ids)];

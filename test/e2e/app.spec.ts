@@ -1641,23 +1641,27 @@ test("2026-11-25 修正9: Ctrl+J は、その日のボードが無くても作�
   await expect(page.locator(".rec-task")).toHaveCount(0);
 });
 
-test("2026-11-25 修正9: 紙で出たタロットカードを、出たとおりに並べる", async () => {
+test("2026-11-25 修正9: 並べたカードを右クリックして、紙で出たカードに略号(S1・WP)で当てはめる", async () => {
   await page.locator(".draw-caret").click();
   await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
-  await page.locator(".drawmenu button", { hasText: "出たとおりに並べる" }).click();
-  await expect(page.locator(".modal.manual")).toBeVisible();
-  await page.locator(".manual-spread").selectOption("three");
-  const inputs = page.locator(".manual-card");
-  await expect(inputs).toHaveCount(3);
-  await inputs.nth(0).fill("愚者");
-  await inputs.nth(1).fill("魔術師");
-  await inputs.nth(2).fill("女教皇");
-  await page.locator(".manual-rev").nth(1).check();
-  await shot("39-manual-spread");
-  await page.locator(".modal.manual .btn.primary").click();
-  await expect(page.locator(".node.t-card")).toHaveCount(3);
+  await page.locator(".dm-tile").first().click(); // 1 枚引く
+  await expect(page.locator(".node.t-card")).toHaveCount(1);
+  const pick = async (q: string, shift = false) => {
+    await page.locator(".node.t-card").click({ button: "right" });
+    await page.locator(".ctxmenu .item", { hasText: "紙で出たカードにする" }).click();
+    await page.locator(".modal.manual .manual-card").fill(q);
+    await page.keyboard.press(shift ? "Shift+Enter" : "Enter");
+  };
+  await pick("WP");
   await settle();
-  const all = Object.values(mdFiles()).filter((t) => t.includes("type: card"));
-  expect(all.length).toBe(3);
-  expect(all.filter((t) => t.includes("reversed: true")).length).toBe(1);
+  expect(Object.values(mdFiles()).find((t) => t.includes("type: card"))!).toContain("id: w11");
+  await shot("39-card-assign");
+  await pick("s1", true); // 逆位置
+  await settle();
+  const md = Object.values(mdFiles()).find((t) => t.includes("type: card"))!;
+  expect(md).toContain("id: s1");
+  expect(md).toContain("reversed: true");
+  await pick("m0");
+  await settle();
+  expect(Object.values(mdFiles()).find((t) => t.includes("type: card"))!).toContain("id: m0");
 });
