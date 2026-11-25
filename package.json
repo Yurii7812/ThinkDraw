@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "ThinkDraw(仮): ページが一つだけの無限キャンバスで考えを書き散らし、束ねて整理するアプリ",
   "main": "dist/main/main.js",
+  "desktopName": "thinkdraw.desktop",
   "private": true,
   "scripts": {
     "build": "node build.mjs",
