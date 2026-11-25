@@ -347,12 +347,12 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
         go({ k: "tarot", spread: null, count: Math.max(1, Math.min(78, Number(count.value) || 1)) }, question);
       });
       body.append(h("div", { class: "dm-h", text: T.drawFree }), h("div", { class: "row" }, count, h("span", { text: "枚" }), free));
-      // タロット小冊子(A6・64 ページ。コンビニで印刷できる A4 面付けと、画面で読む用)
-      const save = (kind: "print" | "read") => async () => {
+      // タロット小冊子(A6・カラー。カードをクリックしたときの表示を全部載せた解説つき)
+      const saveAs = (kind: string, file: string) => async () => {
         closeDrawMenu();
         try {
           const data = await api().bookletRead(kind);
-          const p = await api().exportSave(kind === "print" ? T.bookletPrintFile : T.bookletReadFile, "PDF", ["pdf"], data);
+          const p = await api().exportSave(file, "PDF", ["pdf"], data);
           if (p) toast(T.bookletSaved(p));
         } catch (e) {
           toast(T.bookletFail((e as Error).message));
@@ -363,11 +363,17 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
         closeDrawMenu();
         openBookletReader();
       });
-      const bp = h("button", { class: "btn small", title: T.bookletPrintTip, text: T.bookletPrint });
       const br = h("button", { class: "btn small", title: T.bookletReadTip, text: T.bookletRead });
-      bp.addEventListener("click", save("print"));
-      br.addEventListener("click", save("read"));
-      body.append(h("div", { class: "dm-h", text: T.bookletHead }), h("div", { class: "row" }, bv, bp, br), h("div", { class: "dm-note", text: T.bookletHint }));
+      br.addEventListener("click", saveAs("read", T.bookletReadFile));
+      const vols = h("div", { class: "row bk-vols" });
+      void api().bookletVolumes().then((list) => {
+        for (const v of list) {
+          const b = h("button", { class: "btn small", "data-vol": String(v.n), title: T.bookletVolTip(v.pages, v.sheets), text: `${v.n} ${v.name}` });
+          b.addEventListener("click", saveAs(`print-${v.n}`, T.bookletPrintFile(v.n, v.name)));
+          vols.append(b);
+        }
+      });
+      body.append(h("div", { class: "dm-h", text: T.bookletHead }), h("div", { class: "row" }, bv, br), h("div", { class: "dm-note", text: T.bookletPrintHead }), vols, h("div", { class: "dm-note", text: T.bookletHint }));
     } else if (t === "iching") {
       body.append(
         qInput(),
@@ -534,7 +540,7 @@ export function cardTip(v: Vault, id: string | null, e?: MouseEvent): void {
       parts = [
         h("div", { class: "ct-name", text: `${def.ja}  ${def.en}` }),
         h("div", { class: "ct-orient", text: rv ? T.reversedLabel : T.upright }),
-        h("div", { class: "ct-text", text: (rv ? def.rv : def.up) ?? "" }),
+        h("div", { class: "ct-text", text: def.depict ?? (rv ? def.rv : def.up) ?? "" }),
         pos ? h("div", { class: "ct-pos" }, h("b", { text: `${T.positionMeaning}(${pos.name}): ` }), pos.hint) : null,
       ];
     } else if (n.card.deck === "iching") {

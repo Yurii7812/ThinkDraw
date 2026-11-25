@@ -164,11 +164,13 @@ function registerIpc(): void {
     await fs.writeFile(file, typeof data === "string" ? data : Buffer.from(data));
     return file;
   });
-  // 同梱のタロット小冊子(PDF)を読む(保存の窓は export:save を使う)
+  // 同梱のタロット小冊子(PDF)を読む(保存の窓は export:save を使う)。kind = "read" か "print-N"(N 巻目の印刷用)
   ipcMain.handle("booklet:read", async (_e, kind: string) => {
-    const name = kind === "read" ? "tarot-booklet-read-A6.pdf" : "tarot-booklet-print-A4.pdf";
+    const m = /^print-(\d{1,2})$/.exec(kind);
+    const name = m ? `tarot-booklet-print-${m[1]}.pdf` : "tarot-booklet-read-A6.pdf";
     return new Uint8Array(await fs.readFile(path.join(__dirname, "../../assets/booklet", name)));
   });
+  ipcMain.handle("booklet:volumes", async () => JSON.parse(await fs.readFile(path.join(__dirname, "../../assets/booklet/volumes.json"), "utf8")));
   ipcMain.handle("vault:saveAttachment", (_e, name: string, data: Uint8Array) => needIO().saveAttachment(name, data));
   // 書き出しに埋め込むために、添付の中身を読む(vault の assets の中だけ)
   ipcMain.handle("asset:read", async (_e, rel: string) => {

@@ -35,11 +35,11 @@ add(`<div class="cover"><div class="c-top">THINK DRAW</div><img src="${img("00_F
 const intro = [
   [
     "この冊子について",
-    `<p>1909 年のライダー版(ウェイト版)の 78 枚を、<b>1 冊で持ち歩ける大きさ</b>にまとめた小さな手引きです。</p>
-     <p>前半は<b>入門</b>と<b>スプレッド</b>(並べ方)、後半は<b>78 枚の一覧</b>です。どのカードにも<b>略号</b>(S1・WP・M0 など)を付けました。</p>
+    `<p>1909 年のライダー版(ウェイト版)の 78 枚の、小さな手引きです。</p>
+     <p>前半は<b>入門</b>と<b>スプレッド</b>(並べ方)、後半は<b>78 枚の解説</b>です。解説は、ThinkDraw でカードをクリックしたときの表示と同じ内容(絵の説明・正逆の意味・意味の言葉・絵の中のもの・問い)をすべて載せました。どのカードにも<b>略号</b>(S1・WP・M0 など)を付けています。</p>
      <h3>使い方</h3>
      <ol><li>まず入門を一通り読む(5 分)</li><li>スプレッドから 1 つ選ぶ</li><li>カードを引いたら、略号で一覧を引く</li><li>最後は、絵を見て自分の言葉で</li></ol>
-     <p class="note">カードの意味は「決まった答え」ではなく、考えるきっかけです。一覧の言葉は、絵を見るための手がかりと思ってください。</p>`,
+     <p class="note">カードの意味は「決まった答え」ではなく、考えるきっかけです。解説の言葉は、絵を見るための手がかりと思ってください。</p>`,
   ],
   [
     "78 枚のつくり",
@@ -145,52 +145,97 @@ for (const id of ORDER) {
   add(`<h2>${esc(name)}<small>${esc(sub)}</small></h2><div class="dwrap">${diagram(s)}</div><ul class="plist${two}">${list}</ul><p class="q"><b>向く問い</b> ${esc(q)}</p><p class="tip"><b>読み方</b> ${esc(tip)}</p>`, "spread");
 }
 
-// 各論(1 ページに 2 枚)
-function cell(c) {
-  const [suit, col] = SUIT[suitOf(c.id)];
-  return `<div class="cell"><img src="${img(c.file)}"><div class="ct"><div class="cn"><span class="code" style="background:${col}">${cardCode(c.id)}</span><b>${esc(c.ja)}</b></div><div class="en">${esc(c.en)}</div>
-  <div class="dir"><i>正</i>${esc(c.kwUp)}</div><p>${esc(c.up)}</p><div class="dir rv"><i>逆</i>${esc(c.kwRv)}</div><p>${esc(c.rv)}</p></div></div>`;
+
+const frontCount = pages.length; // 表紙・入門・スプレッド(ここまでが「入門編」)
+
+// ---------- 各論: カードをクリックしたときの表示を、そのまま全部(2026-11-25 利用者) ----------
+const deepDir = resolve(root, "src/decks/tarot/deep");
+import { readdirSync } from "node:fs";
+const deep = {};
+const kw = {};
+for (const f of readdirSync(deepDir).filter((f) => f.endsWith(".json"))) {
+  const j = JSON.parse(readFileSync(resolve(deepDir, f), "utf8"));
+  Object.assign(f.startsWith("kw-") ? kw : deep, j);
 }
-const groups = ["m", "w", "c", "s", "p"];
-for (const g of groups) {
-  const list = cards.filter((c) => suitOf(c.id) === g);
-  for (let i = 0; i < list.length; i += 2) {
-    const [suit, col] = SUIT[g];
-    add(`<div class="cardhead" style="border-color:${col};color:${col}">${suit}</div>${list.slice(i, i + 2).map(cell).join("")}`, "cards");
+const depict = JSON.parse(readFileSync(resolve(root, "src/decks/tarot/depict.json"), "utf8"));
+let layout = {};
+try { layout = JSON.parse(readFileSync(resolve(root, "booklet/layout.json"), "utf8")); } catch {}
+
+const meaningList = (list) =>
+  `<ul class="ml">${list.map((m) => { const i = m.indexOf(": "); return i > 0 && i < 8 ? `<li><span class="mk">${esc(m.slice(0, i))}</span>${esc(m.slice(i + 2))}</li>` : `<li>${esc(m)}</li>`; }).join("")}</ul>`;
+const words = (arr) => `<p class="words">${arr.map(esc).join("・")}</p>`;
+
+function cardPages(c) {
+  const d = deep[c.id], w = kw[c.id], [suit, col] = SUIT[suitOf(c.id)];
+  const mode = layout[c.id] ?? "normal"; // normal | tight | split
+  const top = `<div class="ctop"><img src="${img(c.file)}"><div class="cmeta"><div class="cn"><span class="code" style="background:${col}">${cardCode(c.id)}</span><b>${esc(c.ja)}</b></div><div class="en">${esc(c.en)}・${suit}</div>
+    <div class="dir"><i>正</i>${esc(c.kwUp)}</div><div class="dir rv"><i>逆</i>${esc(c.kwRv)}</div></div></div>`;
+  const dep = `<p class="depict">${esc(depict[c.id] ?? "")}</p>`;
+  const read =
+    `<h4>正位置の意味</h4>${meaningList(d.up)}<h5>意味の言葉</h5>${words(w.up)}` +
+    `<h4 class="rvh">逆位置の意味</h4>${meaningList(d.rv)}<h5>意味の言葉</h5>${words(w.rv)}`;
+  const items = `<h4>絵の中のもの(${d.items.length})</h4><div class="items">${d.items.map(([n, m]) => `<div class="it"><b>${esc(n)}</b>${esc(m)}</div>`).join("")}</div>`;
+  const qs = `<h4>自分への問い(${d.questions.length})</h4><ol class="qs">${d.questions.map((q) => `<li>${esc(q)}</li>`).join("")}</ol>`;
+  const bar = `<div class="cardhead" style="border-color:${col};color:${col}">${suit}</div>`;
+  const readUp = `<h4>正位置の意味</h4>${meaningList(d.up)}<h5>意味の言葉</h5>${words(w.up)}`;
+  const readRv = `<h4 class="rvh">逆位置の意味</h4>${meaningList(d.rv)}<h5>意味の言葉</h5>${words(w.rv)}`;
+  const cont = `<div class="cont">${esc(c.ja)}(${cardCode(c.id)})のつづき</div>`;
+  if (mode === "split3") {
+    return [
+      { html: `${bar}${top}${dep}${readUp}`, cls: "card1 splitb", id: c.id },
+      { html: `${bar}${cont}${readRv}${qs}`, cls: "card1 splitb", id: c.id + "b" },
+      { html: `${bar}${cont}${items}`, cls: "card1 splitb", id: c.id + "c" },
+    ];
   }
+  if (mode === "split") {
+    return [
+      { html: `${bar}${top}${dep}${read}`, cls: "card1 splita", id: c.id },
+      { html: `${bar}<div class="cont">${esc(c.ja)}(${cardCode(c.id)})のつづき</div>${items}${qs}`, cls: "card1 splitb", id: c.id + "b" },
+    ];
+  }
+  return [{ html: `${bar}${top}${dep}${read}${items}${qs}`, cls: "card1 " + mode, id: c.id }];
 }
 
-// 終わり・メモ・奥付
-add(
-  `<h2>おわりに</h2>
+const sections = []; // { key, name, color, start, end } 各論のページ範囲
+const cardPagesList = [];
+for (const g of ["m", "w", "c", "s", "p"]) {
+  const start = pages.length + cardPagesList.length;
+  for (const c of cards.filter((c) => suitOf(c.id) === g)) cardPagesList.push(...cardPages(c));
+  sections.push({ key: g, name: SUIT[g][0], start: start - pages.length, end: pages.length + cardPagesList.length - pages.length });
+}
+// 本(読む用)は、入門・スプレッド → 各論 → おわり・メモ・奥付
+const frontPages = pages.splice(0, frontCount);
+const endPage = {
+  html: `<h2>おわりに</h2>
    <p>カードは、未来を決めつけるものではなく、<b>今の自分の見方を映す鏡</b>です。</p>
    <p>体や心の不調、法律、お金の大きな決断は、占いだけで決めず、<b>専門の人にも相談</b>してください。</p>
    <p>同じカードも、日によって、人によって見え方が変わります。<b>外れる・当たる</b>より、<b>気づきがあったか</b>を大切に。</p>
-   <p>次のページからは、引いたカードや気づきを書き留めるメモです。</p>`,
-  "text",
-);
-add(`<h2>メモ</h2><div class="memo"></div>`, "text");
-add(`<h2>メモ</h2><div class="memo"></div>`, "text");
-add(
-  `<div class="back"><p>タロット小冊子</p><p class="s">ライダー版(1909)の絵と、ThinkDraw のために書いた文<br>絵: A. E. Waite / Pamela Colman Smith(パブリックドメイン)</p></div>`,
-  "plain",
-);
-
-while (pages.length % 8) pages.splice(pages.length - 1, 0, { html: `<h2>メモ</h2><div class="memo"></div>`, cls: "text" });
-const N = pages.length;
+   <p>この冊子の絵の説明・意味・問いは、ThinkDraw でカードをクリックしたときの表示と同じものです。</p>`,
+  cls: "text",
+};
+const memo = () => ({ html: `<h2>メモ</h2><div class="memo"></div>`, cls: "text" });
+const backPage = {
+  html: `<div class="back"><p>タロット小冊子</p><p class="s">ライダー版(1909)の絵と、ThinkDraw のために書いた文<br>絵: A. E. Waite / Pamela Colman Smith(パブリックドメイン)</p></div>`,
+  cls: "plain",
+};
+const coverOf = (sub) => ({ html: frontPages[0].html.replace("<h1>タロット<br>小冊子</h1>", `<h1>タロット<br>小冊子</h1><div class="vol">${sub}</div>`), cls: "plain" });
 
 const css = readFileSync(resolve(root, "booklet/book.css"), "utf8");
-const pageHtml = (p, n) => `<section class="page ${p.cls}">${p.html}<div class="pn">${n > 1 && n < N ? n : ""}</div></section>`;
+const pageHtml = (p, n, N) => `<section class="page ${p.cls}"${p.id ? ` data-id="${p.id}"` : ""}>${p.html}<div class="pn">${n > 1 && n < N && p.cls !== "plain" ? n : ""}</div></section>`;
+const padTo8 = (arr, end) => { while ((arr.length + 1) % 8) arr.push(memo()); arr.push(end); return arr; };
 
-// 読む用: A6 を 1 ページずつ
+// ===== 読む用(1 冊。ページ数は 8 の倍数にしない) =====
+const book = [...frontPages, ...cardPagesList, endPage, memo(), backPage];
+const NB = book.length;
+const bookHtml = (rel) => book.map((p, i) => pageHtml(p, i + 1, NB)).join("");
 writeFileSync(resolve(out, "book.html"), `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>タロット小冊子</title><style>${css}
-@page{size:105mm 148mm;margin:0}</style></head><body class="read">${pages.map((p, i) => pageHtml(p, i + 1)).join("")}</body></html>`);
+@page{size:105mm 148mm;margin:0}</style></head><body class="read">${bookHtml()}</body></html>`);
 
 // アプリの中で読む用(assets/booklet/reader.html。絵は相対パス。#z=倍率 で拡大縮小)
 {
   const assetsDir = resolve(root, "assets/booklet");
   mkdirSync(assetsDir, { recursive: true });
-  const body = pages.map((p, i) => pageHtml(p, i + 1)).join("").replaceAll("file://" + resolve(root, "assets/decks/tarot") + "/", "../decks/tarot/");
+  const body = bookHtml().replaceAll("file://" + resolve(root, "assets/decks/tarot") + "/", "../decks/tarot/");
   writeFileSync(
     resolve(assetsDir, "reader.html"),
     `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>タロット小冊子</title><style>${css}
@@ -198,19 +243,47 @@ body.read{background:#5b5670;padding:16px 0}body.read .page{box-shadow:0 2px 10p
   );
 }
 
-// 印刷用: A4 の 1 面に A6 を 4 つ。切って 4 つの山にし、山の順に重ねて左を留める(1 山 = N/4 ページ)
-const per = N / 4; // 1 山のページ数
-const sheets = per / 2; // A4 の枚数(両面)
-const html = [];
-for (let k = 0; k < sheets; k++) {
-  const front = [0, 1, 2, 3].map((q) => q * per + 2 * k); // 左上・右上・左下・右下(0 始まりのページ)
-  const back = [0, 1, 2, 3].map((q) => q * per + 2 * k + 1);
-  // 裏は左右が入れ替わる(長辺で返すため)
-  const backPos = [back[1], back[0], back[3], back[2]];
-  for (const arr of [front, backPos]) {
-    html.push(`<div class="sheet">${arr.map((pi, pos) => `<div class="slot s${pos}">${pageHtml(pages[pi], pi + 1)}</div>`).join("")}<i class="cutv"></i><i class="cuth"></i></div>`);
-  }
+// ===== 印刷用: 巻ごと(1 巻 = A4 の両面を重ねて切れる枚数。最大 64 ページ = 8 枚) =====
+// 巻の分け方: 入門・スプレッド / 大アルカナ / ワンド・カップ / ソード・ペンタクル(長ければ分ける)
+const cardsOf = (keys) => cardPagesList.filter((p) => keys.includes(suitOf(p.id)));
+const MAXP = 64;
+function chunk(list, nameFn) {
+  // list を MAXP-2(表紙・奥付)ページ以下に分ける
+  const per = MAXP - 2;
+  const n = Math.ceil(list.length / per);
+  const size = Math.ceil(list.length / n);
+  return Array.from({ length: n }, (_, i) => list.slice(i * size, (i + 1) * size));
 }
-writeFileSync(resolve(out, "print.html"), `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>タロット小冊子(印刷用)</title><style>${css}
-@page{size:210mm 297mm;margin:0}</style></head><body class="print">${html.join("")}</body></html>`);
-console.log(`ページ数 ${N}・A4 ${sheets} 枚(両面)`);
+const volDefs = [
+  { name: "入門とスプレッド", pages: [...frontPages.slice(1)], end: endPage },
+  ...chunk(cardsOf(["m"])).map((l, i, a) => ({ name: "大アルカナ" + (a.length > 1 ? ` ${i + 1}` : ""), pages: l })),
+  ...chunk(cardsOf(["w", "c"])).map((l, i, a) => ({ name: "ワンドとカップ" + (a.length > 1 ? ` ${i + 1}` : ""), pages: l })),
+  ...chunk(cardsOf(["s", "p"])).map((l, i, a) => ({ name: "ソードとペンタクル" + (a.length > 1 ? ` ${i + 1}` : ""), pages: l })),
+];
+const vols = volDefs.map((v, i) => {
+  const arr = [coverOf(`第 ${i + 1} 巻 ${v.name}`), ...v.pages];
+  return { name: v.name, pages: padTo8(arr, backPage) };
+});
+function imposed(pgs) {
+  const N = pgs.length, per = N / 4, sheets = per / 2;
+  const html = [];
+  for (let k = 0; k < sheets; k++) {
+    const front = [0, 1, 2, 3].map((q) => q * per + 2 * k);
+    const back = [0, 1, 2, 3].map((q) => q * per + 2 * k + 1);
+    const backPos = [back[1], back[0], back[3], back[2]]; // 長辺で返すと左右が入れ替わる
+    for (const arr of [front, backPos]) html.push(`<div class="sheet">${arr.map((pi, pos) => `<div class="slot s${pos}">${pageHtml(pgs[pi], pi + 1, N)}</div>`).join("")}<i class="cutv"></i><i class="cuth"></i></div>`);
+  }
+  return { html: html.join(""), sheets };
+}
+const index = [];
+vols.forEach((v, i) => {
+  const { html, sheets } = imposed(v.pages);
+  const file = `print-${i + 1}.html`;
+  writeFileSync(resolve(out, file), `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>タロット小冊子 第${i + 1}巻</title><style>${css}
+@page{size:210mm 297mm;margin:0}</style></head><body class="print">${html}</body></html>`);
+  index.push({ n: i + 1, name: v.name, file, pages: v.pages.length, sheets });
+});
+writeFileSync(resolve(out, "volumes.json"), JSON.stringify(index, null, 1));
+mkdirSync(resolve(root, "assets/booklet"), { recursive: true });
+writeFileSync(resolve(root, "assets/booklet/volumes.json"), JSON.stringify(index.map(({ n, name, pages, sheets }) => ({ n, name, pages, sheets })), null, 1));
+console.log(`読む用 ${NB} ページ・印刷用 ${index.length} 巻: ` + index.map((v) => `${v.n}.${v.name} ${v.pages}p(${v.sheets}枚)`).join(" / "));

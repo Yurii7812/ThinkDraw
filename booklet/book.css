@@ -75,3 +75,33 @@ body.print .sheet { position: relative; width: 210mm; height: 297mm; break-after
 body.read { background: #666; }
 body.read .page { margin: 0 auto 4mm; }
 @media print { body.read { background: none; } body.read .page { margin: 0; } }
+/* 各論: カードをクリックしたときの表示を、そのまま全部(1 ページ 1 枚) */
+.page.card1 { padding: 6mm 7mm 8mm; font-size: 6.6pt; line-height: 1.42; }
+.page.card1.tight { font-size: 6pt; line-height: 1.34; }
+.page.card1.splita { font-size: 6.4pt; line-height: 1.38; }
+.page.card1.splitb { font-size: 6.9pt; line-height: 1.45; }
+.card1.splita .ctop img { width: 18mm; height: 30mm; }
+.card1 .cardhead { font-size: 6.6pt; margin-bottom: 1.4mm; }
+.card1 .ctop { display: flex; gap: 2.6mm; margin-bottom: 1.6mm; }
+.card1 .ctop img { width: 21mm; height: 35mm; border: 0.25mm solid #999; flex: none; }
+.card1 .cmeta { flex: 1; min-width: 0; }
+.card1 .cn { font-size: 10pt; }
+.card1 .en { font-size: 6.2pt; margin-bottom: 0.8mm; }
+.card1 .dir { font-size: 7pt; margin-top: 0.6mm; }
+.card1 .dir.rv { margin-top: 0.8mm; }
+.depict { font-size: 6.9pt; line-height: 1.5; margin: 0 0 1.2mm; background: #f7f4fc; border-left: 0.7mm solid #6b4fa0; padding: 0.9mm 1.6mm; }
+.card1.tight .depict { font-size: 6.2pt; line-height: 1.4; }
+.card1 h4 { font-size: 7.2pt; color: #6b4fa0; border-bottom: 0.2mm solid #cfc6e4; margin: 1.5mm 0 0.7mm; padding-bottom: 0.2mm; }
+.card1 h4.rvh { color: #9a4a4a; border-color: #e2c4c4; }
+.card1 h5 { font-size: 6.2pt; color: #888; margin: 0.8mm 0 0.2mm; font-weight: 600; }
+.ml { list-style: none; padding: 0; margin: 0; }
+.ml li { display: flex; gap: 1.4mm; margin: 0; }
+.ml .mk { flex: none; width: 13mm; color: #888; }
+.words { margin: 0; color: #333; }
+.items { columns: 1; }
+.it { margin: 0 0 0.25mm; }
+.it b { color: #6b4fa0; margin-right: 1.2mm; }
+.qs { padding-left: 4mm; margin: 0; }
+.qs li { margin: 0; }
+.cont { font-size: 8pt; font-weight: 700; margin-bottom: 1mm; }
+.cover .vol { margin-top: 4mm; font-size: 9pt; color: #fff; background: #6b4fa0; padding: 1.2mm 3mm; border-radius: 1mm; }

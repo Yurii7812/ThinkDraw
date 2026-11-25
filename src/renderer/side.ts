@@ -321,10 +321,10 @@ export class SidePanel {
         h("div", { class: "d-facts", text: (def.facts ?? []).join(" / ") }),
       ),
     );
-    // この位置での読み: 位置の意味とカードの意味を組み合わせて読む手がかり
-    const reading = pos
-      ? `「${pos.name}」(${pos.hint})に、${def.ja}の${orient}。${(rv ? def.rv : def.up) ?? ""}`
-      : `${def.ja}の${orient}。${(rv ? def.rv : def.up) ?? ""}`;
+    // この位置での読み: 位置の意味 → そのカードに何が描かれているか → 意味(一般の冊子のように。2026-11-25 利用者)
+    const meaning = (rv ? def.rv : def.up) ?? "";
+    const headLine = pos ? `「${pos.name}」(${pos.hint})に、${def.ja}の${orient}。` : `${def.ja}の${orient}。`;
+    const reading = h("div", { class: "d-reading" }, h("div", { class: "d-reading-head", text: headLine }), def.depict ? h("p", { class: "d-depict", text: def.depict }) : null, def.depict ? null : h("p", { class: "d-meaning", text: meaning }));
     const other = h("div", { class: "d-other" }, h("b", { text: (rv ? T.upright : T.reversedLabel) + "なら: " }), (rv ? def.up : def.rv) ?? "");
     const dp = def.deep;
     if (!dp) {
@@ -332,7 +332,7 @@ export class SidePanel {
       for (const s of def.scene ?? []) scene.append(this.chip(s, () => this.host.addConnected(n.id, s, true)));
       return [
         head,
-        this.section(T.readingHere, h("div", { class: "d-reading", text: reading }), other),
+        this.section(T.readingHere, reading, other),
         this.section(T.sceneTitle, scene),
         def.question ? this.section(T.question, this.chip(def.question, () => this.host.addConnected(n.id, def.question!, false), "ask")) : null,
       ].filter((x): x is HTMLElement => !!x);
@@ -364,7 +364,7 @@ export class SidePanel {
     }
     const panes: Record<TarotTab, HTMLElement[]> = {
       read: [
-        h("div", { class: "d-reading", text: reading }),
+        reading,
         h("div", { class: "d-sep" }),
         meaningList(rv ? dp.rv : dp.up),
         h("div", { class: "d-h", text: T.wordsTitle(rv) }),
@@ -392,7 +392,7 @@ export class SidePanel {
       "div",
       { class: "d-tarot-top" },
       // 2026-11-24 利用者「スクロールしないと全部見れない」: カードは左に小さく、名前・向き・キーワードを右に
-      h("div", { class: "d-face big" }, cardFace(c, 124)),
+      h("div", { class: "d-face big" }, cardFace(c, 104)),
       h(
         "div",
         { class: "d-tarot-meta" },
