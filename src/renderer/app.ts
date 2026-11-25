@@ -5,7 +5,7 @@ import { Vault } from "../core/vault";
 import { Canvas, PRESET_COLORS, refClipboard, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
-import { exportGroup, type ExportKind } from "./exporter";
+import { DEFAULT_IMAGE, exportGroup, type ExportKind, type ImageOpts } from "./exporter";
 import { cleanKind, dayGroupTitle } from "../core/records";
 import { allTags } from "../core/tags";
 import { CUSTOM_FILE, parseCustomSets, setCustomPromptSets, type CustomPromptSet } from "../decks/prompts";
@@ -59,6 +59,8 @@ interface Config {
   pen?: Partial<PenState>;
   /** 線の種類ごとのいつもの色(2026-11-24) */
   edgeColors?: Record<string, number>;
+  /** 画像の書き出しの画質(2026-11-25) */
+  image?: Partial<ImageOpts>;
 }
 const STATE_FILE = "state.json";
 const HISTORY_MAX = 50; // 戻る・進むで覚える数
@@ -1488,18 +1490,68 @@ class App {
     // 今使っている側の画面。選んでいる物があれば、その範囲だけ(グループ全体は下のメニューから)
     const c = this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas;
     const sel = c.selection.size || c.strokeSel.size ? { ids: [...c.selection], strokes: [...c.strokeSel] } : undefined;
-    const go = (k: ExportKind, s?: typeof sel) => () => void exportGroup(this.vault, c.group, c, k, s);
+    const go = (k: ExportKind, s?: typeof sel) => () => void exportGroup(this.vault, c.group, c, k, s, this.imageOpts());
     const formats = (s?: typeof sel): MenuItem[] => [
       { label: T.exportMd, action: go("md", s) },
       { label: T.exportPng, action: go("png", s) },
+      { label: T.exportJpg, action: go("jpg", s) },
       { label: T.exportHtml, action: go("html", s) },
       { separator: true, label: "" },
       { label: T.exportCopy, action: go("copy", s) },
+      { separator: true, label: "" },
+      { label: T.exportQuality, action: () => this.imageSettings() },
     ];
     const items: MenuItem[] = sel
       ? [{ label: T.exportSelHead(sel.ids.length + sel.strokes.length), disabled: true }, ...formats(sel), { separator: true, label: "" }, { label: T.exportWhole, sub: formats() }]
       : formats();
     showMenu(r?.left ?? 200, (r?.bottom ?? 40) + 2, items);
+  }
+
+  private imageOpts(): ImageOpts {
+    return { ...DEFAULT_IMAGE, ...(this.config.image ?? {}) };
+  }
+  /** 画像の画質(大きさの倍率・JPEG の品質)。アプリの設定に覚える */
+  imageSettings(): void {
+    const o = this.imageOpts();
+    const scale = h("select", { class: "img-scale" }, ...[1, 2, 3, 4].map((n) => h("option", { value: String(n) }, T.imageScaleOpt(n)))) as HTMLSelectElement;
+    scale.value = String(o.scale);
+    const q = h("input", { type: "range", min: "50", max: "100", step: "5", class: "img-quality" }) as HTMLInputElement;
+    q.value = String(Math.round(o.quality * 100));
+    const qv = h("span", { class: "img-qv", text: q.value + "%" });
+    q.addEventListener("input", () => (qv.textContent = q.value + "%"));
+    const ok = h("button", { class: "btn primary", text: "OK" });
+    const cancel = h("button", { class: "btn", text: T.cancel });
+    const box = h(
+      "div",
+      { class: "modal image-settings" },
+      h("div", { class: "modal-title", text: T.imageSettingsTitle }),
+      h("label", { class: "kind-field" }, h("span", { class: "set-label", text: T.imageScale }), scale),
+      h("label", { class: "kind-field" }, h("span", { class: "set-label", text: T.imageQuality }), h("span", { class: "row" }, q, qv)),
+      h("p", { class: "muted small", text: T.imageSettingsHelp }),
+      h("div", { class: "row-end" }, cancel, ok),
+    );
+    const back = h("div", { class: "backdrop" }, box);
+    const close = () => {
+      back.remove();
+      removeEventListener("keydown", onKey, true);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        close();
+      }
+    };
+    ok.addEventListener("click", () => {
+      const next = { scale: Number(scale.value), quality: Number(q.value) / 100 };
+      this.config.image = next;
+      api().setConfig({ image: next });
+      close();
+    });
+    cancel.addEventListener("click", close);
+    back.addEventListener("mousedown", (e) => e.target === back && close());
+    addEventListener("keydown", onKey, true);
+    document.body.append(back);
+    scale.focus();
   }
 
   // ---------- ペン ----------

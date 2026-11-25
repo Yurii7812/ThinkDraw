@@ -93,7 +93,7 @@ type Drag =
   | { kind: "right-stroke"; id: string; sx: number; sy: number }
   | { kind: "right-empty"; sx: number; sy: number }
   | { kind: "link"; from: string; line: SVGLineElement }
-  | { kind: "rubber"; sx: number; sy: number; box: HTMLElement; base: Set<string>; baseStrokes: Set<string>; edges?: Set<string> }
+  | { kind: "rubber"; sx: number; sy: number; box: HTMLElement; base: Set<string>; baseStrokes: Set<string>; edges?: Set<string>; baseEdges: Set<string> }
   | { kind: "move"; ids: string[]; strokes: string[]; sx: number; sy: number; start: Map<string, { x: number; y: number }>; dx: number; dy: number }
   | { kind: "pan"; sx: number; sy: number; vx: number; vy: number }
   | { kind: "draw"; pts: number[]; path: SVGPathElement }
@@ -102,6 +102,7 @@ type Drag =
   | { kind: "resize"; id: string; sx: number; sy: number; w: number; h: number }
   | { kind: "edge-press"; key: string; sx: number; sy: number; ctrl: boolean; label: boolean }
   | { kind: "label-drag"; key: string }
+  | { kind: "grp-resize"; id: string; corner: string; sx: number; sy: number; x0: number; y0: number; w0: number; h0: number; w?: number; h?: number }
   | { kind: "img-resize"; id: string; corner: string; sx: number; sy: number; x0: number; y0: number; w0: number; h0: number; w?: number };
 
 const DRAG_START = 4;
@@ -619,6 +620,13 @@ export class Canvas {
     } else if (n.type === "group") {
       // 下にグループがあれば ▸ で木を出して飛べる(中身の文字は出さない。2026-11-23 利用者)
       const peek = this.groupPeek(n.id);
+      // 四方の角で大きさを変えたグループ(画像と同じ。2026-11-25 利用者)
+      if (n.size) {
+        el.style.width = n.size.w + "px";
+        el.style.height = n.size.h + "px";
+        el.classList.add("sized");
+      }
+      for (const c of ["nw", "ne", "sw", "se"]) el.append(h("div", { class: `img-h ${c}`, "data-act": "grpresize", "data-corner": c, title: T.grpResize }));
       el.append(
         h(
           "div",
@@ -1000,6 +1008,10 @@ export class Canvas {
     let id = d.id;
     try {
       if (id) {
+        if (this.v.get(id)?.type === "frame") {
+          this.v.update(id, { title: text.trim() }); // 枠の名前は空にもできる(消えない)
+          return id;
+        }
         if (!text.trim()) {
           if (this.v.get(id)?.type === "text") this.deleteItems([id]);
           id = null;
@@ -1238,6 +1250,14 @@ export class Canvas {
         e.preventDefault();
         return;
       }
+      const gh = (e.target as Element).closest?.<HTMLElement>("[data-act=grpresize]");
+      if (id && gh && !this.readOnly) {
+        const r = this.rects.get(id)!;
+        const nel = this.els.get(id)!;
+        this.drag = { kind: "grp-resize", id, corner: gh.dataset.corner!, sx: e.clientX, sy: e.clientY, x0: r.x, y0: r.y, w0: nel.offsetWidth, h0: nel.offsetHeight };
+        e.preventDefault();
+        return;
+      }
       if (id && (e.target as Element).closest?.("[data-act=resize]") && !this.readOnly) {
         const z = this.v.get(id)?.size ?? { w: 240, h: 160 };
         this.drag = { kind: "resize", id, sx: e.clientX, sy: e.clientY, w: z.w, h: z.h };
@@ -1290,6 +1310,20 @@ export class Canvas {
           d.hit.add(s.id);
           this.strokesSvg.querySelector(`g[data-sid="${s.id}"]`)?.remove();
         }
+        return;
+      }
+      case "grp-resize": {
+        // 四方どの角でも。向かいの角は動かさない。縦横は自由
+        const dx = (e.clientX - d.sx) / this.view.z, dy = (e.clientY - d.sy) / this.view.z;
+        const sx = d.corner.includes("e") ? 1 : -1, sy = d.corner.includes("s") ? 1 : -1;
+        const w = Math.max(120, Math.round(d.w0 + sx * dx)), hh = Math.max(40, Math.round(d.h0 + sy * dy));
+        const x = sx < 0 ? d.x0 + d.w0 - w : d.x0, y = sy < 0 ? d.y0 + d.h0 - hh : d.y0;
+        d.w = w;
+        d.h = hh;
+        const el = this.els.get(d.id);
+        if (el) Object.assign(el.style, { width: w + "px", height: hh + "px", left: x + "px", top: y + "px" });
+        this.rects.set(d.id, { x, y, w, h: hh });
+        this.renderEdges();
         return;
       }
       case "img-resize": {
@@ -1348,7 +1382,7 @@ export class Canvas {
         const edgeMode = d.kind === "empty-press" && !!d.shift;
         const box = h("div", { class: "rubber" + (edgeMode ? " edges" : "") });
         this.el.append(box);
-        this.drag = { kind: "rubber", sx: d.sx, sy: d.sy, box, base: d.ctrl ? new Set(this.selection) : new Set(), baseStrokes: d.ctrl ? new Set(this.strokeSel) : new Set(), edges: edgeMode ? (d.ctrl ? new Set(this.edgeSel) : new Set()) : undefined };
+        this.drag = { kind: "rubber", sx: d.sx, sy: d.sy, box, base: d.ctrl ? new Set(this.selection) : new Set(), baseStrokes: d.ctrl ? new Set(this.strokeSel) : new Set(), edges: edgeMode ? (d.ctrl ? new Set(this.edgeSel) : new Set()) : undefined, baseEdges: d.ctrl ? new Set(this.edgeSel) : new Set() };
         this.onMove(e);
         return;
       }
@@ -1420,10 +1454,12 @@ export class Canvas {
         const ss = new Set(d.baseStrokes);
         for (const s of this.v.strokesOf(this.group)) if (hit(strokeBox(s))) ss.add(s.id), got++;
         // 囲んだ所にノードもペンの線も無く、つなぎの線だけなら、その線を選ぶ(2026-11-24 利用者)
+        // Ctrl を押していれば、前に選んだ線は残して足す(ノードのときと同じ)
         if (!got && !d.base.size && !d.baseStrokes.size) {
           const box = { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
-          const es = this.edgeGeom().filter((g) => segHitsRect(g.p1.x, g.p1.y, g.p2.x, g.p2.y, box, 0)).map((g) => g.key);
-          if (es.length) {
+          const es = new Set(d.baseEdges);
+          for (const g of this.edgeGeom()) if (segHitsRect(g.p1.x, g.p1.y, g.p2.x, g.p2.y, box, 0)) es.add(g.key);
+          if (es.size) {
             this.setEdgeSel(es);
             return;
           }
@@ -1503,6 +1539,15 @@ export class Canvas {
           return;
         }
         return this.quoteOuterHere(d.id, e.clientX, e.clientY);
+      }
+      case "grp-resize": {
+        if (!d.w || !d.h) return;
+        const r = this.rects.get(d.id)!;
+        this.v.tx(() => {
+          this.v.setFrameSize(d.id, d.w!, d.h!);
+          this.v.move(this.group, [{ id: d.id, x: Math.round(r.x), y: Math.round(r.y) }]);
+        });
+        return;
       }
       case "img-resize": {
         if (!d.w) return;
@@ -1727,7 +1772,7 @@ export class Canvas {
       return g ? this.host.openGroup(g) : this.jump(id); // 引用は元の場所へ(グループはそのグループ自身の中へ)
     }
     if (n.type === "group") return this.host.openGroup(id);
-    if (n.type === "frame") return void this.renameFrame(id);
+    if (n.type === "frame") return this.renameFrame(id);
     if (n.type === "text" && n.paper) return this.host.openPaper?.(n.paper);
     if (n.type === "text" && n.file) return this.host.openFile?.(n.file);
     if (n.type === "text") {
@@ -2219,11 +2264,13 @@ export class Canvas {
     this.setSelection([f.id]);
   }
 
-  async renameFrame(id: string): Promise<void> {
+  /** 枠の名前: 名前の所で、ノードの名前を書くときと同じ入力で書く(特別な入力欄は出さない。2026-11-25 利用者) */
+  renameFrame(id: string): void {
+    const r = this.rects.get(id);
     const n = this.v.get(id);
-    if (!n) return;
-    const t = await askText(T.frameName, n.title);
-    if (t !== null) this.v.update(id, { title: t.trim() });
+    if (!r || !n) return;
+    this.startEdit(id, Math.round(r.x + 12), Math.round(r.y - 12), null, n.title);
+    this.draft!.ta.classList.add("for-frame");
   }
 
   /**
@@ -2334,7 +2381,8 @@ export class Canvas {
     ];
     if (this.host.openBeside && !many) more.push({ label: T.mBeside, hint: n.type === "group" ? "中ボタン" : undefined, action: () => this.host.openBeside!(id) });
     if (!many && !isRef && n.type === "group") more.push({ label: T.rename, action: () => this.renameGroup(id) }, { label: T.unbundle, desc: T.unbundleDesc, action: () => this.v.unbundle(id) });
-    if (!many && !isRef && n.type === "frame") more.push({ label: T.rename, action: () => void this.renameFrame(id) });
+    if (!many && !isRef && n.type === "group" && n.size) more.push({ label: T.grpAutoSize, action: () => this.v.clearGroupSize(id) });
+    if (!many && !isRef && n.type === "frame") more.push({ label: T.rename, action: () => this.renameFrame(id) });
     if (!many && !isRef && n.type === "text" && n.file) more.push({ label: T.rename, action: () => this.editText(id) });
     if (!many && !isRef && n.type === "note")
       more.push({

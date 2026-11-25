@@ -165,6 +165,12 @@ function registerIpc(): void {
     return file;
   });
   ipcMain.handle("vault:saveAttachment", (_e, name: string, data: Uint8Array) => needIO().saveAttachment(name, data));
+  // 書き出しに埋め込むために、添付の中身を読む(vault の assets の中だけ)
+  ipcMain.handle("asset:read", async (_e, rel: string) => {
+    const file = needIO().assetPath(rel);
+    if (!file || !existsSync(file)) return null;
+    return new Uint8Array(await fs.readFile(file));
+  });
   ipcMain.handle("asset:open", async (_e, rel: string) => {
     const file = needIO().assetPath(rel);
     if (file && existsSync(file)) return shell.openPath(file);

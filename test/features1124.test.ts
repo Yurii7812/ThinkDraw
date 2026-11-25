@@ -182,3 +182,32 @@ describe("@しるしはボードの文字のノードだけ", () => {
     expect(tagged(v, "夢").map((x) => x.id)).toEqual([a]);
   });
 });
+
+describe("2026-11-25 画像の大きさ(置いた場所ごとの幅)は、グループにしても・移しても・解いてもそのまま", () => {
+  const img = () => {
+    const id = v.create({ type: "text", title: "絵.png", group: ROOT_ID, x: 10, y: 10, file: "assets/a.png" }).id;
+    v.setItemWidth(ROOT_ID, id, 321);
+    return id;
+  };
+  it("束ねる・解く", () => {
+    const i = img();
+    const g = v.bundle(ROOT_ID, [i]);
+    expect(v.itemPos(g.id, i)?.w).toBe(321);
+    v.unbundle(g.id);
+    expect(v.itemPos(ROOT_ID, i)?.w).toBe(321);
+  });
+  it("別のグループへ移す(入れる側の引用・所属どちらも)", () => {
+    const i = img();
+    const G = group("G");
+    v.moveToGroup(ROOT_ID, G, i, 5, 5);
+    expect(v.itemPos(G, i)?.w).toBe(321);
+    const H = group("H");
+    v.moveToGroup(G, H, i, 0, 0);
+    expect(v.itemPos(H, i)?.w).toBe(321);
+  });
+  it("引用で新しいグループ", () => {
+    const i = img();
+    const q = v.quoteGroup(ROOT_ID, [i], 100, 100);
+    expect(v.itemPos(q.id, i)?.w).toBe(321);
+  });
+});

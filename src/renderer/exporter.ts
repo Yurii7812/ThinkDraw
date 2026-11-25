@@ -17,7 +17,33 @@ export interface ExportSel {
   strokes: string[];
 }
 
-export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSel): { svg: string; w: number; h: number } {
+const IMG_MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", avif: "image/avif" };
+/** 添付した画像を、書き出しの SVG に埋め込める形(data URL)で読み込む。id → data URL */
+export async function loadImages(v: Vault, group: string, sel?: ExportSel): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const only = sel ? new Set(sel.ids) : null;
+  await Promise.all(
+    v.itemsOf(group).map(async (i) => {
+      const n0 = v.get(i.id);
+      const n = n0?.type === "alias" && n0.target ? v.get(n0.target) : n0;
+      if (!n || n.type !== "text" || !n.file || (only && !only.has(i.id))) return;
+      const mime = IMG_MIME[(n.file.split(".").pop() ?? "").toLowerCase()];
+      if (!mime) return;
+      try {
+        const bytes = await api().readAsset(n.file);
+        if (!bytes) return;
+        let bin = "";
+        for (let k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode(...bytes.subarray(k, k + 0x8000));
+        out.set(i.id, `data:${mime};base64,${btoa(bin)}`);
+      } catch {
+        /* 読めない画像は、名前の文字で出す */
+      }
+    }),
+  );
+  return out;
+}
+
+export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSel, images: Map<string, string> = new Map()): { svg: string; w: number; h: number } {
   const bg = css("--bg"), fg = css("--fg"), edge = css("--edge"), line = css("--line"), grp = css("--group"), card = css("--card");
   const col = (c: number) => (c ? css(`--c${c}`) : fg);
   const onlyIds = sel ? new Set(sel.ids) : null;
@@ -84,7 +110,9 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
     const cx = r.x + r.w / 2;
     const text = (lines: string[], y: number, color: string, weight = "normal") =>
       lines.map((t, k) => `<text x="${cx}" y="${y + k * 22}" text-anchor="middle" fill="${color}" font-weight="${weight}">${esc(t)}</text>`).join("");
-    if (n.type === "text") {
+    if (n.type === "text" && images.has(i.id)) {
+      parts.push(`<image x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" preserveAspectRatio="xMidYMid meet" href="${images.get(i.id)}"/>`);
+    } else if (n.type === "text") {
       if (n.fill) parts.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="4" fill="${col(n.fill)}" fill-opacity="0.28"/>`);
       const lines = (n.title || "(無題)").split("\n");
       parts.push(text(lines, r.y + 19 + (r.h - lines.length * 22) / 2 - 2, col(n.color)));
@@ -103,28 +131,39 @@ export function buildSvg(v: Vault, group: string, canvas: Canvas, sel?: ExportSe
   return { svg, w: W, h: H };
 }
 
-async function toPng(svg: string, w: number, h: number): Promise<Uint8Array> {
+/** 画像の画質: 大きさの倍率(1〜4)と JPEG の品質(0.5〜1) */
+export interface ImageOpts {
+  scale: number;
+  quality: number;
+}
+export const DEFAULT_IMAGE: ImageOpts = { scale: 2, quality: 0.9 };
+
+async function toImage(svg: string, w: number, h: number, kind: "png" | "jpg", o: ImageOpts): Promise<Uint8Array> {
   const img = new Image();
   const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   try {
     await new Promise<void>((ok, ng) => { img.onload = () => ok(); img.onerror = () => ng(new Error("画像にできませんでした")); img.src = url; });
-    const scale = Math.min(2, 8000 / Math.max(w, h));
+    const scale = Math.max(0.25, Math.min(o.scale, 8000 / Math.max(w, h)));
     const c = document.createElement("canvas");
     c.width = Math.round(w * scale); c.height = Math.round(h * scale);
     const ctx = c.getContext("2d")!;
+    if (kind === "jpg") {
+      ctx.fillStyle = "#ffffff"; // JPEG は透明を持てない
+      ctx.fillRect(0, 0, c.width, c.height);
+    }
     ctx.scale(scale, scale);
     ctx.drawImage(img, 0, 0, w, h);
-    const blob: Blob = await new Promise((ok, ng) => c.toBlob((b) => (b ? ok(b) : ng(new Error("画像にできませんでした"))), "image/png"));
+    const blob: Blob = await new Promise((ok, ng) => c.toBlob((b) => (b ? ok(b) : ng(new Error("画像にできませんでした"))), kind === "jpg" ? "image/jpeg" : "image/png", kind === "jpg" ? Math.min(1, Math.max(0.1, o.quality)) : undefined));
     return new Uint8Array(await blob.arrayBuffer());
   } finally {
     img.src = "";
   }
 }
 
-export type ExportKind = "md" | "png" | "html" | "copy";
+export type ExportKind = "md" | "png" | "jpg" | "html" | "copy";
 
 /** sel を渡すと、選んでいる物(とペンの線)だけを書き出す */
-export async function exportGroup(v: Vault, group: string, canvas: Canvas, kind: ExportKind, sel?: ExportSel): Promise<void> {
+export async function exportGroup(v: Vault, group: string, canvas: Canvas, kind: ExportKind, sel?: ExportSel, img: ImageOpts = DEFAULT_IMAGE): Promise<void> {
   const g = v.get(group);
   const base = ((group === ROOT_ID ? g?.title || "ホーム" : g ? labelOf(g) : "ThinkDraw") || "ThinkDraw").replace(/[\\/:*?"<>|\n]/g, "_").slice(0, 60);
   const name = sel ? `${base}-選択` : base;
@@ -138,8 +177,9 @@ export async function exportGroup(v: Vault, group: string, canvas: Canvas, kind:
     let path: string | null;
     if (kind === "md") path = await api().exportSave(name + ".md", "Markdown", ["md"], md());
     else {
-      const { svg, w, h } = buildSvg(v, group, canvas, sel);
-      if (kind === "png") path = await api().exportSave(name + ".png", "画像", ["png"], await toPng(svg, w, h));
+      const { svg, w, h } = buildSvg(v, group, canvas, sel, await loadImages(v, group, sel));
+      if (kind === "png") path = await api().exportSave(name + ".png", "画像", ["png"], await toImage(svg, w, h, "png", img));
+      else if (kind === "jpg") path = await api().exportSave(name + ".jpg", "画像", ["jpg"], await toImage(svg, w, h, "jpg", img));
       else {
         const html = `<!doctype html>\n<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(name)}</title>
 <style>body{margin:0;background:#888}.wrap{overflow:auto}details{padding:12px 16px;background:#fff;color:#222;font-family:sans-serif}pre{white-space:pre-wrap}</style></head><body>

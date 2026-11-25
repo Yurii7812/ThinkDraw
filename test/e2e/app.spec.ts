@@ -1742,3 +1742,117 @@ test("2026-11-25 修正9: ノートの題は折り返さない・ノートの右
   await settle();
   expect(Object.values(mdFiles()).some((t) => t.includes("title: 成績表"))).toBe(true);
 });
+
+test("2026-11-25 修正10: 枠の名前はノードの名前と同じ入力で書く・目立つ", async () => {
+  await write(300, 200, "あ");
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+b");
+  await expect(page.locator(".node.t-frame")).toHaveCount(1);
+  await page.locator(".node.t-frame .frame-name").click();
+  // 特別な入力欄(ダイアログ)ではなく、ノードを書くときと同じ入力
+  await expect(page.locator(".modal")).toHaveCount(0);
+  await expect(page.locator("textarea.draft.for-frame")).toBeVisible();
+  await page.keyboard.type("まとまり");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("textarea.draft")).toHaveCount(0); // 続けて次の文字の入力が出ない
+  const name = page.locator(".node.t-frame .frame-name");
+  await expect(name).toHaveText("まとまり");
+  expect(await name.evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBeGreaterThanOrEqual(15);
+  expect(await name.evaluate((e) => getComputedStyle(e).fontWeight)).toBe("700");
+  await settle();
+  expect(Object.values(mdFiles()).some((t) => /type: frame/.test(t) && t.includes("title: まとまり"))).toBe(true);
+});
+
+test("2026-11-25 修正10: 線の範囲選択は、Ctrl を押していれば前に選んだ線を残して足す", async () => {
+  await write(250, 200, "甲");
+  await write(650, 200, "乙");
+  await write(250, 500, "丙");
+  await write(650, 500, "丁");
+  await linkTo("甲", "乙");
+  await linkTo("丙", "丁");
+  await expect(page.locator("g.edge")).toHaveCount(2);
+  await settle();
+  // 上の線を範囲で選ぶ → 下の線を Ctrl+範囲で足す
+  await page.keyboard.press("Escape");
+  await page.mouse.move(450, 150);
+  await page.mouse.down();
+  await page.mouse.move(470, 260, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator("g.edge.selected")).toHaveCount(1);
+  await page.keyboard.down("Control");
+  await page.mouse.move(450, 450);
+  await page.mouse.down();
+  await page.mouse.move(470, 560, { steps: 4 });
+  await page.mouse.up();
+  await page.keyboard.up("Control");
+  await expect(page.locator("g.edge.selected")).toHaveCount(2);
+  // Ctrl なしなら、選び直し
+  await page.mouse.move(450, 150);
+  await page.mouse.down();
+  await page.mouse.move(470, 260, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator("g.edge.selected")).toHaveCount(1);
+});
+
+test("2026-11-25 修正10: 画像は JPG でも出せる・画質を決められる・添付した画像も出力に入る", async () => {
+  await page.mouse.click(400, 300, { button: "right" });
+  const chooser = page.waitForEvent("filechooser");
+  await page.locator(".ctxmenu .mb-btn", { hasText: "ファイル" }).click();
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await (await chooser).setFiles([{ name: "絵.png", mimeType: "image/png", buffer: png }]);
+  await expect(page.locator(".node.file img.file-img")).toHaveCount(1);
+  await page.mouse.click(900, 600); // 選びを外す(全体を書き出す)
+  await settle();
+  // 画質
+  await page.locator(".tbtn.export").click();
+  await page.locator(".ctxmenu .item", { hasText: "画像の画質" }).first().click();
+  await page.locator(".image-settings .img-scale").selectOption("3");
+  await page.locator(".image-settings .img-quality").fill("70");
+  await page.locator(".image-settings .btn.primary").click();
+  await page.locator(".tbtn.export").click();
+  await page.getByText("画像(.jpg)").click();
+  await page.locator(".tbtn.export").click();
+  await page.getByText("HTML(.html)").click();
+  await expect.poll(() => readdirSync(exportDir).sort()).toEqual(["ホーム.html", "ホーム.jpg"]);
+  const jpg = readFileSync(path.join(exportDir, "ホーム.jpg"));
+  expect(jpg[0]).toBe(0xff);
+  expect(jpg[1]).toBe(0xd8);
+  // 添付した画像が、出力(HTML の SVG)の中に絵として入っている
+  expect(readFileSync(path.join(exportDir, "ホーム.html"), "utf8")).toContain("<image ");
+  expect(readFileSync(path.join(exportDir, "ホーム.html"), "utf8")).toContain("data:image/png;base64,");
+});
+
+test("2026-11-25 修正10: グループも画像のように四方の角で大きさを変えられる(覚える・自動に戻せる)", async () => {
+  await write(400, 300, "中");
+  await page.keyboard.press("Control+a");
+  await page.keyboard.press("Control+g");
+  const g = page.locator(".node.t-group");
+  await expect(g).toHaveCount(1);
+  await page.keyboard.type("箱"); // 束ねた直後は名前を書く
+  await page.keyboard.press("Escape");
+  if (!(await g.evaluate((e) => e.classList.contains("selected")))) await g.click({ modifiers: ["Control"] });
+  await expect(g.locator(".img-h.se")).toBeVisible();
+  const b0 = (await g.boundingBox())!;
+  const se = (await g.locator(".img-h.se").boundingBox())!;
+  await page.mouse.move(se.x + 5, se.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(se.x + 125, se.y + 85, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const b1 = (await g.boundingBox())!;
+  expect(b1.width).toBeGreaterThan(b0.width + 100);
+  expect(b1.height).toBeGreaterThan(b0.height + 70);
+  expect(Math.abs(b1.x - b0.x)).toBeLessThanOrEqual(2); // 左上は動かない
+  // 左上の角: 向かいの角(右下)が動かない
+  const nw = (await g.locator(".img-h.nw").boundingBox())!;
+  await page.mouse.move(nw.x + 5, nw.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(nw.x - 55, nw.y - 35, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  const b2 = (await g.boundingBox())!;
+  expect(Math.abs(b2.x + b2.width - (b1.x + b1.width))).toBeLessThanOrEqual(2);
+  expect(b2.width).toBeGreaterThan(b1.width + 40);
+  await settle();
+  expect(Object.values(mdFiles()).some((t) => /type: group/.test(t) && /size: \{ w: \d+, h: \d+ \}/.test(t))).toBe(true);
+});

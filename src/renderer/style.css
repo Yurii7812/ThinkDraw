@@ -720,7 +720,7 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .node.t-frame .e-b { left: 0; right: 0; bottom: -6px; height: 12px; }
 .node.t-frame .e-l { top: 0; bottom: 0; left: -6px; width: 12px; }
 .node.t-frame .e-r { top: 0; bottom: 0; right: -6px; width: 12px; }
-.node.t-frame .frame-name { position: absolute; left: 12px; top: -10px; padding: 0 6px; font-size: 12px; line-height: 18px; color: var(--muted); background: var(--canvas); pointer-events: auto; cursor: pointer; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
+.node.t-frame .frame-name { position: absolute; left: 12px; top: -13px; padding: 0 8px; font-size: 16px; font-weight: 700; line-height: 24px; color: var(--fg); background: var(--canvas); pointer-events: auto; cursor: pointer; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
 .node.t-frame .frame-name.empty { opacity: 0; }
 .node.t-frame:hover .frame-name.empty, .node.t-frame.selected .frame-name.empty { opacity: 0.5; }
 .node.t-frame .frame-resize { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; pointer-events: auto; cursor: nwse-resize; border-radius: 3px; opacity: 0; background: var(--accent); }
@@ -1039,3 +1039,7 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .cv-body th, .popup.inline .ProseMirror th { background: var(--accent-soft); font-weight: 600; }
 .cv-body td p, .cv-body th p { margin: 0; }
 .note-head .cv-title { font: inherit; font-weight: 600; color: inherit; background: transparent; border: 0; padding: 0; margin: 0; outline: none; field-sizing: content; min-width: 2em; }
+.draft.for-frame { font-size: 16px; font-weight: 700; line-height: 24px; padding: 0 8px; min-width: 60px; }
+.node.t-frame.editing .frame-name { visibility: hidden; }
+.node.t-group.selected .img-h { display: block; }
+.node.t-group.sized { box-sizing: border-box; }

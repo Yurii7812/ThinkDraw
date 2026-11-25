@@ -147,9 +147,9 @@ export class Vault {
     if (!g || g.type !== "group") return [];
     return g.members.filter((m) => this.nodes.has(m.id));
   }
-  memberPos(group: string, id: string): { x: number; y: number } | null {
+  memberPos(group: string, id: string): { x: number; y: number; w?: number } | null {
     const m = this.nodes.get(group)?.members.find((m) => m.id === id);
-    return m ? { x: m.x, y: m.y } : null;
+    return m ? { x: m.x, y: m.y, ...(m.w ? { w: m.w } : {}) } : null;
   }
   /** このグループに引用として置いてあるもの(存在するもの。所属しているものは除く) */
   refsOf(group: string): Member[] {
@@ -161,11 +161,11 @@ export class Vault {
   itemsOf(group: string): (Member & { ref: boolean })[] {
     return [...this.membersOf(group).map((m) => ({ ...m, ref: false })), ...this.refsOf(group).map((m) => ({ ...m, ref: true }))];
   }
-  itemPos(group: string, id: string): { x: number; y: number; ref: boolean } | null {
+  itemPos(group: string, id: string): { x: number; y: number; ref: boolean; w?: number } | null {
     const m = this.memberPos(group, id);
     if (m) return { ...m, ref: false };
     const r = this.nodes.get(group)?.refs.find((m) => m.id === id);
-    return r ? { x: r.x, y: r.y, ref: true } : null;
+    return r ? { x: r.x, y: r.y, ref: true, ...(r.w ? { w: r.w } : {}) } : null;
   }
   isRefIn(group: string, id: string): boolean {
     return this.itemPos(group, id)?.ref === true;
@@ -346,8 +346,15 @@ export class Vault {
   setFrameSize(id: string, w: number, h: number): void {
     this.tx(() => {
       const n = this.mut(id);
-      if (n.type !== "frame") return;
+      if (n.type !== "frame" && n.type !== "group") return; // 枠と、四方で大きさを変えたグループ
       n.size = { w: Math.max(40, Math.round(w)), h: Math.max(30, Math.round(h)) };
+    });
+  }
+  /** グループの大きさを自動(中身に合わせる)に戻す */
+  clearGroupSize(id: string): void {
+    this.tx(() => {
+      const n = this.mut(id);
+      if (n.type === "group") delete n.size;
     });
   }
 
@@ -478,12 +485,12 @@ export class Vault {
   }
 
   /** 入れる: members に足す(元の所属は残る)。すでに入っていれば何もしない */
-  addToGroup(group: string, child: string, x: number, y: number): void {
+  addToGroup(group: string, child: string, x: number, y: number, w?: number): void {
     if (!this.canContain(group, child)) throw new CycleError();
     this.tx(() => {
       const g = this.mut(group);
       if (g.members.some((m) => m.id === child)) return;
-      g.members.push({ id: child, x, y });
+      g.members.push({ id: child, x, y, ...(w ? { w } : {}) });
       this.index.update(group, g);
     });
   }
@@ -491,13 +498,13 @@ export class Vault {
   // ---------- 引用 ----------
 
   /** 引用する: このグループに、ほかの物を見せる(所属はしない)。すでに所属・引用していれば何もしない */
-  addRef(group: string, child: string, x: number, y: number): boolean {
+  addRef(group: string, child: string, x: number, y: number, w?: number): boolean {
     const g = this.nodes.get(group);
     if (!g || g.type !== "group" || group === child || !this.nodes.has(child)) return false;
     if (g.members.some((m) => m.id === child) || g.refs.some((m) => m.id === child)) return false;
     this.tx(() => {
       const gm = this.mut(group);
-      gm.refs.push({ id: child, x, y });
+      gm.refs.push({ id: child, x, y, ...(w ? { w } : {}) });
       this.index.update(group, gm);
     });
     return true;
@@ -558,16 +565,17 @@ export class Vault {
 
   /** 別のグループへ移す(入れる + 外す)。引用なら、引用を移す */
   moveToGroup(from: string, to: string, child: string, x: number, y: number): void {
+    const w = this.itemPos(from, child)?.w; // 画像の大きさは、移しても変えない
     if (this.isRefIn(from, child)) {
       this.tx(() => {
         this.removeRef(from, child);
-        this.addRef(to, child, x, y);
+        this.addRef(to, child, x, y, w);
       });
       return;
     }
     if (!this.canContain(to, child)) throw new CycleError();
     this.tx(() => {
-      this.addToGroup(to, child, x, y);
+      this.addToGroup(to, child, x, y, w);
       this.removeFromGroup(from, child);
     });
   }
@@ -625,7 +633,7 @@ export class Vault {
       cy = Math.round(cy);
       const g = this.create({ type: "group", title, group, x: cx, y: cy });
       const gm = this.mut(g.id);
-      for (const p of pos) (p.ref ? gm.refs : gm.members).push({ id: p.id, x: Math.round(p.x - cx), y: Math.round(p.y - cy) });
+      for (const p of pos) (p.ref ? gm.refs : gm.members).push({ id: p.id, x: Math.round(p.x - cx), y: Math.round(p.y - cy), ...(p.w ? { w: p.w } : {}) });
       for (const s of strokes) gm.strokes.push({ ...s, p: s.p.map((v, i) => (i % 2 ? v - cy : v - cx)) });
       // 束ねなかったが、束ねた物と線でつながっていた物は、新しいグループに引用として置く(線が中でも見えるように。
       // 2026-11-23 利用者の希望)。位置は元の並びのまま
@@ -640,7 +648,7 @@ export class Vault {
       }
       for (const o of outside) {
         const at = this.itemPos(group, o)!;
-        gm.refs.push({ id: o, x: Math.round(at.x - cx), y: Math.round(at.y - cy) });
+        gm.refs.push({ id: o, x: Math.round(at.x - cx), y: Math.round(at.y - cy), ...(at.w ? { w: at.w } : {}) });
       }
       this.index.update(g.id, gm);
       const parent = this.mut(group);
@@ -667,7 +675,7 @@ export class Vault {
       const x0 = Math.min(...xs), y0 = Math.min(...ys);
       const g = this.create({ type: "group", title, group, x: Math.round(x), y: Math.round(y) });
       const gm = this.mut(g.id);
-      for (const p of pos) gm.refs.push({ id: p.id, x: Math.round(p.x - x0), y: Math.round(p.y - y0) });
+      for (const p of pos) gm.refs.push({ id: p.id, x: Math.round(p.x - x0), y: Math.round(p.y - y0), ...(p.w ? { w: p.w } : {}) });
       for (const s of strokes) gm.strokes.push({ ...s, id: randomId().slice(0, 8), p: s.p.map((v, i) => Math.round(i % 2 ? v - y0 : v - x0)) });
       this.index.update(g.id, gm);
       return gm;
@@ -688,9 +696,9 @@ export class Vault {
         const gp = this.memberPos(p, groupId)!;
         for (const m of members) {
           if (this.memberPos(p, m.id)) continue;
-          this.addToGroup(p, m.id, Math.round(gp.x + m.x - cx), Math.round(gp.y + m.y - cy));
+          this.addToGroup(p, m.id, Math.round(gp.x + m.x - cx), Math.round(gp.y + m.y - cy), m.w);
         }
-        for (const r of refs) this.addRef(p, r.id, Math.round(gp.x + r.x - cx), Math.round(gp.y + r.y - cy));
+        for (const r of refs) this.addRef(p, r.id, Math.round(gp.x + r.x - cx), Math.round(gp.y + r.y - cy), r.w);
         if (strokes.length) {
           const pm = this.mut(p);
           for (const s of strokes) pm.strokes.push({ ...s, id: randomId().slice(0, 8), p: s.p.map((v, i) => (i % 2 ? v + gp.y - cy : v + gp.x - cx)) });
