@@ -1670,3 +1670,38 @@ test("2026-11-25 修正9: 形を右クリックで、空のカードを並べる
   await page.locator(".node.t-card").first().click({ button: "right" });
   await expect(page.locator(".ctxmenu .item", { hasText: "紙で出たカードにする" })).toBeVisible();
 });
+
+test("2026-11-25 修正9: ノートの題は折り返さない・ノートの右上にチェックボックスのボタン・チェックリストと表はポップアップでなくその場で書く", async () => {
+  // 長い題のノート
+  await page.mouse.click(500, 300, { button: "right" });
+  await page.locator(".ctxmenu .item", { hasText: "ノート" }).first().click();
+  await page.locator(".popup .pop-title").fill("とても長い題のノートで、ふつうなら途中で折り返してしまうくらいの長さの名前");
+  // 右上のボタンで、その行をチェック項目に
+  await page.locator(".popup .ProseMirror").click();
+  await page.keyboard.type("買うもの");
+  await page.locator(".popup .b-check").click();
+  await expect(page.locator(".popup .ProseMirror li.task")).toHaveCount(1);
+  await page.locator(".popup .b-check").click(); // もう一度でふつうの項目に
+  await expect(page.locator(".popup .ProseMirror li.task")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".popup")).toHaveCount(0);
+  const h1 = await page.locator(".node.t-note .note-head").evaluate((e) => e.getBoundingClientRect().height);
+  expect(h1).toBeLessThan(30);
+  // チェックリスト: 置くとその場で書ける(ノートの窓は出ない)
+  await page.locator(".tbtn.attach-btn").click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "チェック" }).click();
+  await expect(page.locator(".popup.inline")).toBeVisible();
+  await expect(page.locator(".popup:not(.inline)")).toHaveCount(0);
+  await page.keyboard.type("牛乳");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("卵");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".popup")).toHaveCount(0);
+  const cv = page.locator(".node.t-note", { hasText: "チェックリスト" });
+  await expect(cv).toContainText("牛乳");
+  await expect(cv.locator("li.task")).toHaveCount(2);
+  // もう一度押すと、またその場で書ける
+  await cv.locator(".note-head").click();
+  await expect(page.locator(".popup.inline")).toBeVisible();
+  await shot("40-inline-check");
+});

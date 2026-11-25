@@ -128,7 +128,7 @@ export class BodyPopup {
   private footer: HTMLElement;
   private bubble: HTMLElement | null = null;
 
-  constructor(private host: EditorHost, id: string, parent: HTMLElement, expanded = false) {
+  constructor(private host: EditorHost, id: string, parent: HTMLElement, expanded = false, private inline = false) {
     this.id = id;
     const v = host.vault;
     const n = v.get(id)!;
@@ -168,17 +168,34 @@ export class BodyPopup {
       btn(T.italic, "b-italic", () => this.cmd(toggleMark(schema.marks.em))),
       btn(T.heading, "b-heading", () => this.cmd(setBlockType(schema.nodes.heading, { level: 2 }))),
       btn(T.bulletList, "b-list", () => this.cmd(wrapInList(schema.nodes.bullet_list))),
+      btn(T.checkToggle, "b-check", () => this.toggleCheck(), "check"),
       btn(T.makeLink, "b-link", () => this.makeLink()),
       btn(T.tableOps, "b-tableops", () => this.attachMenu(), "table"),
       h("span", { class: "spacer" }),
       btn(T.expand, "b-expand", () => this.toggleExpand()),
       btn(T.close, "b-close", () => this.close()),
     );
-    head.append(tools);
+    if (inline) {
+      // キャンバスの上でそのまま書く(チェックリスト・表のノード): 小さな道具だけ
+      for (const c of ["b-bold", "b-italic", "b-heading", "b-list", "b-link", "b-expand"]) tools.querySelector("." + c)?.remove();
+      head.replaceChildren(tools);
+      head.classList.add("inline");
+    } else head.append(tools);
 
     const editorEl = h("div", { class: "pop-body" });
     this.footer = h("div", { class: "pop-foot" });
-    this.el = h("div", { class: "popup" + (expanded ? " expanded" : ""), role: "dialog" }, head, editorEl, this.footer);
+    this.el = h("div", { class: "popup" + (expanded ? " expanded" : "") + (inline ? " inline" : ""), role: "dialog" }, head, editorEl, inline ? null : this.footer);
+    if (inline) {
+      // キャンバスの操作(ドラッグ・選択)に取られないように
+      for (const ev of ["pointerdown", "mousedown", "click", "dblclick", "wheel"]) this.el.addEventListener(ev, (e) => e.stopPropagation());
+      this.el.addEventListener("focusout", (e) => {
+        const to = (e as FocusEvent).relatedTarget as Element | null;
+        if (to && (this.el.contains(to) || to.closest?.(".backdrop, .ctxmenu"))) return;
+        setTimeout(() => {
+          if (!this.el.contains(document.activeElement) && !document.querySelector(".backdrop, .ctxmenu")) this.close();
+        }, 0);
+      });
+    }
     parent.append(this.el);
 
     const state = EditorState.create({
@@ -281,6 +298,29 @@ export class BodyPopup {
       if (!this.titleInput?.value) return;
       this.view.focus();
     }
+  }
+
+  /** 今の行をチェック項目に(もう項目なら、つけ外し)。右上のボタン */
+  private toggleCheck(): void {
+    const st = this.view.state;
+    const $f = st.selection.$from;
+    let d = $f.depth;
+    while (d > 0 && $f.node(d).type !== schema.nodes.list_item) d--;
+    if (d === 0) {
+      // 項目でなければ、箇条書きにしてからチェック付きに
+      wrapInList(schema.nodes.bullet_list)(st, this.view.dispatch);
+      const $g = this.view.state.selection.$from;
+      for (let k = $g.depth; k > 0; k--) {
+        if ($g.node(k).type === schema.nodes.list_item) {
+          this.view.dispatch(this.view.state.tr.setNodeMarkup($g.before(k), undefined, { ...$g.node(k).attrs, checked: false }));
+          break;
+        }
+      }
+    } else {
+      const li = $f.node(d);
+      this.view.dispatch(st.tr.setNodeMarkup($f.before(d), undefined, { ...li.attrs, checked: li.attrs.checked == null ? false : null }));
+    }
+    this.view.focus();
   }
 
   private cmd(c: (s: EditorState, d?: EditorView["dispatch"]) => boolean): void {

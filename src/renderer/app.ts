@@ -306,6 +306,7 @@ class App {
         kindColor: (k: string) => this.config.edgeColors?.[k] ?? 0,
         openGroup: (id) => this.openGroup(id),
         openBody: (id) => this.openBody(id),
+        editInline: (id, mount, done) => this.editInline(id, mount, done),
         goToNode: (id) => this.goToNode(id, false, true),
         pickGroup: async (title) => {
           const r = await openPicker(this.vault, { title, mode: "group" });
@@ -1102,6 +1103,17 @@ class App {
       expanded,
     );
   }
+  /** キャンバスの上でそのまま書く編集欄(チェックリスト・表) */
+  private editInline(id: string, mount: HTMLElement, done: () => void): void {
+    this.closePopup();
+    new BodyPopup(
+      { vault: this.vault, goToGroup: (g, focus) => this.openGroup(g, focus), goToNode: (n, ob) => this.goToNode(n, ob), closedEditor: done, openSearch: () => this.search() },
+      id,
+      mount,
+      false,
+      true,
+    );
+  }
   private closePopup(): void {
     this.popup?.close();
     this.popup = null;
@@ -1211,6 +1223,7 @@ class App {
           kindColor: (k: string) => this.config.edgeColors?.[k] ?? 0,
           openGroup: (id) => this.openPeek(id),
           openBody: (id) => this.openBody(id),
+          editInline: (id, mount, done) => this.editInline(id, mount, done),
           goToNode: (id) => this.openBeside(id),
           pickGroup: async (title) => {
             const r = await openPicker(this.vault, { title, mode: "group" });

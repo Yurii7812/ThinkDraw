@@ -35,6 +35,8 @@ export interface CanvasHost {
   openGroup(id: string): void;
   /** 開く(文字は書き直し以外。ノート・カード・グループの本文) */
   openBody(id: string): void;
+  /** チェックリスト・表のノートを、キャンバスの上でそのまま書く(mount の中に編集欄を作る) */
+  editInline?(id: string, mount: HTMLElement, onClose: () => void): void;
   goToNode(id: string): void;
   pickGroup(title: string): Promise<string | null>;
   cardHover(id: string | null, e?: MouseEvent): void;
@@ -541,6 +543,7 @@ export class Canvas {
       const t = n.target ? this.v.get(n.target) : undefined;
       return JSON.stringify(["alias", n.target, t && t.type !== "alias" ? this.signature(t, true) : null]);
     }
+    if (n.type === "note" && this.inline === n.id) return JSON.stringify(["inline", n.id]); // 書いている間は作り直さない
     return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, n.paper ? [n.paper, paperStore.fzOf(n.paper), paperStore.thumbOf(n.paper)] : null, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? (isCheckOrTable(n.body) ? n.body : null) : !!n.body.trim(), n.card, n.spread, n.size]);
   }
 
@@ -1647,6 +1650,34 @@ export class Canvas {
     this.open(id, target);
   }
 
+  /** いまキャンバスの上で書いているノード(チェックリスト・表) */
+  private inline: string | null = null;
+  /** ノートを開く: チェックリスト・表のノートは、ポップアップではなくそのまま書き込む(2026-11-25 利用者) */
+  openNote(id: string): void {
+    const n = this.v.get(id);
+    if (!n) return;
+    if (n.type === "note" && isCheckOrTable(n.body) && this.host.editInline && !this.readOnly) return this.startInline(id);
+    this.host.openBody(id);
+  }
+  private startInline(id: string): void {
+    if (this.inline === id) return;
+    this.inline = id;
+    this.renderNow();
+    const el = this.el.querySelector<HTMLElement>(`.node[data-id="${id}"]`);
+    if (!el) {
+      this.inline = null;
+      return this.host.openBody(id);
+    }
+    el.querySelector(".cv-body")?.setAttribute("hidden", "");
+    const mount = h("div", { class: "cv-edit" });
+    el.append(mount);
+    this.host.editInline!(id, mount, () => {
+      if (this.inline === id) this.inline = null;
+      this.requestRender();
+      this.el.focus({ preventScroll: true });
+    });
+  }
+
   /** 紙で出たカードを、略号・名前で探して当てはめる(まだ選んでいないカードを押したときも) */
   assignCard(id: string): void {
     const cur = this.v.get(id)?.card;
@@ -1678,7 +1709,8 @@ export class Canvas {
       return;
     }
     // 本文はノートだけ(2026-11-23 利用者)。カードは選ぶと右の欄に詳細が出る
-    if (n.type === "note" || n.body.trim()) this.host.openBody(id);
+    if (n.type === "note") this.openNote(id);
+    else if (n.body.trim()) this.host.openBody(id);
     else this.setSelection([id]);
   }
 
@@ -2233,7 +2265,7 @@ export class Canvas {
       else if (n.type === "text" && n.paper) bar.push({ icon: "open", label: T.mOpen, title: PT.title, action: () => this.host.openPaper?.(n.paper!) });
       else if (n.type === "text" && n.file) bar.push({ icon: "open", label: T.mOpen, title: T.openFile, action: () => this.host.openFile?.(n.file!) });
       else if (n.type === "text") bar.push({ icon: "edit", label: T.mEdit, title: T.editText + " (R)", key: "r", action: () => this.editText(id) });
-      else if (n.type === "note") bar.push({ icon: "open", label: T.mOpen, title: T.openNote, action: () => this.host.openBody(id) });
+      else if (n.type === "note") bar.push({ icon: "open", label: T.mOpen, title: T.openNote, action: () => this.openNote(id) });
       else bar.push({ icon: "open", label: T.mOpen, action: () => this.open(id) });
     }
     bar.push({ icon: "link", label: T.linkShort, title: T.linkSearch, action: () => this.linkBySearch() });
@@ -2382,7 +2414,7 @@ export class Canvas {
       this.renderNow();
     }
     this.setSelection([n.id]);
-    this.host.openBody(n.id);
+    this.openNote(n.id);
   }
   /** 添付の選び方(右上の「添付」と空きの右クリックで共通) */
   attachItems(x: number, y: number): MenuItem[] {
@@ -2439,7 +2471,7 @@ export class Canvas {
           const n = this.v.create({ type: "note", title: "", group: this.group, x: px, y: py });
           this.renderNow();
           this.setSelection([n.id]);
-          this.host.openBody(n.id);
+          this.openNote(n.id);
         },
       },
       { label: T.attachHead, heading: true },

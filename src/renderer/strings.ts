@@ -417,6 +417,7 @@ export const T = {
   bold: "太字(Ctrl+B)",
   italic: "斜体(Ctrl+I)",
   heading: "見出し",
+  checkToggle: "チェックボックス(この行をチェック項目に)",
   bulletList: "箇条書き",
   belongsTo: "所属先",
   linkedFrom: "リンク元",
