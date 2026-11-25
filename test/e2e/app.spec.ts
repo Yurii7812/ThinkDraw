@@ -384,7 +384,7 @@ test("Esc で選択が外れる/R で名前を変える/Ctrl+C → 別のグル�
   expect(g).toContain(idOf("オレンジ"));
 });
 
-test("右上の「添付」から チェックリスト・表をノードとして置く。キャンバスには題だけ", async () => {
+test("右上の「添付」から チェックリスト・表をノードとして置く。キャンバスには中身が全部見える(2026-11-25)", async () => {
   await page.locator(".tbtn.attach-btn").click();
   await page.locator(".ctxmenu .mb-btn", { hasText: "チェック" }).click();
   await expect(page.locator(".popup")).toBeVisible();
@@ -419,8 +419,18 @@ test("右上の「添付」から チェックリスト・表をノードとし�
   await page.keyboard.press("Escape");
   await page.locator(".popup").waitFor({ state: "detached" }).catch(() => {});
   await expect(page.locator(".node.t-note .excerpt")).toHaveCount(0);
-  await expect(page.locator(".node.t-note", { hasText: "チェックリスト" })).not.toContainText("牛乳");
-  await expect(page.locator(".node.t-note", { hasText: "表" })).toBeVisible();
+  const cv = page.locator(".node.t-note", { hasText: "チェックリスト" });
+  await expect(cv).toContainText("牛乳");
+  await expect(cv).toContainText("パン");
+  await expect(cv.locator("li.task.done")).toHaveCount(1);
+  // キャンバスの上でも、チェックの箱を押せる(本文に書かれる)
+  await cv.locator(".task-box").nth(1).click();
+  await expect(cv.locator("li.task.done")).toHaveCount(2);
+  await settle();
+  expect(Object.values(mdFiles()).find((t) => t.includes("title: チェックリスト"))!).toContain("[x] パン");
+  const tbl = page.locator(".node.t-note", { hasText: "名前" });
+  await expect(tbl.locator("th")).toHaveCount(4);
+  await expect(tbl).toContainText("値");
 });
 
 test("書き出し: Markdown・画像・HTML(試験では指定の場所へ書く)", async () => {
@@ -1580,4 +1590,74 @@ test("2026-11-24: 線の右クリックの「線の設定…」で、種類ご�
   // 線のファイルには色を書かない(いつもの色はアプリの設定)
   await settle();
   expect(mdFiles()[idOf("甲") + ".md"]).not.toContain("color:");
+});
+
+test("2026-11-25 修正9: 線を選んで数字キーでその種類に", async () => {
+  await write(250, 200, "甲");
+  await write(650, 200, "乙");
+  await linkTo("甲", "乙");
+  await expect(page.locator("g.edge")).toHaveCount(1);
+  await settle();
+  const m = await edgeMid(0);
+  await page.mouse.click(m.x, m.y);
+  await page.keyboard.press("3"); // 両矢印
+  await settle();
+  expect(mdFiles()[idOf("甲") + ".md"]).toContain("kind: double");
+  await page.keyboard.press("5"); // 部分・全体
+  await settle();
+  expect(mdFiles()[idOf("甲") + ".md"]).toContain("kind: part");
+  await page.keyboard.press("2");
+  await settle();
+  expect(mdFiles()[idOf("甲") + ".md"]).toContain("kind: arrow");
+});
+
+test("2026-11-25 修正9: Ctrl+J は、その日のボードが無くても作って開ける・まだ済んでいないチェックが出る(済んだものは出ない)", async () => {
+  await page.keyboard.press("Control+j");
+  await expect(page.locator(".records")).toBeVisible();
+  // 遠い日を選ぶ → ボードは無い
+  await page.locator(".rec-cell[data-date$='-15']").click();
+  await expect(page.locator(".rec-open-day")).toBeEnabled();
+  await expect(page.locator(".rec-open-day")).toContainText("作って");
+  await page.locator(".rec-open-day").click();
+  await expect(page.locator(".records")).toHaveCount(0);
+  // その日のボードにチェックリストを置く
+  await page.locator(".tbtn.attach-btn").click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "チェック" }).click();
+  await page.keyboard.type("牛乳");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("パン");
+  await page.locator(".ProseMirror li.task .task-box").first().click(); // 牛乳は済み
+  await page.keyboard.press("Escape");
+  await page.locator(".popup").waitFor({ state: "detached" }).catch(() => {});
+  await settle();
+  await page.keyboard.press("Control+j");
+  await page.locator(".rec-cell[data-date$='-15']").click();
+  await expect(page.locator(".rec-task")).toHaveCount(1);
+  await expect(page.locator(".rec-task")).toContainText("パン");
+  await expect(page.locator(".rec-tasks")).not.toContainText("牛乳");
+  await shot("38-records-tasks");
+  // ここで済みにすると消える
+  await page.locator(".rec-task .rec-task-box").click();
+  await expect(page.locator(".rec-task")).toHaveCount(0);
+});
+
+test("2026-11-25 修正9: 紙で出たタロットカードを、出たとおりに並べる", async () => {
+  await page.locator(".draw-caret").click();
+  await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
+  await page.locator(".drawmenu button", { hasText: "出たとおりに並べる" }).click();
+  await expect(page.locator(".modal.manual")).toBeVisible();
+  await page.locator(".manual-spread").selectOption("three");
+  const inputs = page.locator(".manual-card");
+  await expect(inputs).toHaveCount(3);
+  await inputs.nth(0).fill("愚者");
+  await inputs.nth(1).fill("魔術師");
+  await inputs.nth(2).fill("女教皇");
+  await page.locator(".manual-rev").nth(1).check();
+  await shot("39-manual-spread");
+  await page.locator(".modal.manual .btn.primary").click();
+  await expect(page.locator(".node.t-card")).toHaveCount(3);
+  await settle();
+  const all = Object.values(mdFiles()).filter((t) => t.includes("type: card"));
+  expect(all.length).toBe(3);
+  expect(all.filter((t) => t.includes("reversed: true")).length).toBe(1);
 });

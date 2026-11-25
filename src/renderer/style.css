@@ -996,3 +996,26 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .ls-preview.c5 { color: var(--c5); } .ls-preview.c6 { color: var(--c6); } .ls-preview.c7 { color: var(--c7); } .ls-preview.c8 { color: var(--c8); }
 .ls-name { width: 6em; font-size: 13px; }
 .ls-sws { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* チェックリスト・表のノート: 中身を全部見せる(2026-11-25) */
+.node.t-note.note-open { max-width: none; }
+.cv-body { margin-top: 6px; font-weight: 400; font-size: 13px; }
+.cv-body p { margin: 0; }
+.cv-body ul, .cv-body ol { margin: 0; padding-left: 18px; }
+.cv-body li.task { list-style: none; display: flex; gap: 6px; align-items: flex-start; margin-left: -18px; padding: 1px 0; }
+.cv-body li.task .task-box { margin: 3px 0 0; flex: none; cursor: pointer; accent-color: var(--accent); }
+.cv-body li.task.done > span { color: var(--muted); text-decoration: line-through; }
+.cv-table { border-collapse: collapse; }
+.cv-table th, .cv-table td { border: 1px solid var(--line); padding: 3px 8px; min-width: 40px; height: 1.4em; text-align: left; }
+.cv-table th { background: var(--accent-soft); font-weight: 600; }
+.rec-tasks { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.rec-task { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 6px; font-size: 13px; }
+.rec-task:hover { background: var(--accent-soft); }
+.rec-task input { accent-color: var(--accent); cursor: pointer; }
+.rec-task .rec-task-t { flex: 1; min-width: 0; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+.rec-task .rec-task-from { font-size: 11px; color: var(--muted); }
+.modal.manual { width: min(460px, 92vw); max-height: 86vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.manual-rows { display: flex; flex-direction: column; gap: 4px; }
+.manual-row { display: flex; align-items: center; gap: 8px; }
+.manual-pos { width: 110px; flex: none; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.manual-card { flex: 1; min-width: 0; }

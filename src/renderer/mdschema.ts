@@ -2,7 +2,7 @@
 // prosemirror-markdown の標準に、チェックリスト(「- [ ] 」「- [x] 」)と表(GFM の | a | b |)を足した。
 import markdownit from "markdown-it";
 import { MarkdownParser, MarkdownSerializer, type MarkdownSerializerState, defaultMarkdownParser, defaultMarkdownSerializer, schema as baseSchema } from "prosemirror-markdown";
-import { Fragment, Schema, type Node as PMNode } from "prosemirror-model";
+import { DOMSerializer, Fragment, Schema, Slice, type Node as PMNode } from "prosemirror-model";
 import type { Command } from "prosemirror-state";
 import { TextSelection } from "prosemirror-state";
 
@@ -210,3 +210,101 @@ export const cellBelow: Command = (state, dispatch) => {
   }
   return addRowBelow(state, dispatch);
 };
+
+// ---------- キャンバスに見せる(チェックリスト・表の中身) ----------
+
+/** 本文が表・チェックリストで始まるか(そういうノートは、中身をキャンバスにそのまま見せる。2026-11-25 利用者) */
+export function isCheckOrTable(body: string): boolean {
+  const first = body.split("\n").find((l) => l.trim());
+  return !!first && (/^\s*\|/.test(first) || /^\s*[-*+] \[[ xX]\]/.test(first));
+}
+
+const domSer = DOMSerializer.fromSchema(schema);
+/** 本文をキャンバス用の DOM にする(チェックの箱は押せる。onToggle(何番目の項目か)) */
+export function renderBodyDom(body: string, onToggle: (taskIndex: number) => void): HTMLElement {
+  const root = document.createElement("div");
+  root.className = "cv-body";
+  let ti = 0;
+  const walk = (n: PMNode): Node => {
+    const t = n.type.name;
+    const kids = (el: HTMLElement) => {
+      n.forEach((c) => el.append(walk(c)));
+      return el;
+    };
+    if (t === "table") {
+      const tb = document.createElement("table");
+      tb.className = "cv-table";
+      return kids(tb.appendChild(document.createElement("tbody")) as HTMLElement) && tb;
+    }
+    if (t === "table_row") return kids(document.createElement("tr"));
+    if (t === "table_header" || t === "table_cell") {
+      const c = kids(document.createElement(t === "table_header" ? "th" : "td"));
+      c.replaceChildren(domSer.serializeFragment(n.content));
+      return c;
+    }
+    if (t === "bullet_list" || t === "ordered_list") return kids(document.createElement(t === "bullet_list" ? "ul" : "ol"));
+    if (t === "list_item") {
+      const li = document.createElement("li");
+      if (n.attrs.checked != null) {
+        const i = ti++;
+        li.className = "task" + (n.attrs.checked ? " done" : "");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.className = "task-box";
+        box.checked = !!n.attrs.checked;
+        box.addEventListener("mousedown", (e) => e.stopPropagation());
+        box.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onToggle(i);
+        });
+        li.append(box);
+        const span = document.createElement("span");
+        n.forEach((c) => span.append(walk(c)));
+        li.append(span);
+        return li;
+      }
+      return kids(li);
+    }
+    if (t === "paragraph") {
+      const p = document.createElement("p");
+      p.append(domSer.serializeFragment(n.content));
+      return p;
+    }
+    return domSer.serializeNode(n);
+  };
+  const doc = parseMarkdown(body);
+  doc.forEach((c) => root.append(walk(c)));
+  return root;
+}
+
+/** 本文のチェック項目のうち、何番目かの印を反対にした本文 */
+export function toggleTask(body: string, taskIndex: number): string {
+  const doc = parseMarkdown(body);
+  let i = 0;
+  let out = doc;
+  doc.descendants((n, pos) => {
+    if (n.type === schema.nodes.list_item && n.attrs.checked != null) {
+      if (i++ === taskIndex) {
+        const tr = n.type.create({ checked: !n.attrs.checked }, n.content);
+        out = doc.replace(pos, pos + n.nodeSize, new Slice(Fragment.from(tr), 0, 0));
+        return false;
+      }
+    }
+    return true;
+  });
+  return serializeMarkdown(out);
+}
+
+/** まだ済んでいないチェック項目(文と、何番目か) */
+export function openTasks(body: string): { text: string; index: number }[] {
+  const out: { text: string; index: number }[] = [];
+  let i = 0;
+  parseMarkdown(body).descendants((n) => {
+    if (n.type === schema.nodes.list_item && n.attrs.checked != null) {
+      const idx = i++;
+      if (!n.attrs.checked) out.push({ text: (n.firstChild?.textContent ?? "").trim(), index: idx });
+    }
+    return true;
+  });
+  return out;
+}

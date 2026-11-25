@@ -17,7 +17,7 @@ import { SidePanel, type SideTab } from "./side";
 import { PT, SHORTCUTS, T } from "./strings";
 import { PaperView } from "./paperview";
 import { paperStore } from "./paperstore";
-import { cardTip, closeDrawMenu, DEFAULT_CONFIG, drawLabel, drawMenuOpen, openDrawMenu, runDraw, type DrawConfig, type DrawKind } from "./tarot";
+import { cardTip, closeDrawMenu, DEFAULT_CONFIG, drawLabel, drawMenuOpen, openDrawMenu, openManualDialog, placeManual, runDraw, type DrawConfig, type DrawKind } from "./tarot";
 import { api, askText, closeMenu, h, menuOpen, showMenu, svg, toast, type MenuItem } from "./ui";
 
 type Theme = "system" | "light" | "dark";
@@ -704,6 +704,7 @@ class App {
         this.vault.update(g, { title: dayGroupTitle(date, title) });
         this.records?.render();
       },
+      dayGroup: (date) => this.dayGroupFor(date),
       setMarkers: (date, markers) => this.vault.setMarkers(this.dayGroupFor(date), markers),
       preview: (el, g) => this.showPreview(el, g),
       saveKinds: (ks) => this.saveKinds(ks),
@@ -1144,7 +1145,12 @@ class App {
         void api().writeApp(CUSTOM_FILE, JSON.stringify({ sets }, null, 2));
         this.canvas.renderNow();
       },
-    });
+    }, () => openManualDialog((sp, picks) => {
+      const ids = placeManual({ vault: this.vault, group: this.canvas.group, center: this.canvas.visibleCenter(), anchor: null, spotNear: (id) => this.canvas.spot(id), obstacles: this.canvas.obstacles() }, sp, picks);
+      this.canvas.renderNow();
+      this.canvas.setSelection([]);
+      this.canvas.ensureVisible(ids);
+    }));
   }
   drawAgain(): void {
     this.doDraw(this.draw.last, "");

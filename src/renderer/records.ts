@@ -6,6 +6,7 @@ import type { Vault } from "../core/vault";
 import { ROOT_ID } from "../core/types";
 import { T } from "./strings";
 import { askText, h, toast } from "./ui";
+import { openTasks, toggleTask } from "./mdschema";
 
 export { cleanKind, DEFAULT_KINDS, KINDS_FILE, parseKinds, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
 import { cleanKind, parseDayGroup, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
@@ -102,6 +103,8 @@ export interface RecordsHost {
   newNote(date: string, kind: string): void;
   /** 日付グループの題(日付はそのまま)。無ければ作る */
   renameDay(date: string, title: string): void;
+  /** その日の日付グループ(無ければ作る) */
+  dayGroup(date: string): string;
   /** 日付グループの @ マーカー。無ければ作る */
   setMarkers(date: string, markers: string[]): void;
   /** ボードの縮小(見るだけ)を el に出す。group = null なら消す */
@@ -283,8 +286,9 @@ export class RecordsView {
       }
     });
     title.addEventListener("change", saveTitle);
-    const openBtn = h("button", { class: "btn rec-open-day", text: T.recordsOpenBoard, disabled: !g });
-    if (g) openBtn.addEventListener("click", () => this.openDay(g));
+    const openBtn = h("button", { class: "btn rec-open-day", text: g ? T.recordsOpenBoard : T.recordsMakeBoard });
+    // その日のボードが無くても、ここから作って開ける(2026-11-25 利用者)
+    openBtn.addEventListener("click", () => this.openDay(g ?? this.host.dayGroup(this.sel)));
     // マーカー(付けたもの)と、その日のボードに書いた @(ボードの文字から。ここでは外せない)
     const markers = gNode?.markers ?? [];
     const chips = h("div", { class: "rec-chips" });
@@ -322,6 +326,8 @@ export class RecordsView {
       hint.addEventListener("click", () => this.openDay(g));
       pv.append(hint);
     } else pv.append(h("div", { class: "rec-none", text: T.recordsNoBoard }));
+    // まだ済んでいないチェック(その日のボードの中のノートから。済んだものは出さない)
+    const tasks = this.openTaskRows(g, others.map((o) => o.id));
     // 記録ノート(全部。同じ種類・同じ名前でも別々に)
     const entries = collectRecords(v).filter((e) => e.date === this.sel && (e.day === g || others.some((o) => o.id === e.day)));
     const list = h("div", { class: "rec-items" });
@@ -377,6 +383,7 @@ export class RecordsView {
         sw,
         h("div", { class: "rec-day-head" }, h("div", { class: "rec-day-main" }, dateLine, title), openBtn),
         chips,
+        tasks,
         h("div", { class: "rec-h", text: T.recordsBrainstorm }),
         pv,
         h("div", { class: "rec-h-row" }, h("span", { class: "rec-h", text: T.recordsNotes }), h("span", { class: "rec-gap" }), newBtn),
@@ -385,6 +392,40 @@ export class RecordsView {
       ] as (HTMLElement | null)[]).filter((x): x is HTMLElement => !!x),
     );
     this.host.preview(pv, g && v.itemsOf(g).length ? g : null);
+  }
+
+  /** その日のボード(下のグループも)のノートにある、まだ済んでいないチェック項目。押すと済みにして消える */
+  private openTaskRows(g: string | null, others: string[]): HTMLElement | null {
+    const v = this.host.vault;
+    const seen = new Set<string>();
+    const notes: { id: string; gid: string }[] = [];
+    const walk = (gid: string) => {
+      if (seen.has(gid)) return;
+      seen.add(gid);
+      for (const it of v.itemsOf(gid)) {
+        const n = v.get(it.id);
+        if (!n || it.ref) continue;
+        if (n.type === "group") walk(n.id);
+        else if (n.type === "note" && !notes.some((x) => x.id === n.id)) notes.push({ id: n.id, gid });
+      }
+    };
+    for (const x of [g, ...others]) if (x) walk(x);
+    const rows: HTMLElement[] = [];
+    for (const { id, gid } of notes) {
+      const n = v.get(id)!;
+      for (const t of openTasks(n.body)) {
+        const box = h("input", { type: "checkbox", class: "rec-task-box", title: T.recordsTaskDone }) as HTMLInputElement;
+        box.addEventListener("click", () => {
+          v.setBody(id, toggleTask(v.get(id)!.body, t.index));
+          this.render();
+        });
+        const label = h("button", { class: "rec-task-t", text: t.text || T.untitled });
+        label.addEventListener("click", () => this.host.open({ date: this.sel, day: gid, id, kind: "", sub: "", type: "note", preview: "" }));
+        rows.push(h("div", { class: "rec-task", "data-id": id }, box, label, h("span", { class: "rec-task-from", text: n.title || T.untitled })));
+      }
+    }
+    if (!rows.length) return null;
+    return h("div", {}, h("div", { class: "rec-h", text: T.recordsTasks }), h("div", { class: "rec-tasks" }, ...rows));
   }
 
   /** そのしるしの記録を、日付の新しい順に(日ごとに見出し。文字・ノート・マーカーだけの日) */

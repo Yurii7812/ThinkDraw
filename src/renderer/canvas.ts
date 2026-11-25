@@ -10,7 +10,7 @@ import { cardFace, faceHeight } from "./cardface";
 import { openPicker } from "./picker";
 import { PT, T } from "./strings";
 import { paperStore } from "./paperstore";
-import { makeChecklist, makeTable, schema as mdSchema, serializeMarkdown } from "./mdschema";
+import { isCheckOrTable, makeChecklist, makeTable, renderBodyDom, schema as mdSchema, serializeMarkdown, toggleTask } from "./mdschema";
 import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
 import { pickIslands, placeIslands } from "../core/islands";
 import { selectionToMarkdown } from "../core/export";
@@ -540,7 +540,7 @@ export class Canvas {
       const t = n.target ? this.v.get(n.target) : undefined;
       return JSON.stringify(["alias", n.target, t && t.type !== "alias" ? this.signature(t, true) : null]);
     }
-    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, n.paper ? [n.paper, paperStore.fzOf(n.paper), paperStore.thumbOf(n.paper)] : null, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? null : !!n.body.trim(), n.card, n.spread, n.size]);
+    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, n.paper ? [n.paper, paperStore.fzOf(n.paper), paperStore.thumbOf(n.paper)] : null, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? (isCheckOrTable(n.body) ? n.body : null) : !!n.body.trim(), n.card, n.spread, n.size]);
   }
 
   /** グループのノードに見せる中身: 上から 3 件の名前・残りの数・下のグループの数 */
@@ -607,6 +607,11 @@ export class Canvas {
     } else if (n.type === "note") {
       // ノートはタイトルだけ。中身はクリックして開いたときにだけ見せる(2026-11-23 利用者)
       el.append(h("div", { class: "note-head" }, h("span", { class: "ico ico-note" }), h("span", { class: "label", text: n.title || T.untitled })));
+      // チェックリスト・表のノートは、中身が全部見えるように(2026-11-25 利用者)
+      if (isCheckOrTable(n.body)) {
+        el.classList.add("note-open");
+        el.append(renderBodyDom(n.body, (i) => this.v.setBody(n.id, toggleTask(this.v.get(n.id)!.body, i))));
+      }
     } else if (n.type === "group") {
       // 下にグループがあれば ▸ で木を出して飛べる(中身の文字は出さない。2026-11-23 利用者)
       const peek = this.groupPeek(n.id);
@@ -1865,6 +1870,13 @@ export class Canvas {
         this.removeEdges(keys);
         return true;
       }
+      // 数字キー: 1〜5 でその番号の線の種類に(メニューの並びと同じ。2026-11-25 利用者)
+      const num = !e.ctrlKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key) ? NEW_LINK_KINDS[Number(e.key) - 1] : undefined;
+      if (num) {
+        this.v.tx(() => this.edgeLinks(keys).forEach((x) => this.v.setLinkProps(x.from, x.to, { kind: num })));
+        this.renderEdges();
+        return true;
+      }
     }
     if (e.key === "Escape" && (ids.length || this.strokeSel.size)) {
       this.setSelection([]); // 選択を外す
@@ -2338,6 +2350,15 @@ export class Canvas {
     const n = this.v.create({ type: "note", title: kind === "check" ? T.attachChecklistTitle : T.attachTableTitle, group: this.group, x: Math.round(x), y: Math.round(y) });
     this.v.setBody(n.id, body);
     this.renderNow();
+    // 中身が見える大きさなので、ほかのものにかぶるなら下へずらす
+    for (let guard = 0; guard < 20; guard++) {
+      const me = this.rects.get(n.id);
+      const hit = me && [...this.rects].find(([id, r]) => id !== n.id && r.x < me.x + me.w && me.x < r.x + r.w && r.y < me.y + me.h && me.y < r.y + r.h);
+      if (!me || !hit) break;
+      const p = this.v.itemPos(this.group, n.id)!;
+      this.v.move(this.group, [{ id: n.id, x: p.x, y: Math.round(p.y + hit[1].y + hit[1].h + 16 - me.y) }]);
+      this.renderNow();
+    }
     this.setSelection([n.id]);
     this.host.openBody(n.id);
   }
