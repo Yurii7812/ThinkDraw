@@ -14,6 +14,7 @@ const api = {
   writeApp: (name: string, content: string) => ipcRenderer.invoke("vault:writeApp", name, content),
   saveAsset: (ext: string, data: Uint8Array): Promise<string> => ipcRenderer.invoke("vault:saveAsset", ext, data),
   saveAttachment: (name: string, data: Uint8Array): Promise<string> => ipcRenderer.invoke("vault:saveAttachment", name, data),
+  bookletRead: (kind: "print" | "read"): Promise<Uint8Array> => ipcRenderer.invoke("booklet:read", kind),
   readAsset: (rel: string): Promise<Uint8Array | null> => ipcRenderer.invoke("asset:read", rel),
   openAsset: (rel: string): Promise<string> => ipcRenderer.invoke("asset:open", rel),
   urlTitle: (url: string): Promise<string | null> => ipcRenderer.invoke("url:title", url),

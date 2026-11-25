@@ -11,7 +11,7 @@ import { CUSTOM_GROUP, nextCustomId, PROMPT_SETS, type CustomPromptSet } from ".
 import { makeRand, RNG_METHODS, type RngMethod } from "../decks/rng";
 import { faceHeight, hexSvg } from "./cardface";
 import { T } from "./strings";
-import { h, svg, toast } from "./ui";
+import { api, h, svg, toast } from "./ui";
 
 /** 最後に使った引き方(「引く」ボタンで同じものをもう一度) */
 export type DrawKind =
@@ -316,6 +316,22 @@ export function openDrawMenu(anchorEl: HTMLElement, cfg: DrawConfig, tab: Tab, h
         go({ k: "tarot", spread: null, count: Math.max(1, Math.min(78, Number(count.value) || 1)) }, question);
       });
       body.append(h("div", { class: "dm-h", text: T.drawFree }), h("div", { class: "row" }, count, h("span", { text: "枚" }), free));
+      // タロット小冊子(A6・64 ページ。コンビニで印刷できる A4 面付けと、画面で読む用)
+      const save = (kind: "print" | "read") => async () => {
+        closeDrawMenu();
+        try {
+          const data = await api().bookletRead(kind);
+          const p = await api().exportSave(kind === "print" ? T.bookletPrintFile : T.bookletReadFile, "PDF", ["pdf"], data);
+          if (p) toast(T.bookletSaved(p));
+        } catch (e) {
+          toast(T.bookletFail((e as Error).message));
+        }
+      };
+      const bp = h("button", { class: "btn small", title: T.bookletPrintTip, text: T.bookletPrint });
+      const br = h("button", { class: "btn small", title: T.bookletReadTip, text: T.bookletRead });
+      bp.addEventListener("click", save("print"));
+      br.addEventListener("click", save("read"));
+      body.append(h("div", { class: "dm-h", text: T.bookletHead }), h("div", { class: "row" }, bp, br), h("div", { class: "dm-note", text: T.bookletHint }));
     } else if (t === "iching") {
       body.append(
         qInput(),

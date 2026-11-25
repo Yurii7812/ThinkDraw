@@ -1856,3 +1856,17 @@ test("2026-11-25 修正10: グループも画像のように四方の角で大�
   await settle();
   expect(Object.values(mdFiles()).some((t) => /type: group/.test(t) && /size: \{ w: \d+, h: \d+ \}/.test(t))).toBe(true);
 });
+
+test("2026-11-25: タロット小冊子(PDF)を、デッキのメニューから保存できる(印刷用 A4・読む用 A6)", async () => {
+  await page.locator(".tbtn.draw").click();
+  await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
+  await page.locator(".drawmenu button", { hasText: "印刷用(A4)を保存" }).click();
+  await expect.poll(() => readdirSync(exportDir)).toContain("タロット小冊子_印刷用_A4.pdf");
+  await page.locator(".tbtn.draw").click();
+  await page.locator(".drawmenu .dm-tabs button", { hasText: "タロット" }).click();
+  await page.locator(".drawmenu button", { hasText: "読む用(A6)を保存" }).click();
+  await expect.poll(() => readdirSync(exportDir)).toContain("タロット小冊子_読む用_A6.pdf");
+  const pdf = readFileSync(path.join(exportDir, "タロット小冊子_印刷用_A4.pdf"));
+  expect(pdf.subarray(0, 4).toString()).toBe("%PDF");
+  expect(pdf.length).toBeGreaterThan(1_000_000);
+});

@@ -4,12 +4,13 @@ const { writeFileSync } = require("node:fs");
 const path = require("node:path");
 app.disableHardwareAcceleration();
 const out = path.resolve(__dirname, "out");
+const dest = path.resolve(__dirname, "../assets/booklet"); // アプリに同梱する PDF
 async function pdf(html, name, w, h) {
   const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
   await win.loadFile(path.join(out, html));
   await new Promise((r) => setTimeout(r, 1500));
   const buf = await win.webContents.printToPDF({ pageSize: { width: w / 25.4, height: h / 25.4 }, printBackground: true, margins: { marginType: "none" }, preferCSSPageSize: true });
-  writeFileSync(path.join(out, name), buf);
+  writeFileSync(path.join(dest, name), buf);
   win.destroy();
 }
 app.whenReady().then(async () => {
