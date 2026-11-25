@@ -233,13 +233,13 @@ export function renderBodyDom(body: string, onToggle: (taskIndex: number) => voi
     };
     if (t === "table") {
       const tb = document.createElement("table");
-      tb.className = "cv-table";
       return kids(tb.appendChild(document.createElement("tbody")) as HTMLElement) && tb;
     }
     if (t === "table_row") return kids(document.createElement("tr"));
     if (t === "table_header" || t === "table_cell") {
       const c = kids(document.createElement(t === "table_header" ? "th" : "td"));
       c.replaceChildren(domSer.serializeFragment(n.content));
+      if (!n.content.size) c.append(document.createElement("br")); // 空のセルも、書くときと同じ高さに
       return c;
     }
     if (t === "bullet_list" || t === "ordered_list") return kids(document.createElement(t === "bullet_list" ? "ul" : "ol"));
@@ -248,6 +248,7 @@ export function renderBodyDom(body: string, onToggle: (taskIndex: number) => voi
       if (n.attrs.checked != null) {
         const i = ti++;
         li.className = "task" + (n.attrs.checked ? " done" : "");
+        li.style.listStyle = "none";
         const box = document.createElement("input");
         box.type = "checkbox";
         box.className = "task-box";
@@ -258,7 +259,8 @@ export function renderBodyDom(body: string, onToggle: (taskIndex: number) => voi
           onToggle(i);
         });
         li.append(box);
-        const span = document.createElement("span");
+        const span = document.createElement("div");
+        span.className = "task-body"; // 書いているときと同じ形
         n.forEach((c) => span.append(walk(c)));
         li.append(span);
         return li;

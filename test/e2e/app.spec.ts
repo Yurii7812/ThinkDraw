@@ -407,8 +407,7 @@ test("右上の「添付」から チェックリスト・表をノードとし�
   await page.keyboard.press("Tab");
   await page.keyboard.type("x");
   await expect(page.locator(".ProseMirror table")).toContainText("名前値");
-  await page.locator(".b-tableops").click();
-  await page.getByText("右に列を足す").click();
+  await page.keyboard.press("Control+Enter"); // 右に列を足す
   await expect(page.locator(".ProseMirror tr").first().locator("th")).toHaveCount(4);
   await settle();
   const md = Object.values(mdFiles()).find((t) => t.includes("title: チェックリスト"))!;
@@ -1697,11 +1696,49 @@ test("2026-11-25 修正9: ノートの題は折り返さない・ノートの右
   await page.keyboard.type("卵");
   await page.keyboard.press("Escape");
   await expect(page.locator(".popup")).toHaveCount(0);
-  const cv = page.locator(".node.t-note", { hasText: "チェックリスト" });
+  const cv = page.locator(".node.t-note", { has: page.locator("li.task") });
   await expect(cv).toContainText("牛乳");
   await expect(cv.locator("li.task")).toHaveCount(2);
   // もう一度押すと、またその場で書ける
+  // 見ているときと書いているときで、大きさも文字の大きさも同じ(シームレス)
+  const before = await cv.boundingBox();
+  const fsBefore = await cv.locator("li.task .task-body").first().evaluate((e) => getComputedStyle(e).fontSize);
+  const rowsBefore = await cv.locator("li.task").evaluateAll((es) => es.map((e) => Math.round(e.getBoundingClientRect().top)));
   await cv.locator(".note-head").click();
   await expect(page.locator(".popup.inline")).toBeVisible();
+  await expect(page.locator(".popup.inline .pop-head")).toHaveCount(0); // 道具は出さない
+  const after = await cv.boundingBox();
+  expect(Math.abs(after!.width - before!.width)).toBeLessThanOrEqual(2);
+  expect(Math.abs(after!.height - before!.height)).toBeLessThanOrEqual(3);
+  expect(await cv.locator("li.task .task-body").first().evaluate((e) => getComputedStyle(e).fontSize)).toBe(fsBefore);
+  expect(fsBefore).toBe(await page.locator(".node.t-note .label").first().evaluate((e) => getComputedStyle(e.closest(".node")!).fontSize).then(() => "15px"));
+  const rowsAfter = await cv.locator(".popup.inline li.task").evaluateAll((es) => es.map((e) => Math.round(e.getBoundingClientRect().top)));
+  expect(rowsAfter.map((y, i) => Math.abs(y - rowsBefore[i])).every((d) => d <= 2), JSON.stringify([rowsBefore, rowsAfter])).toBe(true);
   await shot("40-inline-check");
+  // 表も同じ: 見ているときと書いているときで、箱の大きさが変わらない
+  await page.keyboard.press("Escape");
+  await page.locator(".tbtn.attach-btn").click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "表" }).click();
+  await page.keyboard.type("名前");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("値");
+  await page.keyboard.press("Escape");
+  const tb = page.locator(".node.t-note", { has: page.locator("table") });
+  await expect(tb.locator(".cv-body table")).toBeVisible();
+  const tb0 = await tb.boundingBox();
+  await tb.locator(".note-head").click();
+  await expect(page.locator(".popup.inline")).toBeVisible();
+  const tb1 = await tb.boundingBox();
+  await shot("41-inline-table");
+  expect(Math.abs(tb1!.width - tb0!.width)).toBeLessThanOrEqual(2);
+  expect(Math.abs(tb1!.height - tb0!.height)).toBeLessThanOrEqual(3);
+  await shot("41-inline-table");
+  // 名前: 書いている間に題を直せる(Enter で本文へ)
+  await tb.locator(".cv-title").fill("成績表");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Z");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".node.t-note .label", { hasText: "成績表" })).toHaveCount(1);
+  await settle();
+  expect(Object.values(mdFiles()).some((t) => t.includes("title: 成績表"))).toBe(true);
 });

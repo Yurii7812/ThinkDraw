@@ -175,24 +175,21 @@ export class BodyPopup {
       btn(T.expand, "b-expand", () => this.toggleExpand()),
       btn(T.close, "b-close", () => this.close()),
     );
-    if (inline) {
-      // キャンバスの上でそのまま書く(チェックリスト・表のノード): 小さな道具だけ
-      for (const c of ["b-bold", "b-italic", "b-heading", "b-list", "b-link", "b-expand"]) tools.querySelector("." + c)?.remove();
-      head.replaceChildren(tools);
-      head.classList.add("inline");
-    } else head.append(tools);
+    // キャンバスの上でそのまま書くときは、道具も枠も出さない(ふだんの表示と同じ見た目。2026-11-25 利用者)
+    if (!inline) head.append(tools);
 
     const editorEl = h("div", { class: "pop-body" });
     this.footer = h("div", { class: "pop-foot" });
-    this.el = h("div", { class: "popup" + (expanded ? " expanded" : "") + (inline ? " inline" : ""), role: "dialog" }, head, editorEl, inline ? null : this.footer);
+    this.el = h("div", { class: "popup" + (expanded ? " expanded" : "") + (inline ? " inline" : ""), role: "dialog" }, inline ? null : head, editorEl, inline ? null : this.footer);
     if (inline) {
       // キャンバスの操作(ドラッグ・選択)に取られないように
       for (const ev of ["pointerdown", "mousedown", "click", "dblclick", "wheel"]) this.el.addEventListener(ev, (e) => e.stopPropagation());
       this.el.addEventListener("focusout", (e) => {
         const to = (e as FocusEvent).relatedTarget as Element | null;
-        if (to && (this.el.contains(to) || to.closest?.(".backdrop, .ctxmenu"))) return;
+        if (to && (this.el.contains(to) || to.closest?.(".backdrop, .ctxmenu, .cv-title"))) return;
         setTimeout(() => {
-          if (!this.el.contains(document.activeElement) && !document.querySelector(".backdrop, .ctxmenu")) this.close();
+          const a = document.activeElement;
+          if (!this.el.contains(a) && !a?.closest?.(".cv-title") && !document.querySelector(".backdrop, .ctxmenu")) this.close();
         }, 0);
       });
     }
@@ -224,6 +221,7 @@ export class BodyPopup {
             const task = li?.type === schema.nodes.list_item && li.attrs.checked != null; // チェックリストの次の項目もチェック付きに
             return (task ? splitListItem(schema.nodes.list_item, { checked: false }) : splitListItem(schema.nodes.list_item))(st, d, v);
           },
+          "Mod-Enter": (st, d) => addColRight(st, d), // 表: 右に列を足す
           Tab: (st, d, v) => nextCell(st, d, v) || sinkListItem(schema.nodes.list_item)(st, d, v),
           "Shift-Tab": (st, d, v) => prevCell(st, d, v) || liftListItem(schema.nodes.list_item)(st, d, v),
           "Shift-Enter": (st, dispatch) => {

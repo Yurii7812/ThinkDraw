@@ -36,7 +36,7 @@ export interface CanvasHost {
   /** 開く(文字は書き直し以外。ノート・カード・グループの本文) */
   openBody(id: string): void;
   /** チェックリスト・表のノートを、キャンバスの上でそのまま書く(mount の中に編集欄を作る) */
-  editInline?(id: string, mount: HTMLElement, onClose: () => void): void;
+  editInline?(id: string, mount: HTMLElement, onClose: () => void): () => void;
   goToNode(id: string): void;
   pickGroup(title: string): Promise<string | null>;
   cardHover(id: string | null, e?: MouseEvent): void;
@@ -1671,11 +1671,38 @@ export class Canvas {
     el.querySelector(".cv-body")?.setAttribute("hidden", "");
     const mount = h("div", { class: "cv-edit" });
     el.append(mount);
-    this.host.editInline!(id, mount, () => {
+    const closeEd = this.host.editInline!(id, mount, () => {
       if (this.inline === id) this.inline = null;
       this.requestRender();
       this.el.focus({ preventScroll: true });
     });
+    // 名前: 書いている間は、題がそのまま書き直せる(見た目は同じ)
+    const label = el.querySelector<HTMLElement>(".note-head .label");
+    if (label) {
+      const inp = h("input", { class: "label cv-title", value: this.v.get(id)?.title ?? "", placeholder: T.untitled, spellcheck: "false" }) as HTMLInputElement;
+      label.replaceWith(inp);
+      for (const ev of ["pointerdown", "mousedown", "click", "dblclick"]) inp.addEventListener(ev, (e) => e.stopPropagation());
+      const commit = () => {
+        const t = inp.value.trim();
+        if (t !== (this.v.get(id)?.title ?? "")) this.v.update(id, { title: t });
+      };
+      inp.addEventListener("input", commit);
+      inp.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.isComposing || e.keyCode === 229) return;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          mount.querySelector<HTMLElement>(".ProseMirror")?.focus();
+        } else if (e.key === "Escape") closeEd();
+      });
+      inp.addEventListener("focusout", (e) => {
+        const to = (e as FocusEvent).relatedTarget as Element | null;
+        if (to && (el.contains(to) || to.closest?.(".backdrop, .ctxmenu"))) return;
+        setTimeout(() => {
+          if (!el.contains(document.activeElement) && !document.querySelector(".backdrop, .ctxmenu")) closeEd();
+        }, 0);
+      });
+    }
   }
 
   /** 紙で出たカードを、略号・名前で探して当てはめる(まだ選んでいないカードを押したときも) */

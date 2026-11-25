@@ -999,15 +999,6 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 
 /* チェックリスト・表のノート: 中身を全部見せる(2026-11-25) */
 .node.t-note.note-open { max-width: none; }
-.cv-body { margin-top: 6px; font-weight: 400; font-size: 13px; }
-.cv-body p { margin: 0; }
-.cv-body ul, .cv-body ol { margin: 0; padding-left: 18px; }
-.cv-body li.task { list-style: none; display: flex; gap: 6px; align-items: flex-start; margin-left: -18px; padding: 1px 0; }
-.cv-body li.task .task-box { margin: 3px 0 0; flex: none; cursor: pointer; accent-color: var(--accent); }
-.cv-body li.task.done > span { color: var(--muted); text-decoration: line-through; }
-.cv-table { border-collapse: collapse; }
-.cv-table th, .cv-table td { border: 1px solid var(--line); padding: 3px 8px; min-width: 40px; height: 1.4em; text-align: left; }
-.cv-table th { background: var(--accent-soft); font-weight: 600; }
 .rec-tasks { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
 .rec-task { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 6px; font-size: 13px; }
 .rec-task:hover { background: var(--accent-soft); }
@@ -1030,9 +1021,21 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .note-head, .g-head { white-space: nowrap; }
 .note-head .label, .g-head .label { white-space: nowrap; }
 /* キャンバスの上でそのまま書く(チェックリスト・表のノード) */
-.popup.inline { position: static; transform: none; width: auto; min-width: 200px; max-height: none; margin-top: 6px; border: 1px dashed var(--accent); border-radius: 6px; box-shadow: none; background: transparent; font-weight: 400; }
-.popup.inline .pop-head.inline { padding: 2px 4px; border-bottom: 1px solid var(--line); }
-.popup.inline .pop-body { padding: 4px 8px; overflow: visible; }
-.popup.inline .ProseMirror { min-height: 24px; }
 .node.t-note, .node.t-group { max-width: none; width: max-content; }
-.popup.inline ul { padding-left: 4px; margin: 0; }
+
+/* チェックリスト・表のノード: 見ているときと書いているときで、見た目を同じにする(文字の大きさも、ふつうのノードの文字と同じ。2026-11-25 利用者) */
+.popup.inline { position: static; transform: none; width: auto; max-height: none; margin: 6px 0 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; display: block; }
+.popup.inline .pop-body { padding: 0; overflow: visible; min-height: 0; }
+.cv-body, .popup.inline .ProseMirror { font-size: 15px; font-weight: 400; line-height: 1.5; white-space: pre-wrap; min-height: 0; margin: 0; text-align: left; }
+.cv-body { margin-top: 6px; }
+.cv-body p, .popup.inline .ProseMirror p { margin: 0; }
+.cv-body ul, .cv-body ol, .popup.inline .ProseMirror ul, .popup.inline .ProseMirror ol { margin: 0; padding-left: 0; }
+.cv-body li.task, .popup.inline .ProseMirror li.task { list-style: none; display: flex; gap: 6px; align-items: flex-start; margin: 0; padding: 1px 0; }
+.cv-body li.task .task-box, .popup.inline .ProseMirror li.task .task-box { margin: 5px 0 0; flex: none; cursor: pointer; accent-color: var(--accent); }
+.cv-body li.task .task-body, .popup.inline .ProseMirror li.task .task-body { flex: 1; min-width: 0; }
+.cv-body li.task.done .task-body, .popup.inline .ProseMirror li.task.done .task-body { color: var(--muted); text-decoration: line-through; }
+.cv-body table, .popup.inline .ProseMirror table { border-collapse: collapse; margin: 0; width: auto; table-layout: auto; }
+.cv-body th, .cv-body td, .popup.inline .ProseMirror th, .popup.inline .ProseMirror td { border: 1px solid var(--line); padding: 3px 8px; min-width: 40px; vertical-align: top; text-align: left; }
+.cv-body th, .popup.inline .ProseMirror th { background: var(--accent-soft); font-weight: 600; }
+.cv-body td p, .cv-body th p { margin: 0; }
+.note-head .cv-title { font: inherit; font-weight: 600; color: inherit; background: transparent; border: 0; padding: 0; margin: 0; outline: none; field-sizing: content; min-width: 2em; }

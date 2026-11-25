@@ -1104,15 +1104,16 @@ class App {
     );
   }
   /** キャンバスの上でそのまま書く編集欄(チェックリスト・表) */
-  private editInline(id: string, mount: HTMLElement, done: () => void): void {
+  private editInline(id: string, mount: HTMLElement, done: () => void): () => void {
     this.closePopup();
-    new BodyPopup(
+    const ed = new BodyPopup(
       { vault: this.vault, goToGroup: (g, focus) => this.openGroup(g, focus), goToNode: (n, ob) => this.goToNode(n, ob), closedEditor: done, openSearch: () => this.search() },
       id,
       mount,
       false,
       true,
     );
+    return () => ed.close();
   }
   private closePopup(): void {
     this.popup?.close();
