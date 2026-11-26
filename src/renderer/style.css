@@ -1079,3 +1079,17 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .br-ed button.on { background: var(--bg); color: var(--fg); }
 .cv-body:first-child { margin-top: 0; }
 .cv-body[hidden]:first-child ~ .cv-edit .popup.inline { margin-top: 0; }
+
+/* ---------- ノートの文章の引用(2026-11-26 修正14) ---------- */
+/* ボードの引用の文字: 緑の枠(ほかの引用と同じ)。長い文章は折り返す */
+.node.t-text.cite { outline: 2px solid var(--quote, #3f9f5f); outline-offset: 3px; border-radius: 6px; white-space: pre-wrap; max-width: 380px; text-align: left; }
+.node.t-text.cite.selected { outline-color: var(--accent); }
+/* ノートの中の、引用されている所: 緑の点線の下線(リンクの色にはしない) */
+.ProseMirror a[href^="#q-"] { color: inherit; text-decoration: underline dotted var(--quote, #3f9f5f); text-decoration-thickness: 2px; text-underline-offset: 4px; cursor: pointer; }
+.ProseMirror .flash { background: color-mix(in srgb, var(--quote, #3f9f5f) 28%, transparent); border-radius: 3px; transition: background 0.4s; }
+/* 引用の段落の「↩ 元のノート」 */
+.ProseMirror blockquote a[href*=".md#q-"] { font-size: 12px; color: var(--quote, #3f9f5f); text-decoration: none; }
+.linkbubble.cited { display: flex; flex-direction: column; gap: 2px; padding: 4px; cursor: default; white-space: normal; }
+.linkbubble.cited .cited-row { border: 0; background: none; color: var(--fg); text-align: left; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.linkbubble.cited .cited-row:hover { background: var(--accent-soft); }
+.node.t-text.cite .label { white-space: pre-wrap; }

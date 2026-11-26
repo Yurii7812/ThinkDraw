@@ -1,6 +1,6 @@
 // 本文の中のノードへのリンク [文章](<ID>.md) を拾う(SPEC 3.4)
 
-const BODY_LINK_RE = /\]\(\s*<?(?:\.\/)?([a-z0-9]{10}|root)\.md>?(?:\s+"[^"]*")?\s*\)/g;
+const BODY_LINK_RE = /\]\(\s*<?(?:\.\/)?([a-z0-9]{10}|root)\.md(?:#q-[a-z0-9]{8})?>?(?:\s+"[^"]*")?\s*\)/g;
 
 export function bodyLinkTargets(body: string): string[] {
   const out = new Set<string>();
@@ -24,6 +24,11 @@ export function nodeHref(id: string): string {
 }
 
 export function hrefToNodeId(href: string): string | null {
-  const m = href.trim().match(/^(?:\.\/)?([a-z0-9]{10}|root)\.md$/);
+  const m = href.trim().match(/^(?:\.\/)?([a-z0-9]{10}|root)\.md(?:#q-[a-z0-9]{8})?$/);
+  return m ? m[1] : null;
+}
+/** ノートの引用元へのリンク(ID.md#q-xxxxxxxx)の目印。2026-11-26 修正14 */
+export function hrefAnchor(href: string): string | null {
+  const m = href.trim().match(/#(q-[a-z0-9]{8})$/);
   return m ? m[1] : null;
 }

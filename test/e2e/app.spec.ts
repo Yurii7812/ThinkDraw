@@ -376,7 +376,7 @@ test("Esc で選択が外れる/R で名前を変える/Ctrl+C → 別のグル�
   await page.locator(".node.t-group", { hasText: "別の場所" }).click();
   await page.keyboard.press("Enter"); // 選んで Enter で開く
   await expect(page.locator(".group-title")).toHaveText("別の場所");
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press("Control+q");
   await expect(page.locator(".node.ref")).toHaveCount(2);
   await settle();
   const g = mdFiles()[idOf("別の場所") + ".md"];
@@ -809,7 +809,7 @@ test("2026-11-24: グループは 1 回クリックで中へ・引用で新し�
   await write(300, 200, "りんご");
   await write(300, 300, "みかん");
   await page.keyboard.press("Control+a");
-  await page.keyboard.press("Control+Shift+g");
+  await page.keyboard.press("Control+Shift+q");
   await page.keyboard.type("果物の引用");
   await page.keyboard.press("Escape");
   await settle();
@@ -1020,7 +1020,7 @@ test("2026-11-24: 同じボードに Ctrl+C → Ctrl+V でボードの中の引�
   await page.keyboard.press("Control+c");
   await page.keyboard.press("Escape");
   await page.locator(".node", { hasText: "遠く" }).click({ modifiers: ["Control"] });
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press("Control+q");
   const alias = page.locator(".node.alias", { hasText: "ここの元" });
   await expect(alias).toHaveCount(1);
   await settle();
@@ -1261,7 +1261,7 @@ test("2026-11-24 統合仕様 1・2・7: Ctrl+←/→ の履歴(ボードの中�
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe("外へ貼る文");
   // ThinkDraw の中で貼ると引用(同じボードなのでボードの中の引用)
   await page.keyboard.press("Escape");
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press("Control+q");
   await expect(page.locator(".node.alias")).toHaveCount(1);
   // 外で別の物をコピーしたら、引用にはしない
   await app.evaluate(({ clipboard }) => clipboard.writeText("よそのアプリの文"));
@@ -1281,7 +1281,7 @@ test("2026-11-24 統合仕様 1・2・7: Ctrl+←/→ の履歴(ボードの中�
   await page.locator(".picker-row", { hasText: "箱" }).first().click();
   await page.keyboard.press("Escape");
   await page.locator(".node.t-group", { hasText: "箱" }).first().click({ modifiers: ["Control"] });
-  await page.keyboard.press("Control+Shift+g"); // 引用で新しいグループ(箱の引用が入る)
+  await page.keyboard.press("Control+Shift+q"); // 引用で新しいグループ(箱の引用が入る)
   await page.keyboard.type("まとめ");
   await page.keyboard.press("Enter");
   await page.keyboard.press("Escape");
@@ -1920,7 +1920,7 @@ test("2026-11-25 修正11: 引用は緑の枠・1 回クリックで元の場所
   await page.locator(".node", { hasText: "元の文" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+c");
   await page.waitForTimeout(300); // コピーが書き終わるまで
-  await page.keyboard.press("Control+v"); // 同じボードに貼る = ボードの中の引用
+  await page.keyboard.press("Control+q"); // 同じボードに貼る = ボードの中の引用
   const al = page.locator(".node.alias", { hasText: "元の文" });
   await expect(al).toHaveCount(1);
   await page.keyboard.press("Escape"); // 選びを外して、ふだんの見た目で
@@ -1942,7 +1942,7 @@ test("2026-11-25 修正11: 引用は緑の枠・1 回クリックで元の場所
   await page.locator(".ctxmenu .item", { hasText: "コピー" }).filter({ hasNotText: "その他" }).first().click();
   await page.waitForTimeout(300);
   await page.keyboard.press("Escape");
-  await page.keyboard.press("Control+v");
+  await page.keyboard.press("Control+q");
   const cal = page.locator(".node.t-card.alias");
   await expect(cal).toHaveCount(1);
   await expect(cal.locator(".jump-btn")).toHaveCount(1);
@@ -2170,4 +2170,116 @@ test("2026-11-26: 上の階層が 2 つ以上なら、Ctrl+↑ の一覧を ↑�
   await page.keyboard.press("Control+ArrowUp");
   await page.keyboard.press("3");
   await expect(page.locator(".node.t-group", { hasText: "上その1" })).toHaveCount(1);
+});
+
+test("2026-11-26 修正14: Ctrl+V は複製・Ctrl+Q は引用。ノートの文章を引用するとボードに引用の文字ができ、押すと元の所へ", async () => {
+  type A = { vault: { create(x: object): { id: string }; setBody(id: string, b: string): void; get(id: string): { body: string } }; canvas: { group: string; renderNow(): void }; openPeek(g: string): void; openBody(id: string, o?: object): void };
+  // Ctrl+V はふつうの複製(引用ではない)
+  await write(250, 150, "複製元");
+  await page.locator(".node", { hasText: "複製元" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+c");
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+v");
+  await expect(page.locator(".node.t-text:not(.alias)", { hasText: "複製元" })).toHaveCount(2);
+  await expect(page.locator(".node.alias")).toHaveCount(0);
+  // ノート
+  const note = await page.evaluate(() => {
+    const a = (window as unknown as { __app: A }).__app;
+    const n = a.vault.create({ type: "note", title: "清書", group: a.canvas.group, x: 600, y: 150 });
+    a.vault.setBody(n.id, "はじめの段落。\n\nここが引用したい所です\n");
+    a.canvas.renderNow();
+    return n.id;
+  });
+  await page.locator(".node.t-note", { hasText: "清書" }).click();
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  // 2 つ目の段落を選んでコピー
+  await page.locator(".popup.expanded .ProseMirror p", { hasText: "ここが引用したい所です" }).click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Shift+Home");
+  await page.keyboard.press("Control+c");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".popup")).toHaveCount(0);
+  // 何もない所を押して Ctrl+Q: その場所に引用の文字
+  await page.mouse.click(400, 450);
+  await expect(page.locator("textarea.draft")).toBeVisible();
+  await page.keyboard.press("Control+q");
+  const cite = page.locator(".node.cite", { hasText: "ここが引用したい所です" });
+  await expect(cite).toHaveCount(1);
+  await page.keyboard.press("Escape"); // 選びを外して、ふだんの見た目で
+  expect(await cite.evaluate((e) => getComputedStyle(e).outlineColor)).toBe("rgb(63, 159, 95)");
+  await settle();
+  const body = await page.evaluate((id) => (window as unknown as { __app: A }).__app.vault.get(id).body, note);
+  expect(body).toMatch(/\[ここが引用したい所です\]\(#q-[a-z0-9]{8}\)/);
+  expect(Object.values(mdFiles()).some((s) => /cite: [a-z0-9]{10}#q-[a-z0-9]{8}/.test(s))).toBe(true);
+  // 元を直すと、引用の文字も変わる
+  await page.evaluate((id) => {
+    const a = (window as unknown as { __app: A }).__app;
+    a.vault.setBody(id, a.vault.get(id).body.replace("ここが引用したい所です", "ここを書き直しました"));
+  }, note);
+  await expect(page.locator(".node.cite", { hasText: "ここを書き直しました" })).toHaveCount(1);
+  // 押すと元の所が開いて光る
+  await page.locator(".node.cite").click();
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await expect(page.locator(".popup.expanded .flash")).toHaveCount(1);
+  // ノートの中の引用された所を押すと、引用しているボードの文字が出る
+  await page.locator('.popup.expanded a[href^="#q-"]').click();
+  await expect(page.locator(".linkbubble.cited .cited-row")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  // ボードの文字をノートに Ctrl+Q: リンクとして入る
+  await page.locator(".node.t-text:not(.cite)", { hasText: "複製元" }).first().click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+c");
+  await page.waitForTimeout(300);
+  await page.locator(".node.t-note", { hasText: "清書" }).click();
+  await page.locator(".popup.expanded .ProseMirror p").first().click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Control+q");
+  await expect(page.locator(".popup.expanded .ProseMirror a", { hasText: "複製元" })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await settle();
+  const body2 = await page.evaluate((id) => (window as unknown as { __app: A }).__app.vault.get(id).body, note);
+  expect(body2).toMatch(/\[複製元\]\([a-z0-9]{10}\.md\)/);
+});
+
+test("2026-11-26 修正14: 分割すると、ノートは押した側の画面の中だけに開く(反対側は見えたまま)・ほかのノートへ引用の段落", async () => {
+  type A = { vault: { create(x: object): { id: string }; setBody(id: string, b: string): void; get(id: string): { body: string } }; canvas: { group: string; renderNow(): void }; openPeek(g: string): void; openBody(id: string, o?: object): void };
+  const [a1, a2] = await page.evaluate(() => {
+    const a = (window as unknown as { __app: A }).__app;
+    const n1 = a.vault.create({ type: "note", title: "元ノート", group: a.canvas.group, x: 100, y: 100 });
+    a.vault.setBody(n1.id, "元の大事な一文\n");
+    const n2 = a.vault.create({ type: "note", title: "まとめノート", group: a.canvas.group, x: 100, y: 200 });
+    a.vault.setBody(n2.id, "まとめ\n");
+    a.canvas.renderNow();
+    a.openPeek(a.canvas.group);
+    return [n1.id, n2.id];
+  });
+  await expect(page.locator(".pane.peek .canvas")).toBeVisible();
+  // 左で元ノートを開く → 左の中だけ
+  await page.locator(".left-pane .node.t-note", { hasText: "元ノート" }).click();
+  await expect(page.locator(".left-pane .popup.expanded")).toBeVisible();
+  await expect(page.locator(".pane.peek .popup")).toHaveCount(0);
+  await expect(page.locator(".pane.peek .node.t-note", { hasText: "まとめノート" })).toBeVisible();
+  // 右でまとめノートを開く → 右の中だけ(左のノートも開いたまま)
+  await page.locator(".pane.peek .node.t-note", { hasText: "まとめノート" }).click();
+  await expect(page.locator(".pane.peek .popup.expanded")).toBeVisible();
+  await expect(page.locator(".left-pane .popup.expanded")).toBeVisible();
+  // 左の文を選んでコピー → 右のノートで Ctrl+Q = 引用の段落
+  await page.locator(".left-pane .popup .ProseMirror p").first().click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Shift+Home");
+  await page.keyboard.press("Control+c");
+  await page.locator(".pane.peek .popup .ProseMirror p").first().click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Control+q");
+  await expect(page.locator(".pane.peek .popup .ProseMirror blockquote", { hasText: "元の大事な一文" })).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await settle();
+  const b2 = await page.evaluate((id) => (window as unknown as { __app: A }).__app.vault.get(id).body, a2);
+  expect(b2).toMatch(new RegExp(`> 元の大事な一文[\\s\\S]*\\(${a1}\\.md#q-[a-z0-9]{8}\\)`));
+  // 引用の段落の ↩ を押すと、元のノートのその所へ
+  await page.locator(".pane.peek .node.t-note", { hasText: "まとめノート" }).click();
+  await page.locator('.pane.peek .popup blockquote a[href*=".md#q-"]').click();
+  await page.locator(".linkbubble").first().click();
+  await expect(page.locator(".popup.expanded .flash")).toHaveCount(1);
 });

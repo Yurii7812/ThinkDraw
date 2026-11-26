@@ -75,6 +75,8 @@ export interface TDNode {
   target?: string;
   /** 日付グループの @ マーカー(時系列記録だけに使う。2026-11-24 統合仕様 12) */
   markers?: string[];
+  /** type: text のみ。ノートの文章の引用(「ノートID#q-目印」。2026-11-26 修正14) */
+  cite?: string;
   body: string;
   /** 知らない frontmatter のキー(外部のエディタで足されたもの)。書き戻すときに残す */
   extra: Record<string, unknown>;

@@ -16,6 +16,8 @@ import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
 import { pickIslands, placeIslands } from "../core/islands";
 import { selectionToMarkdown } from "../core/export";
 import { autoGroupTitle } from "../core/grouptitle";
+import { anchorText, citeOf, parseCite } from "../core/cite";
+import { currentClip, setClip, type PassageClip } from "./clip";
 import { allTags, splitTags } from "../core/tags";
 
 export interface View {
@@ -72,6 +74,10 @@ export interface CanvasHost {
   kindColor?(kind: LinkKind): number;
   /** 線の設定の画面(種類ごとのいつもの色) */
   openLineSettings?(): void;
+  /** ノートの文章を引用するとき、ノートのその所に目印を付ける(付けられなければ null)。2026-11-26 修正14 */
+  anchorPassage?(c: PassageClip): string | null;
+  /** ノートの文章の引用を押した: そのノートのその所を開く */
+  openCite?(note: string, anchor: string): void;
   /** @ を打ったときの候補(時系列記録のしるし・種類と同じ) */
   tagCandidates?(): string[];
 }
@@ -120,7 +126,7 @@ let refClip: { id: string; x: number; y: number; w?: number }[] = [];
 let refClipMark = "";
 /** Ctrl+X で切り取ったとき: 切り取った元のグループ(貼ると、そこから移す) */
 let refCutFrom: string | null = null;
-export const refClipboard = { get mark() { return refClipMark; }, get size() { return refClip.length; } };
+export const refClipboard = { get mark() { return refClipMark; }, get size() { return refClip.length; }, get ids() { return refClip.map((r) => r.id); } };
 const CARD_FACE_H = CARD_H;
 
 export function isImageFile(f: string): boolean {
@@ -548,7 +554,7 @@ export class Canvas {
       return JSON.stringify(["alias", n.target, t && t.type !== "alias" ? this.signature(t, true) : null]);
     }
     if (n.type === "note" && this.inline === n.id) return JSON.stringify(["inline", n.id]); // 書いている間は作り直さない
-    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, n.paper ? [n.paper, paperStore.fzOf(n.paper), paperStore.thumbOf(n.paper)] : null, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? (isCheckOrTable(n.body) ? n.body : null) : !!n.body.trim(), n.card, n.spread, n.size]);
+    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, n.paper ? [n.paper, paperStore.fzOf(n.paper), paperStore.thumbOf(n.paper)] : null, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? (isCheckOrTable(n.body) ? n.body : null) : !!n.body.trim(), n.card, n.spread, n.size, n.cite ? this.citeText(n) : null]);
   }
 
   /** グループのノードに見せる中身: 上から 3 件の名前・残りの数・下のグループの数 */
@@ -608,6 +614,13 @@ export class Canvas {
       } else el.append(h("span", { class: "label" }, h("span", { class: "clip", text: "📎 " }), n.title || T.untitled));
     } else if (n.type === "text") {
       // @しるしは、しるしの見た目に(2026-11-24 利用者)
+      if (n.cite) {
+        // ノートの文章の引用(2026-11-26 修正14): 元の文章をそのまま見せる(元を直すと変わる)。緑の枠
+        el.classList.add("cite");
+        el.title = T.citeTip(this.v.get(parseCite(n.cite)?.note ?? "")?.title || T.untitled);
+        el.append(h("span", { class: "label", text: this.citeText(n) || T.untitled }));
+        return el;
+      }
       const parts = splitTags(n.title || T.untitled);
       el.append(h("span", { class: "label" }, ...parts.map((p) => (p.tag ? h("span", { class: "tag", "data-tag": p.tag, text: p.text }) : p.text))));
       if (n.body.trim()) el.append(h("span", { class: "bodymark", title: T.hasBody, "data-act": "body" }, "¶"));
@@ -899,6 +912,13 @@ export class Canvas {
       e.preventDefault();
       this.commitDraft("esc");
       this.el.focus();
+    } else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "q" && this.draft && !this.draft.ta.value.trim() && !this.draft.id) {
+      // 何もない所を押して出た書く欄で Ctrl+Q: その場所に引用として貼る(2026-11-26 修正14)
+      e.preventDefault();
+      const at = { x: this.draft.x + 60, y: this.draft.y + 12 };
+      this.commitDraft("esc");
+      this.el.focus();
+      void this.quotePaste(at);
     } else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l") {
       // 書いている文字から Ctrl+L: 決めてから、その文字とつなぐ物を探す(2026-11-24 利用者)
       e.preventDefault();
@@ -1697,6 +1717,11 @@ export class Canvas {
       this.setSelection([id]);
       return this.assignCard(id);
     }
+    // ノートの文章の引用: 押すと元の所へ(選ぶのは Ctrl+クリックか範囲選択。2026-11-26 修正14)
+    if (node.type === "text" && node.cite) {
+      this.setSelection([id]);
+      return this.openCite(id);
+    }
     if (node.type === "text" && !node.file && !node.paper) {
       this.setSelection([id]);
       return this.open(id, target);
@@ -1803,6 +1828,7 @@ export class Canvas {
     if (n.type === "frame") return this.renameFrame(id);
     if (n.type === "text" && n.paper) return this.host.openPaper?.(n.paper);
     if (n.type === "text" && n.file) return this.host.openFile?.(n.file);
+    if (n.type === "text" && n.cite) return this.openCite(id);
     if (n.type === "text") {
       const r = this.rects.get(id);
       if (r) this.startEdit(id, r.x, r.y, null, n.title);
@@ -2071,8 +2097,13 @@ export class Canvas {
       this.setSelection(this.rects.keys(), this.v.strokesOf(this.group).map((s) => s.id));
       return true;
     }
-    if (e.ctrlKey && e.shiftKey && k === "g") {
+    // 引用は Q(2026-11-26 修正14): Ctrl+Q = 引用として貼る・Ctrl+Shift+Q = 引用で新しいグループ(前は Ctrl+Shift+G)
+    if (e.ctrlKey && e.shiftKey && k === "q") {
       this.quoteGroupSelection();
+      return true;
+    }
+    if (e.ctrlKey && !e.shiftKey && k === "q") {
+      void this.quotePaste();
       return true;
     }
     if (e.ctrlKey && k === "g") {
@@ -2117,6 +2148,7 @@ export class Canvas {
     // ThinkDraw の中で貼ると、同じ文字なので引用(切り取りなら移動)になる。外で別の物をコピーすると、文字が変わるので使わない
     refClipMark = selectionToMarkdown(this.v, this.group, ids).trim() || (cut ? T.cutMark : T.copiedMark)(ids.length);
     void navigator.clipboard?.writeText(refClipMark).catch(() => {});
+    setClip({ kind: "nodes" }, refClipMark);
     toast((cut ? T.cutToast : T.copiedToast)(ids.length));
     this.markCut();
   }
@@ -2128,9 +2160,9 @@ export class Canvas {
   }
 
   /** Ctrl+V(app の paste から): コピーした物を、このグループに引用として貼る。見えている真ん中に、元の並びのまま */
-  pasteRefs(): boolean {
+  pasteRefs(at?: { x: number; y: number }): boolean {
     if (!refClip.length || this.readOnly) return false;
-    const c = this.visibleCenter();
+    const c = at ?? this.visibleCenter();
     const x0 = Math.min(...refClip.map((r) => r.x)), y0 = Math.min(...refClip.map((r) => r.y));
     const x1 = Math.max(...refClip.map((r) => r.x)), y1 = Math.max(...refClip.map((r) => r.y));
     const dx = c.x - (x0 + x1) / 2, dy = c.y - (y0 + y1) / 2;
@@ -2164,6 +2196,74 @@ export class Canvas {
     this.setSelection(made);
     toast(made.length ? T.pastedRefs(made.length) + (refused ? T.cycleRefused : "") : T.pastedNone);
     return true;
+  }
+
+  /**
+   * Ctrl+V(2026-11-26 修正14): コピーした物を、ふつうに複製して貼る(引用は Ctrl+Q)。切り取った物は移す。
+   * 文字・ノート・カード・囲い・画像を複製し、その中どうしの線も写す。グループは複製しない(Ctrl+Q で引用)
+   */
+  pasteCopies(at?: { x: number; y: number }): boolean {
+    if (!refClip.length || this.readOnly) return false;
+    const c = at ?? this.visibleCenter();
+    const x0 = Math.min(...refClip.map((r) => r.x)), y0 = Math.min(...refClip.map((r) => r.y));
+    const x1 = Math.max(...refClip.map((r) => r.x)), y1 = Math.max(...refClip.map((r) => r.y));
+    const dx = c.x - (x0 + x1) / 2, dy = c.y - (y0 + y1) / 2;
+    if (refCutFrom) return this.pasteCut(dx, dy);
+    const made = new Map<string, string>();
+    let skipped = 0;
+    this.v.tx(() => {
+      for (const r of refClip) {
+        const src = this.v.get(r.id);
+        if (!src) continue;
+        const x = Math.round(r.x + dx), y = Math.round(r.y + dy);
+        if (src.type === "text" && src.file && isImageFile(src.file)) {
+          const id = this.v.duplicateImage(r.id, this.group, x, y, r.w);
+          if (id) made.set(r.id, id);
+          continue;
+        }
+        if (src.type === "group" || src.type === "alias") {
+          skipped++;
+          continue;
+        }
+        const n = this.v.create({ type: src.type, title: src.title, body: src.body, group: this.group, x, y, color: src.color, fill: src.fill, file: src.file, paper: src.paper, cite: src.cite, card: src.card, spread: src.spread, size: src.size });
+        made.set(r.id, n.id);
+      }
+      for (const [from, to] of made) for (const l of this.v.get(from)?.links ?? []) if (made.has(l.to)) this.v.addLink(to, made.get(l.to)!, l.kind);
+    });
+    this.renderNow();
+    this.setSelection([...made.values()]);
+    toast(made.size ? T.pastedCopies(made.size) + (skipped ? T.pastedGroupsSkipped(skipped) : "") : skipped ? T.pastedGroupsOnly : T.pastedNone);
+    return true;
+  }
+
+  /** Ctrl+Q: コピーした物を引用として貼る。ノートの文章なら引用の文字(元の所とつながる)、ボードの物ならこれまでの引用 */
+  async quotePaste(at?: { x: number; y: number }): Promise<void> {
+    if (this.readOnly) return;
+    const clip = await currentClip();
+    if (clip?.kind === "passage") return this.placeCite(clip, at ?? this.visibleCenter());
+    if (clip?.kind === "nodes" && refClip.length) {
+      this.pasteRefs(at);
+      return;
+    }
+    toast(T.quoteNothing);
+  }
+  private placeCite(clip: PassageClip, at: { x: number; y: number }): void {
+    if (!this.v.exists(clip.note)) return toast(T.quoteNothing);
+    const anchor = this.host.anchorPassage?.(clip) ?? null;
+    const id = this.v.create({ type: "text", title: clip.text, cite: anchor ? citeOf(clip.note, anchor) : clip.note, group: this.group, x: Math.round(at.x - 60), y: Math.round(at.y - 12) }).id;
+    this.renderNow();
+    this.setSelection([id]);
+    toast(T.citePlaced);
+  }
+  private openCite(id: string): void {
+    const c = parseCite(this.v.get(id)?.cite);
+    if (c && this.v.exists(c.note)) this.host.openCite?.(c.note, c.anchor);
+  }
+  /** 引用の文字に見せる文章: 元のノートの目印の所(見つからなければ、引用したときの文章) */
+  citeText(n: TDNode): string {
+    const c = parseCite(n.cite);
+    const note = this.v.get(c?.note ?? (n.cite ?? "").slice(0, 10));
+    return (c && note ? anchorText(note.body, c.anchor) : null) ?? n.title;
   }
 
   /** 切り取った物を、このグループへ移す */
@@ -2232,7 +2332,7 @@ export class Canvas {
     return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   }
 
-  /** Ctrl+Shift+G: 選んだ物はそのまま、それを引用した新しいグループを、選んだ物の右に置く(2026-11-24 利用者) */
+  /** Ctrl+Shift+Q(前は Ctrl+Shift+G): 選んだ物はそのまま、それを引用した新しいグループを、選んだ物の右に置く(2026-11-24 利用者) */
   quoteGroupSelection(): void {
     const ids = [...this.selection];
     const strokes = [...this.strokeSel];
@@ -2377,7 +2477,7 @@ export class Canvas {
     }
     bar.push({ icon: "link", label: T.linkShort, title: T.linkSearch, action: () => this.linkBySearch() });
     bar.push({ icon: "bundle", label: T.bundleShort, title: `${T.bundleShort}: ${T.bundleDesc} (Ctrl+G)`, action: () => this.bundleSelection() });
-    bar.push({ icon: "quotegroup", label: T.quoteGroupShort, title: `${T.quoteGroup}: ${T.quoteGroupDesc} (Ctrl+Shift+G)`, action: () => this.quoteGroupSelection() });
+    bar.push({ icon: "quotegroup", label: T.quoteGroupShort, title: `${T.quoteGroup}: ${T.quoteGroupDesc} (Ctrl+Shift+Q)`, action: () => this.quoteGroupSelection() });
     bar.push({ icon: "frame", label: T.frameShort, title: `${T.frameShort2}: ${T.frameDesc} (Ctrl+B)`, action: () => this.frameSelection() });
     // 原本を消す(ゴミ箱)と、引用を外すだけ を分ける
     bar.push({ icon: "trash", label: allRefs ? T.removeRefShort : T.deleteShort, title: (allRefs ? T.deleteRef : T.delete) + " (Delete)", danger: true, action: () => this.deleteItems(ids, true) });
@@ -2427,6 +2527,7 @@ export class Canvas {
     if (!many && !isRef && n.type === "group") more.push({ label: T.rename, action: () => this.renameGroup(id) }, { label: T.unbundle, desc: T.unbundleDesc, action: () => this.v.unbundle(id) });
     if (!many && !isRef && n.type === "frame") more.push({ label: T.rename, action: () => this.renameFrame(id) });
     if (!many && !isRef && n.type === "text" && n.file) more.push({ label: T.rename, action: () => this.editText(id) });
+    if (!many && !isRef && n.type === "text" && n.cite) more.push({ label: T.citeToPlain, action: () => this.v.update(id, { title: this.citeText(n), cite: null }) });
     if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") more.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
     items.push({ label: T.mMoreMenu, sub: more });
     showMenu(x, y, items);

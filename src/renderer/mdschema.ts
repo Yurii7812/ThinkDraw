@@ -4,7 +4,8 @@ import markdownit from "markdown-it";
 import { MarkdownParser, MarkdownSerializer, type MarkdownSerializerState, defaultMarkdownParser, defaultMarkdownSerializer, schema as baseSchema } from "prosemirror-markdown";
 import { DOMSerializer, Fragment, Schema, Slice, type Node as PMNode } from "prosemirror-model";
 import type { Command } from "prosemirror-state";
-import { TextSelection } from "prosemirror-state";
+import { EditorState as PMState, TextSelection } from "prosemirror-state";
+import { newAnchor } from "../core/cite";
 
 const nodes = baseSchema.spec.nodes
   .update("list_item", { ...baseSchema.spec.nodes.get("list_item")!, attrs: { checked: { default: null } } })
@@ -446,3 +447,57 @@ export const pasteIntoChecklist = (text: string): Command => (state, dispatch) =
   }
   return true;
 };
+
+// ---------- ノートの文章の引用の目印(2026-11-26 修正14) ----------
+
+/** 目印 [文章](#q-…) の所(最初から最後まで)。無ければ null */
+export function findAnchor(doc: PMNode, anchor: string): { from: number; to: number } | null {
+  let from = -1, to = -1;
+  doc.descendants((n, pos) => {
+    if (n.isText && n.marks.some((m) => m.type === schema.marks.link && m.attrs.href === "#" + anchor)) {
+      if (from < 0) from = pos;
+      to = pos + n.nodeSize;
+    }
+  });
+  return from < 0 ? null : { from, to };
+}
+
+const normText = (s: string) => s.replace(/\s+/g, " ").trim();
+
+/**
+ * コピーした所(from〜to、text)に目印を付ける。位置が変わっていれば、同じ文章を 1 つの段落の中から探す。
+ * もう目印がちょうどその所にあれば、それを使う。ほかのリンクにかかるときは付けない(null)
+ */
+export function anchorIn(doc: PMNode, c: { from: number; to: number; text: string }, samePositions: boolean): { doc: PMNode; anchor: string; changed: boolean } | null {
+  let { from, to } = c;
+  const ok = (f: number, t: number) => f >= 0 && t <= doc.content.size && f < t && normText(doc.textBetween(f, t, "\n")) === normText(c.text);
+  if (!samePositions || !ok(from, to)) {
+    from = to = -1;
+    const want = c.text.trim();
+    if (!want || want.includes("\n")) return null;
+    doc.descendants((n, pos) => {
+      if (from >= 0 || !n.isTextblock) return from < 0;
+      const i = n.textContent.indexOf(want);
+      if (i >= 0 && ok(pos + 1 + i, pos + 1 + i + want.length)) (from = pos + 1 + i), (to = from + want.length);
+      return false;
+    });
+    if (from < 0) return null;
+  }
+  const links = new Set<string>();
+  let plain = false;
+  doc.nodesBetween(from, to, (n) => {
+    if (!n.isText) return true;
+    const l = n.marks.find((m) => m.type === schema.marks.link);
+    if (l) links.add(l.attrs.href);
+    else plain = true;
+    return false;
+  });
+  if (links.size === 1 && !plain) {
+    const href = [...links][0];
+    if (/^#q-[a-z0-9]{8}$/.test(href)) return { doc, anchor: href.slice(1), changed: false }; // もう目印がある
+  }
+  if (links.size) return null;
+  const anchor = newAnchor();
+  const tr = PMState.create({ doc }).tr.addMark(from, to, schema.marks.link.create({ href: "#" + anchor }));
+  return { doc: tr.doc, anchor, changed: true };
+}

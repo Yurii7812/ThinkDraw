@@ -2,7 +2,8 @@
 import { NEW_LINK_KINDS, ROOT_ID } from "../core/types";
 import { kindPreview } from "./edgeshape";
 import { Vault } from "../core/vault";
-import { isCheckOrTable } from "./mdschema";
+import { anchorIn, isCheckOrTable, parseMarkdown, serializeMarkdown } from "./mdschema";
+import type { PassageClip } from "./clip";
 import { isImageFile, Canvas, groupPrefs, PRESET_COLORS, refClipboard, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
@@ -114,6 +115,8 @@ class App {
   private peekTitle: HTMLElement | null = null;
   side!: SidePanel;
   popup: BodyPopup | null = null;
+  /** 分割の右側で開いているノート(2026-11-26 修正14。左右に 1 つずつ開ける) */
+  popupR: BodyPopup | null = null;
   private sideAuto = false; // カードを選んで自動で開いている間だけ true(保存しない)
   private sidePrevTab: SideTab | null = null; // 自動で開く前の欄(自動で閉じるとき、これに戻す)
   state: AppState = { views: {}, graphOpen: false, graphMode: "local", sideTab: "map", lastGroup: ROOT_ID };
@@ -317,6 +320,8 @@ class App {
         openGroup: (id) => this.openGroup(id),
         openBody: (id) => this.openBody(id),
         editInline: (id, mount, done) => this.editInline(id, mount, done),
+        anchorPassage: (c) => this.anchorPassage(c),
+        openCite: (note, anchor) => this.openCite(note, anchor, "left"),
         goToNode: (id) => this.goToNode(id, false, true),
         pickGroup: async (title) => {
           const r = await openPicker(this.vault, { title, mode: "group" });
@@ -446,6 +451,7 @@ class App {
   }
   async flushAll(): Promise<void> {
     this.popup?.save();
+    this.popupR?.save();
     this.canvas.commitDraft("esc");
     clearTimeout(this.flushTimer);
     await this.vault.flush();
@@ -1076,8 +1082,15 @@ class App {
     this.renderReturn();
   }
   /** そのノード(が含まれるグループ)へ移る。home = 引用ではなく、所属しているグループへ */
-  goToNode(id: string, openBody: boolean, home = false): void {
+  goToNode(id: string, openBody: boolean, home = false, anchor?: string, pane: "left" | "right" = "left"): void {
     if (!this.vault.exists(id)) return;
+    // もう左右のどちらかで開いているノートなら、そこを見せる(2026-11-26 修正14)
+    const open = openBody ? [this.popup, this.popupR].find((p) => p?.id === id) : undefined;
+    if (open) {
+      if (anchor) open.scrollToAnchor(anchor);
+      else open.focus();
+      return;
+    }
     let g = this.canvas.group;
     const here = this.vault.itemPos(g, id);
     if (!here || (home && here.ref)) {
@@ -1089,15 +1102,20 @@ class App {
       this.canvas.renderNow();
       this.canvas.setSelection([id]); // 引用元へ飛んだときは、そのノードを選んでおく
     }
-    if (openBody) this.openBody(id);
+    if (openBody) this.openBody(id, { anchor, pane: pane === "right" && this.peek ? "right" : "left" });
   }
 
   // ---------- ポップアップ ----------
-  openBody(id: string): void {
+  openBody(id: string, opts: { pane?: "left" | "right"; anchor?: string } = {}): void {
     if (!this.vault.exists(id)) return;
     // 表・チェックリストは大画面で開かない。そのボードへ行って、その場で書く(2026-11-26 修正13)
     const tn = this.vault.get(id)!;
     if (tn.type === "note" && isCheckOrTable(tn.body)) {
+      if (opts.pane === "right" && this.peek && this.vault.itemPos(this.peek.group, id)) {
+        this.peek.renderNow();
+        this.peek.openNote(id);
+        return;
+      }
       if (!this.vault.itemPos(this.canvas.group, id)) this.goToNode(id, false, true);
       this.canvas.renderNow();
       this.canvas.openNote(id);
@@ -1105,23 +1123,52 @@ class App {
     }
     // ノートは最初から大画面で開く(2026-11-22 利用者の希望)。ほかは小さいポップアップ
     const expanded = this.vault.get(id)!.type === "note";
-    this.closePopup();
-    this.canvas.commitDraft("esc");
-    this.popup = new BodyPopup(
+    // 分割しているときは、押した側の画面の中だけに開く(反対側のボード・ノートは見えたまま。2026-11-26 修正14)
+    const right = opts.pane === "right" && !!this.peek && !!this.peekWrap;
+    const cv = right ? this.peek! : this.canvas;
+    if (right) {
+      this.popupR?.close();
+      this.popupR = null;
+    } else this.closePopup();
+    cv.commitDraft("esc");
+    const pop = new BodyPopup(
       {
         vault: this.vault,
-        goToGroup: (g, focus) => this.openGroup(g, focus),
-        goToNode: (n, ob) => this.goToNode(n, ob),
+        goToGroup: (g, focus) => (right ? this.openPeek(g, focus) : this.openGroup(g, focus)),
+        goToNode: (n, ob, anchor) => this.goToNode(n, ob, false, anchor, right ? "right" : "left"),
         closedEditor: () => {
-          this.popup = null;
-          this.canvas.el.focus();
+          if (right) {
+            if (this.popupR === pop) this.popupR = null;
+          } else if (this.popup === pop) this.popup = null;
+          cv.el.focus();
         },
         openSearch: () => this.search(),
+        anchorPassage: (c) => this.anchorPassage(c),
       },
       id,
-      this.main,
+      right ? this.peekWrap! : this.leftPane,
       expanded,
     );
+    if (right) this.popupR = pop;
+    else this.popup = pop;
+    if (opts.anchor) pop.scrollToAnchor(opts.anchor);
+  }
+  /** ノートの文章を引用するとき、そのノートのコピーした所に目印を付ける(開いていればその画面で、なければファイルの本文に) */
+  anchorPassage(c: PassageClip): string | null {
+    const open = [this.popup, this.popupR].find((p) => p?.id === c.note);
+    if (open) return open.anchorRange(c);
+    const n = this.vault.get(c.note);
+    if (!n) return null;
+    const r = anchorIn(parseMarkdown(n.body), c, n.body === c.body);
+    if (!r) return null;
+    if (r.changed) this.vault.setBody(c.note, serializeMarkdown(r.doc));
+    return r.anchor;
+  }
+  /** 引用の文字を押した: 元のノートのその所を開く。分割していれば、押した側に */
+  private openCite(note: string, anchor: string, pane: "left" | "right"): void {
+    const open = [this.popup, this.popupR].find((p) => p?.id === note);
+    if (open) return open.scrollToAnchor(anchor);
+    this.openBody(note, { pane, anchor: anchor || undefined });
   }
   /** キャンバスの上でそのまま書く編集欄(チェックリスト・表) */
   private editInline(id: string, mount: HTMLElement, done: () => void): { close(): void; focus(): void } {
@@ -1150,6 +1197,12 @@ class App {
       if (n?.type === "group") return this.newTab(r.id);
       const ps = this.vault.parentsOf(r.id);
       return this.newTab(ps.includes(ROOT_ID) ? ROOT_ID : ps.sort()[0] ?? ROOT_ID, true, r.id);
+    }
+    // 分割の右側を使っているときは、右側で移る(2026-11-26 修正14)
+    if (this.peek && this.main.dataset.active === "right") {
+      if (n?.type === "group") this.openPeek(r.id);
+      else this.openBeside(r.id);
+      return;
     }
     if (n?.type === "group") this.openGroup(r.id);
     else this.goToNode(r.id, false);
@@ -1243,7 +1296,9 @@ class App {
           vault: this.vault,
           kindColor: (k: string) => this.config.edgeColors?.[k] ?? 0,
           openGroup: (id) => this.openPeek(id),
-          openBody: (id) => this.openBody(id),
+          openBody: (id) => this.openBody(id, { pane: "right" }),
+          anchorPassage: (c) => this.anchorPassage(c),
+          openCite: (note, anchor) => this.openCite(note, anchor, "right"),
           editInline: (id, mount, done) => this.editInline(id, mount, done),
           goToNode: (id) => this.openBeside(id),
           pickGroup: async (title) => {
@@ -1290,6 +1345,8 @@ class App {
     this.peekWrap?.querySelector<HTMLButtonElement>(".pane-up")?.toggleAttribute("disabled", this.peek.group === ROOT_ID);
   }
   closePeek(): void {
+    this.popupR?.close();
+    this.popupR = null;
     this.peek?.commitDraft("esc");
     this.peekWrap?.remove();
     this.splitBar?.remove();
@@ -1756,13 +1813,14 @@ class App {
     addEventListener("paste", (e) => {
       const files = e.clipboardData?.files;
       const inField = (e.target as Element)?.closest?.("input, textarea, .ProseMirror");
-      if (inField || this.popup || this.records || this.paperOpen) return;
-      const c = this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas;
-      // Ctrl+C でコピーした物(目印の文字が入っている)は、引用として貼る
+      const rightActive = !!this.peek && this.main.dataset.active === "right";
+      if (inField || (rightActive ? this.popupR : this.popup) || this.records || this.paperOpen) return;
+      const c = rightActive ? this.peek! : this.canvas;
+      // Ctrl+C でコピーした物(目印の文字が入っている)は、複製して貼る(引用は Ctrl+Q。2026-11-26 修正14)
       const norm = (t: string) => t.replace(/\r\n/g, "\n").trim();
       if (!files?.length && refClipboard.size && norm(e.clipboardData?.getData("text/plain") ?? "") === norm(refClipboard.mark)) {
         e.preventDefault();
-        c.pasteRefs();
+        c.pasteCopies();
         return;
       }
       // 何もない所に文字を貼っても何もしない(表・チェックリストへの貼り付けは、その中で。2026-11-26 修正13)
@@ -1779,6 +1837,12 @@ class App {
       if (e.ctrlKey && !e.shiftKey && k === "f") {
         e.preventDefault();
         this.search();
+        return;
+      }
+      // 分割(Ctrl+\\)はノートを書いている間も使える(左右にノートとボードを並べる。2026-11-26 修正14)
+      if (e.ctrlKey && e.key === "\\") {
+        e.preventDefault();
+        this.toggleBeside();
         return;
       }
       // タブ: Ctrl+T 新しいタブ(今のグループ)・Ctrl+W 閉じる・Ctrl+Tab / Ctrl+PageDown 次・Ctrl+Shift+Tab / Ctrl+PageUp 前
@@ -1864,8 +1928,11 @@ class App {
         return;
       }
       if (inField) return;
-      if (e.key === "Escape" && this.popup) {
-        this.closePopup();
+      if (e.key === "Escape" && (this.popup || this.popupR)) {
+        if (this.popupR && (this.main.dataset.active === "right" || !this.popup)) {
+          this.popupR.close();
+          this.popupR = null;
+        } else this.closePopup();
         return;
       }
       if (e.key === "Escape" && this.canvas.pen.on) {
@@ -1884,11 +1951,6 @@ class App {
       if (e.ctrlKey && k === "y") {
         e.preventDefault();
         this.vault.redo();
-        return;
-      }
-      if (e.ctrlKey && e.key === "\\") {
-        e.preventDefault();
-        this.toggleBeside();
         return;
       }
       const active = this.peek && this.peek.el.contains(document.activeElement) ? this.peek : this.canvas;

@@ -40,6 +40,9 @@ export interface CreateOptions {
   color?: number;
   file?: string;
   paper?: string;
+  /** type: text のみ。ノートの文章の引用 */
+  cite?: string;
+  fill?: number;
   card?: CardRef;
   spread?: SpreadRef;
   size?: { w: number; h: number };
@@ -321,6 +324,8 @@ export class Vault {
       if (o.card) n.card = { ...o.card };
       if (o.file) n.file = o.file;
       if (o.paper) n.paper = o.paper;
+      if (o.cite && o.type === "text") n.cite = o.cite;
+      if (o.fill) n.fill = o.fill;
       if (o.spread) n.spread = { ...o.spread };
       if (o.type === "frame") n.size = { ...(o.size ?? { w: 240, h: 160 }) };
       if (o.type === "alias" && o.target) n.target = o.target;
@@ -332,9 +337,13 @@ export class Vault {
     });
   }
 
-  update(id: string, patch: { title?: string; body?: string; color?: number; fill?: number }): void {
+  update(id: string, patch: { title?: string; body?: string; color?: number; fill?: number; cite?: string | null }): void {
     this.tx(() => {
       const n = this.mut(id);
+      if (patch.cite !== undefined) {
+        if (patch.cite) n.cite = patch.cite;
+        else delete n.cite;
+      }
       if (patch.title !== undefined) n.title = patch.title;
       if (patch.body !== undefined) n.body = patch.body;
       if (patch.color !== undefined) n.color = patch.color;

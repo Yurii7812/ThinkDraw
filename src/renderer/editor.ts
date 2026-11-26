@@ -13,14 +13,36 @@ import type { Vault } from "../core/vault";
 import { cardName } from "../decks";
 import { openPicker } from "./picker";
 import { T } from "./strings";
-import { backspaceEmpty, pasteIntoChecklist, pasteIntoTable, addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
+import { anchorIn, findAnchor, backspaceEmpty, pasteIntoChecklist, pasteIntoTable, addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
 import { api, h, showMenu, svg, toast } from "./ui";
+import { currentClip, setClip, type PassageClip } from "./clip";
+import { refClipboard } from "./canvas";
+import { hrefAnchor } from "../core/links";
+import { Fragment, Slice } from "prosemirror-model";
+
+/** 引用の元へ飛んだとき、その所を少しのあいだ光らせる(飾り。2026-11-26 修正14) */
+const flashKey = new PluginKey<DecorationSet>("flash");
+const flashPlugin = new Plugin<DecorationSet>({
+  key: flashKey,
+  state: {
+    init: () => DecorationSet.empty,
+    apply: (tr, set) => {
+      const m = tr.getMeta(flashKey) as { from: number; to: number } | null | undefined;
+      if (m === null) return DecorationSet.empty;
+      if (m) return DecorationSet.create(tr.doc, [Decoration.inline(m.from, m.to, { class: "flash" })]);
+      return set.map(tr.mapping, tr.doc);
+    },
+  },
+  props: { decorations: (st) => flashKey.getState(st) },
+});
 
 export interface EditorHost {
   vault: Vault;
   goToGroup(id: string, focusNode?: string): void;
-  goToNode(id: string, openBody: boolean): void;
+  goToNode(id: string, openBody: boolean, anchor?: string): void;
   closedEditor(): void;
+  /** ほかのノートの文章を引用するとき、そのノートに目印を付ける(2026-11-26 修正14) */
+  anchorPassage?(c: PassageClip): string | null;
   openSearch(): void;
 }
 
@@ -198,6 +220,7 @@ export class BodyPopup {
     const state = EditorState.create({
       doc: parseMarkdown(n.body),
       plugins: [
+        flashPlugin,
         history(),
         markdownInputRules(),
         keymap({
@@ -213,6 +236,11 @@ export class BodyPopup {
           },
           "Mod-f": () => {
             this.host.openSearch();
+            return true;
+          },
+          // 引用として貼る(2026-11-26 修正14。ふつうに貼るのは Ctrl+V)
+          "Mod-q": () => {
+            void this.quotePaste();
             return true;
           },
           Enter: (st, d, v) => {
@@ -273,12 +301,22 @@ export class BodyPopup {
       },
       handleDrop: (_v, e) => this.attachFiles((e as DragEvent).dataTransfer?.files),
       handleDOMEvents: {
+        // コピーした所を覚える(ほかのボード・ノートで Ctrl+Q を押すと、ここの引用になる)
+        copy: (v) => {
+          const { from, to } = v.state.selection;
+          if (from === to || this.inline) return false;
+          this.save();
+          const text = v.state.doc.textBetween(from, to, "\n");
+          setClip({ kind: "passage", note: this.id, from, to, text, body: serializeMarkdown(v.state.doc) }, text);
+          return false;
+        },
         keydown: (_v, e) => {
           if (e.key === "Escape") {
             e.preventDefault();
             this.close();
             return true;
           }
+          if (e.ctrlKey && e.key === "\\") return false; // 分割はアプリへ(2026-11-26 修正14)
           e.stopPropagation();
           return false;
         },
@@ -502,6 +540,7 @@ export class BodyPopup {
   private showLinkBubble(a: HTMLAnchorElement): void {
     this.hideBubble();
     const href = a.getAttribute("href") ?? "";
+    if (/^#q-[a-z0-9]{8}$/.test(href)) return this.showCitedBy(a, href.slice(1));
     const nodeId = hrefToNodeId(href);
     const v = this.host.vault;
     const label = nodeId ? `→ ${nodeId === ROOT_ID ? T.home : v.get(nodeId)?.title || T.untitled}` : `↗ ${href}`;
@@ -512,7 +551,7 @@ export class BodyPopup {
       if (nodeId) {
         if (!v.exists(nodeId)) return;
         this.close();
-        this.host.goToNode(nodeId, true);
+        this.host.goToNode(nodeId, true, hrefAnchor(href) ?? undefined);
       } else if (/^assets\//.test(href)) void api().openAsset(href); // 添付は、その種類のふつうのアプリで開く
       else api().openExternal(href);
     });
@@ -523,6 +562,100 @@ export class BodyPopup {
     this.el.append(b);
     this.bubble = b;
   }
+  /** ノートの中の引用された所を押した: そこを引用しているボードの文字・ノートを並べる(押すとそこへ) */
+  private showCitedBy(a: HTMLAnchorElement, anchor: string): void {
+    const v = this.host.vault;
+    const key = `${this.id}#${anchor}`;
+    const hits = [...v.nodes.values()].filter((n) => (n.type === "text" && n.cite === key) || (n.type === "note" && n.id !== this.id && n.body.includes(`(${this.id}.md#${anchor})`)));
+    const box = h("div", { class: "linkbubble cited" });
+    if (!hits.length) box.append(h("div", { class: "muted", text: T.citeNone }));
+    for (const n of hits) {
+      const g = v.parentsOf(n.id)[0];
+      const where = g ? (g === ROOT_ID ? T.home : v.get(g)?.title || T.untitledGroup) : "";
+      const b = h("button", { class: "cited-row", text: T.citeUsedBy((n.type === "note" ? n.title || T.untitled : "") || where) });
+      b.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        this.hideBubble();
+        this.close();
+        this.host.goToNode(n.id, n.type === "note");
+      });
+      box.append(b);
+    }
+    const r = a.getBoundingClientRect();
+    const pr = this.el.getBoundingClientRect();
+    box.style.left = r.left - pr.left + "px";
+    box.style.top = r.bottom - pr.top + 4 + "px";
+    this.el.append(box);
+    this.bubble = box;
+  }
+
+  /** Ctrl+Q: ほかのノートの文章なら引用の段落(↩ で元へ)、ボードの物ならそのリンク。同じノートの文章はふつうに入れる */
+  private async quotePaste(): Promise<void> {
+    const clip = await currentClip();
+    const view = this.view;
+    if (clip?.kind === "passage" && clip.note === this.id) {
+      view.dispatch(view.state.tr.insertText(clip.text).scrollIntoView());
+      return;
+    }
+    if (clip?.kind === "passage") {
+      const src = this.host.vault.get(clip.note);
+      if (!src) return void toast(T.quoteNothing);
+      const anchor = this.host.anchorPassage?.(clip) ?? null;
+      const link = schema.marks.link.create({ href: `${clip.note}.md` + (anchor ? "#" + anchor : "") });
+      const paras = clip.text.split("\n").filter((l) => l.trim()).map((l) => schema.nodes.paragraph.create(null, schema.text(l)));
+      paras.push(schema.nodes.paragraph.create(null, schema.text("↩ " + (src.title || T.untitled), [link])));
+      const quote = schema.nodes.blockquote.create(null, paras);
+      const st = view.state;
+      const $f = st.selection.$from;
+      const blockEmpty = $f.parent.isTextblock && $f.parent.content.size === 0 && $f.depth === 1;
+      const tr = blockEmpty ? st.tr.replaceWith($f.before(1), $f.after(1), quote) : st.tr.insert($f.after(1), quote);
+      view.dispatch(tr.scrollIntoView());
+      view.focus();
+      toast(T.citeQuotedInNote);
+      return;
+    }
+    if (clip?.kind === "nodes" && refClipboard.size) {
+      const v = this.host.vault;
+      const parts: PMNode[] = [];
+      for (const id of refClipboard.ids) {
+        const n = v.get(id);
+        if (!n) continue;
+        if (parts.length) parts.push(schema.text("、"));
+        const label = (n.type === "text" && n.cite ? n.title : n.title) || T.untitled;
+        parts.push(schema.text(label.replace(/\s+/g, " "), [schema.marks.link.create({ href: nodeHref(id) })]));
+      }
+      if (!parts.length) return void toast(T.quoteNothing);
+      view.dispatch(view.state.tr.replaceSelection(new Slice(Fragment.from(parts), 0, 0)).scrollIntoView());
+      view.focus();
+      return;
+    }
+    toast(T.quoteNothing);
+  }
+
+  /** このノートに目印を付ける(コピーした所に)。付けた/もうあった目印、付けられなければ null */
+  anchorRange(c: PassageClip): string | null {
+    const st = this.view.state;
+    const r = anchorIn(st.doc, c, serializeMarkdown(st.doc) === c.body);
+    if (!r) return null;
+    if (r.changed) {
+      const f = findAnchor(r.doc, r.anchor)!;
+      this.view.dispatch(st.tr.addMark(f.from, f.to, schema.marks.link.create({ href: "#" + r.anchor })));
+      this.save();
+    }
+    return r.anchor;
+  }
+
+  /** 目印の所を見せる(選んで光らせる) */
+  scrollToAnchor(anchor: string): void {
+    const f = findAnchor(this.view.state.doc, anchor);
+    if (!f) return;
+    this.view.dispatch(this.view.state.tr.setSelection(TextSelection.create(this.view.state.doc, f.from, f.to)).setMeta(flashKey, f).scrollIntoView());
+    this.view.focus();
+    setTimeout(() => {
+      if (!this.view.isDestroyed) this.view.dispatch(this.view.state.tr.setMeta(flashKey, null));
+    }, 1600);
+  }
+
   private hideBubble(): void {
     this.bubble?.remove();
     this.bubble = null;
