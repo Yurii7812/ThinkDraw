@@ -89,13 +89,23 @@ export const MENU_ICONS: Record<string, string> = {
 
 let openMenu: HTMLElement | null = null;
 let menuKeys = new Map<string, () => void>();
+/** ↑↓ と Enter で選べるメニューのとき、選べる項目と今の位置(2026-11-26 上の階層の一覧) */
+let menuNav: { items: HTMLButtonElement[]; at: number } | null = null;
 export function closeMenu(): void {
   openMenu?.remove();
   openMenu = null;
   menuKeys = new Map();
+  menuNav = null;
+}
+function navTo(i: number): void {
+  if (!menuNav?.items.length) return;
+  menuNav.at = (i + menuNav.items.length) % menuNav.items.length;
+  menuNav.items.forEach((b, k) => b.classList.toggle("kbd-on", k === menuNav!.at));
+  menuNav.items[menuNav.at].scrollIntoView({ block: "nearest" });
 }
 
-export function showMenu(x: number, y: number, items: MenuItem[]): void {
+/** opts.nav: ↑↓ で選び Enter で決められる(はじめは一番上が選ばれている) */
+export function showMenu(x: number, y: number, items: MenuItem[], opts: { nav?: boolean } = {}): void {
   closeMenu();
   menuKeys = new Map();
   const el = h("div", { class: "ctxmenu", role: "menu" });
@@ -206,6 +216,10 @@ export function showMenu(x: number, y: number, items: MenuItem[]): void {
   el.style.left = Math.min(x, innerWidth - r.width - 4) + "px";
   el.style.top = Math.min(y, innerHeight - r.height - 4) + "px";
   openMenu = el;
+  if (opts.nav) {
+    menuNav = { items: [...el.querySelectorAll<HTMLButtonElement>(":scope > .item:not(:disabled)")], at: 0 };
+    navTo(0);
+  }
 }
 
 addEventListener(
@@ -219,6 +233,13 @@ addEventListener("keydown", (e) => {
   if (e.key === "Escape" && openMenu) {
     closeMenu();
     e.stopPropagation();
+    return;
+  }
+  if (openMenu && menuNav && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing && ["ArrowDown", "ArrowUp", "Enter"].includes(e.key)) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Enter") menuNav.items[menuNav.at]?.click();
+    else navTo(menuNav.at + (e.key === "ArrowDown" ? 1 : -1));
     return;
   }
   // メニューが開いている間は、決めたキー 1 つで選べる(右クリックして R で名前を変える、など)

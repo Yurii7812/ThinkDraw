@@ -868,10 +868,12 @@ class App {
     const g = this.canvas.group;
     const name = (id: string) => (id === ROOT_ID ? T.home : this.vault.get(id)?.title || T.untitledGroup);
     const parents = this.vault.parentsOf(g).filter((p) => this.vault.get(p)?.type === "group" || p === ROOT_ID);
-    const items: MenuItem[] = parents.map((p) => ({ label: name(p), action: () => this.openGroup(p) }));
-    if (!parents.includes(ROOT_ID)) items.push({ separator: true } as MenuItem, { label: T.home, action: () => this.openGroup(ROOT_ID) });
+    // ↑↓ と Enter、1〜9 の数字でも選べる(2026-11-26 利用者)
+    const targets = [...parents, ...(parents.includes(ROOT_ID) ? [] : [ROOT_ID])];
+    const items: MenuItem[] = targets.map((p, i) => ({ label: name(p), key: i < 9 ? String(i + 1) : undefined, action: () => this.openGroup(p) }));
+    if (!parents.includes(ROOT_ID)) items.splice(parents.length, 0, { separator: true } as MenuItem);
     const r = this.upBtn.getBoundingClientRect();
-    showMenu(r.left, r.bottom + 2, items);
+    showMenu(r.left, r.bottom + 2, items, { nav: true });
   }
   openGroup(id: string, focusNode?: string): void {
     if (this.vault.get(id)?.type !== "group") return;

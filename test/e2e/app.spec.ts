@@ -2145,3 +2145,29 @@ test("2026-11-26 修正13: 赤い背景の文字が束ねたときの題にな�
   await settle();
   expect(JSON.parse(readFileSync(path.join(userData, "config.json"), "utf8")).groupTitleFill).toBe(0);
 });
+
+test("2026-11-26: 上の階層が 2 つ以上なら、Ctrl+↑ の一覧を ↑↓ と Enter・数字で選べる", async () => {
+  await page.evaluate(() => {
+    const a = (window as unknown as { __app: { vault: { create(x: object): { id: string }; addToGroup(g: string, c: string, x: number, y: number): void }; openGroup(id: string): void } }).__app;
+    const p1 = a.vault.create({ type: "group", title: "上その1", group: "root", x: 100, y: 100 }).id;
+    const p2 = a.vault.create({ type: "group", title: "上その2", group: "root", x: 400, y: 100 }).id;
+    const c = a.vault.create({ type: "group", title: "下のグループ", group: p1, x: 0, y: 0 }).id;
+    a.vault.addToGroup(p2, c, 0, 0);
+    a.openGroup(c);
+  });
+  await page.locator(".canvas").first().focus();
+  await page.keyboard.press("Control+ArrowUp");
+  await expect(page.locator(".ctxmenu .item")).toHaveCount(3);
+  await expect(page.locator(".ctxmenu .item.kbd-on")).toHaveCount(1);
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".ctxmenu .item.kbd-on")).toContainText("上その2");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".ctxmenu")).toHaveCount(0);
+  await expect(page.locator(".node.t-group", { hasText: "下のグループ" })).toHaveCount(1);
+  // 数字でも選べる(1 = 一番上)
+  await page.locator(".node.t-group", { hasText: "下のグループ" }).click();
+  await page.locator(".canvas").first().focus();
+  await page.keyboard.press("Control+ArrowUp");
+  await page.keyboard.press("3");
+  await expect(page.locator(".node.t-group", { hasText: "上その1" })).toHaveCount(1);
+});
