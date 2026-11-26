@@ -1,6 +1,6 @@
 // Electron の main プロセス: 窓・フォルダの読み書き・ファイル監視・URL の題の取得
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from "electron";
-import { existsSync, watch, type FSWatcher, promises as fs } from "node:fs";
+import { cpSync, existsSync, watch, type FSWatcher, promises as fs } from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { atomicWrite, FsVaultIO } from "./fsio";
@@ -8,7 +8,20 @@ import { DEFAULT_OCR, makeEngines, type OcrSettings } from "./ocr";
 import { DEFAULT_CROP, PaperStore, type CropSettings } from "./paperio";
 
 // 試験のときは、利用者の設定・フォルダに触らないよう、環境変数で場所を差し替える
+// 設定の置き場所: ~/.config/bresuto(2026-11-26 に ThinkDraw から改名。前の ~/.config/thinkdraw があれば最初の起動で写す)
 if (process.env.THINKDRAW_USERDATA) app.setPath("userData", process.env.THINKDRAW_USERDATA);
+else {
+  const dir = path.join(app.getPath("appData"), "bresuto");
+  const old = path.join(app.getPath("appData"), "thinkdraw");
+  if (!existsSync(dir) && existsSync(old)) {
+    try {
+      cpSync(old, dir, { recursive: true, filter: (src) => !/[\\/](Singleton\w*|lockfile)$/.test(src) });
+    } catch {
+      /* 写せなければ新しく始める(前のフォルダはそのまま残る) */
+    }
+  }
+  app.setPath("userData", dir);
+}
 // 画面の試験(xvfb)では、窓が隠れていると見なされて描画が止まることがあるので、止めないようにする
 if (process.env.THINKDRAW_TEST) {
   app.commandLine.appendSwitch("ozone-platform", "x11"); // 試験の窓は xvfb の中だけに出す
@@ -99,7 +112,7 @@ async function urlTitle(url: string): Promise<string | null> {
   try {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), 6000);
-    const res = await net.fetch(url, { signal: ctl.signal, headers: { "User-Agent": "Mozilla/5.0 ThinkDraw" } });
+    const res = await net.fetch(url, { signal: ctl.signal, headers: { "User-Agent": "Mozilla/5.0 BRESUTO" } });
     clearTimeout(t);
     if (!res.ok || !(res.headers.get("content-type") ?? "").includes("html")) return null;
     const html = (await res.text()).slice(0, 300_000);
@@ -238,7 +251,7 @@ function createWindow(): void {
   win = new BrowserWindow({
     width: 1280,
     height: 820,
-    title: "ThinkDraw",
+    title: "BRESUTO",
     icon: path.join(__dirname, "../../assets/icon.png"),
     backgroundColor: "#1e1e1e",
     show: false,
