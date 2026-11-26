@@ -37,6 +37,8 @@ export const T = {
   tabClose: "タブを閉じる",
   tabCloseOthers: "ほかのタブを全部閉じる",
   tabCloseRight: "右のタブを閉じる",
+  tabToRight: "右に移す(左右に分ける)",
+  tabToLeft: "左に移す",
   tabDuplicate: "このタブを複製",
   tabNew: "新しいタブ",
   tabOpenIn: "新しいタブで開く",

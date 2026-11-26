@@ -316,7 +316,8 @@ export class BodyPopup {
             this.close();
             return true;
           }
-          if (e.ctrlKey && e.key === "\\") return false; // 分割はアプリへ(2026-11-26 修正14)
+          // 分割・タブの操作はアプリへ(ノートもタブ。2026-11-26 修正14)
+          if (e.ctrlKey && (e.key === "\\" || e.key === "Tab" || e.key === "PageUp" || e.key === "PageDown" || (!e.shiftKey && (e.key === "w" || e.key === "t")))) return false;
           e.stopPropagation();
           return false;
         },

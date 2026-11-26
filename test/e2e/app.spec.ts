@@ -455,10 +455,9 @@ test("横に開く: 別のグループを見ながら、右から左へドラッ
   await page.keyboard.type("別のブレスト");
   await page.keyboard.press("Escape");
   await write(200, 500, "こちら");
-  await page.keyboard.press("Control+\\");
-  await page.keyboard.type("別のブレスト");
-  await page.keyboard.press("Enter");
-  await expect(page.locator(".peek .peek-title")).toContainText("別のブレスト");
+  await page.keyboard.press("Control+\\"); // 今のタブを右へ(2026-11-26 修正14。前は選ぶ画面)
+  await page.locator(".peek .node.t-group", { hasText: "別のブレスト" }).click();
+  await expect(page.locator(".peek .pane-tabs .tab.active")).toContainText("別のブレスト");
   const src = page.locator(".peek .node", { hasText: "向こうの考え" });
   await expect(src).toHaveCount(1);
   await shot("10-beside");
@@ -767,8 +766,7 @@ test("分割: 右クリックの「反対側の画面に引用する」", async 
   await page.keyboard.type("向こう");
   await page.keyboard.press("Escape");
   await page.keyboard.press("Control+\\");
-  await page.keyboard.type("向こう");
-  await page.keyboard.press("Enter");
+  await page.locator(".peek .node.t-group", { hasText: "向こう" }).click();
   await page.locator(".peek .node", { hasText: "向こうの物" }).click({ button: "right" });
   await page.locator(".ctxmenu .item", { hasText: "別のグループへ" }).click();
   await page.locator(".ctxmenu .item", { hasText: "反対側の画面に引用する" }).click();
@@ -2282,4 +2280,39 @@ test("2026-11-26 修正14: 分割すると、ノートは押した側の画面�
   await page.locator('.pane.peek .popup blockquote a[href*=".md#q-"]').click();
   await page.locator(".linkbubble").first().click();
   await expect(page.locator(".popup.expanded .flash")).toHaveCount(1);
+});
+
+test("2026-11-26 修正14: ノートもタブで開く・タブを右へドラッグすると左右に分かれる・Ctrl+\\ で反対側へ・右が空になると戻る", async () => {
+  await page.evaluate(() => {
+    const a = (window as unknown as { __app: { vault: { create(x: object): { id: string }; setBody(id: string, b: string): void }; canvas: { group: string; renderNow(): void } } }).__app;
+    const n = a.vault.create({ type: "note", title: "タブのノート", group: a.canvas.group, x: 300, y: 200 });
+    a.vault.setBody(n.id, "本文\n");
+    a.canvas.renderNow();
+  });
+  await page.locator(".node.t-note", { hasText: "タブのノート" }).click();
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await expect(page.locator(".tabbar .tab")).toHaveCount(2);
+  await expect(page.locator(".tabbar .tab.active")).toContainText("タブのノート");
+  // ノートのタブを、左の画面の右半分へドラッグ → 左右に分かれる(左はボード、右はノート)
+  const pane = await page.locator(".left-pane").boundingBox();
+  await page.locator(".tabbar .tab.active").dragTo(page.locator(".left-pane"), { targetPosition: { x: pane!.width * 0.8, y: pane!.height / 2 } });
+  await expect(page.locator(".main.split")).toHaveCount(1);
+  await expect(page.locator(".pane.peek .pane-tabs .tab")).toHaveCount(1);
+  await expect(page.locator(".pane.peek .pane-tabs .tab")).toContainText("タブのノート");
+  await expect(page.locator(".pane.peek .popup.expanded")).toBeVisible();
+  await expect(page.locator(".left-pane .popup")).toHaveCount(0);
+  await expect(page.locator(".left-pane .node.t-note", { hasText: "タブのノート" })).toBeVisible();
+  await shot("50-tabs-split");
+  // 左のボードのタブを右の列へドラッグ: 右に 2 枚・左にも残る(左は空にしない)
+  await page.locator(".left-pane .pane-tabs .tab").first().dragTo(page.locator(".pane.peek .pane-tabs"));
+  await expect(page.locator(".pane.peek .pane-tabs .tab")).toHaveCount(2);
+  await expect(page.locator(".left-pane .pane-tabs .tab")).toHaveCount(1);
+  // 右のタブを Ctrl+\ で左へ。右が空になったら分割は戻る
+  await page.locator(".pane.peek .pane-tabs .tab").nth(0).click();
+  await page.keyboard.press("Control+\\");
+  await expect(page.locator(".pane.peek .pane-tabs .tab")).toHaveCount(1);
+  await page.locator(".pane.peek .pane-tabs .tab").nth(0).click();
+  await page.keyboard.press("Control+\\");
+  await expect(page.locator(".main.split")).toHaveCount(0);
+  await expect(page.locator(".tabbar .tab")).toHaveCount(3);
 });

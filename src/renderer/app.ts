@@ -37,13 +37,18 @@ interface AppState {
   islandScope?: number | null; // 島の範囲(0・1・2・全部 = null)
   tabs?: TabState[]; // タブ(2026-11-24)。1 つのときも覚える
   activeTab?: number;
+  rtabs?: TabState[]; // 右側のタブ(2026-11-26 修正14)
+  ractive?: number;
 }
 /** タブ 1 枚: 開いているグループと、そのタブの戻る・進む */
 interface TabState {
   group: string;
   back: Loc[];
   fwd: Loc[];
+  /** ノートのタブ(2026-11-26 修正14)。group はその下のボード */
+  note?: string;
 }
+type Side = "left" | "right";
 /** 履歴の 1 つ(2026-11-24 統合仕様 1): グループ・見ていた場所と倍率・選んでいた物。前の版はグループの ID だけ */
 interface Loc {
   g: string;
@@ -125,6 +130,14 @@ class App {
   dir = "";
   private tabs: TabState[] = [];
   private activeTab = 0;
+  private rtabs: TabState[] = [];
+  private peekNew = false;
+  private ractive = 0;
+  /** 左右の画面のタブの列(分けたときだけ使う) */
+  private lStrip!: HTMLElement;
+  private rStrip: HTMLElement | null = null;
+  /** popup / popupR がノートのタブか(小さなポップアップではないか) */
+  private popupTab: Record<Side, boolean> = { left: false, right: false };
   private tabBar!: HTMLElement;
   private backStack: Loc[] = [];
   private fwdStack: Loc[] = [];
@@ -217,7 +230,9 @@ class App {
     await api().watch();
     const isGroup = (id: string) => this.vault.get(id)?.type === "group";
     const locs = (a: unknown[] | undefined) => (a ?? []).map(toLoc).filter((l): l is Loc => !!l && isGroup(l.g));
-    this.tabs = (this.state.tabs ?? []).filter((t) => t && isGroup(t.group)).map((t) => ({ group: t.group, back: locs(t.back), fwd: locs(t.fwd) }));
+    const isNote = (id: string | undefined) => !!id && this.vault.get(id)?.type === "note";
+    const restore = (a: TabState[] | undefined) => (a ?? []).filter((t) => t && isGroup(t.group)).map((t) => ({ group: t.group, back: locs(t.back), fwd: locs(t.fwd), ...(isNote(t.note) ? { note: t.note } : {}) }));
+    this.tabs = restore(this.state.tabs);
     if (!this.tabs.length) this.tabs = [{ group: isGroup(this.state.lastGroup) ? this.state.lastGroup : ROOT_ID, back: [], fwd: [] }];
     this.activeTab = Math.min(Math.max(0, this.state.activeTab ?? 0), this.tabs.length - 1);
     this.backStack = [...this.tabs[this.activeTab].back];
@@ -225,8 +240,16 @@ class App {
     const g = this.tabs[this.activeTab].group;
     this.canvas.show(g, this.state.views[g] ?? null);
     if (this.state.surround) this.toggleSurround(true);
+    // 右のタブ(2026-11-26 修正14)。前の版の「横のグループ」も右のタブにする
+    const rt = restore(this.state.rtabs);
     const pg = this.state.peekGroup;
-    if (pg && this.vault.get(pg)?.type === "group") this.openPeek(pg);
+    if (!rt.length && pg && isGroup(pg)) rt.push({ group: pg, back: [], fwd: [] });
+    if (rt.length) {
+      this.ensureRight();
+      this.rtabs = rt;
+      this.loadRTab(Math.min(Math.max(0, this.state.ractive ?? 0), rt.length - 1));
+    }
+    if (this.tabs[this.activeTab].note) this.loadTab(this.activeTab);
     this.updateBar();
     this.scheduleFlush(); // 根を作ったとき・迷子を根に入れたときに書く
   }
@@ -308,10 +331,15 @@ class App {
     });
     const leftUp = h("button", { class: "tbtn pane-up", title: T.upMenu, "aria-label": T.upMenu, text: "↑" });
     leftUp.addEventListener("click", () => this.goUp());
-    this.leftPane = h("div", { class: "pane left-pane" }, h("div", { class: "pane-head" }, leftUp, this.leftTitle));
+    this.lStrip = h("div", { class: "pane-tabs", role: "tablist" });
+    this.bindStrip(this.lStrip, "left");
+    this.leftPane = h("div", { class: "pane left-pane" }, h("div", { class: "pane-head" }, leftUp, this.leftTitle, this.lStrip));
+    this.bindPaneDrop(this.leftPane, "left");
+    this.leftPane.addEventListener("pointerdown", () => this.setActivePane("left"), true);
     this.main.append(this.leftPane);
     // タブ(2026-11-24)。1 枚だけのときは出さない
     this.tabBar = h("nav", { class: "tabbar hidden", "aria-label": T.tabsLabel });
+    this.bindStrip(this.tabBar, "left");
     document.body.replaceChildren(bar, this.tabBar, this.main);
     this.canvas = new Canvas(
       {
@@ -428,6 +456,7 @@ class App {
     this.canvas.requestRender();
     this.records?.render();
     this.wholeSoon();
+    this.renderTabs(); // ノートの題が変わったらタブの名前も
     if (this.peek) {
       if (this.vault.exists(this.peek.group)) {
         this.peek.requestRender();
@@ -512,13 +541,29 @@ class App {
     input.select();
   }
 
-  // ---------- タブ(2026-11-24 利用者) ----------
+  // ---------- タブ(2026-11-24 利用者。2026-11-26 修正14: ノートもタブ・左右それぞれにタブの列・ドラッグで分ける) ----------
+  private tabsOf(side: Side): TabState[] {
+    return side === "left" ? this.tabs : this.rtabs;
+  }
+  private activeOf(side: Side): number {
+    return side === "left" ? this.activeTab : this.ractive;
+  }
+  /** 今使っている側(右があって右を触っていれば右) */
+  activeSide(): Side {
+    return this.peek && this.main.dataset.active === "right" ? "right" : "left";
+  }
   /** 今のタブに、今のグループと戻る・進むを書き戻し、タブの列を描き直す */
   private syncTab(): void {
-    if (!this.tabs.length) return;
-    this.tabs[this.activeTab] = { group: this.canvas.group, back: [...this.backStack], fwd: [...this.fwdStack] };
+    const cur = this.tabs[this.activeTab];
+    if (cur) this.tabs[this.activeTab] = { ...cur, group: this.canvas.group, back: [...this.backStack], fwd: [...this.fwdStack] };
+    if (this.peek && this.rtabs.length) {
+      const r = this.rtabs[this.ractive];
+      if (r) r.group = this.peek.group;
+    }
     this.state.tabs = this.tabs;
     this.state.activeTab = this.activeTab;
+    this.state.rtabs = this.peek ? this.rtabs : [];
+    this.state.ractive = this.ractive;
     this.saveState();
     this.renderTabs();
   }
@@ -527,14 +572,42 @@ class App {
     const t = this.tabs[i];
     this.backStack = [...t.back];
     this.fwdStack = [...t.fwd];
-    this.closePopup();
     if (this.records) this.closeRecords();
-    this.showGroup(this.vault.get(t.group)?.type === "group" ? t.group : ROOT_ID, "in");
-  }
-  switchTab(i: number): void {
-    if (i === this.activeTab || i < 0 || i >= this.tabs.length) return;
+    const g = this.vault.get(t.group)?.type === "group" ? t.group : ROOT_ID;
+    if (g !== this.canvas.group) this.showGroup(g, "in");
+    if (t.note && this.vault.get(t.note)?.type === "note") this.showNoteIn("left", t.note);
+    else {
+      this.dropPopup("left");
+      this.updateBar();
+    }
     this.syncTab();
-    this.loadTab(i);
+  }
+  private loadRTab(i: number): void {
+    if (!this.peek) return;
+    this.ractive = i;
+    const t = this.rtabs[i];
+    const g = this.vault.get(t.group)?.type === "group" ? t.group : ROOT_ID;
+    if (this.peekNew || this.peek.group !== g || !this.peek.el.isConnected) this.peek.show(g, this.state.views[g] ?? null);
+    this.peekNew = false;
+    if (t.note && this.vault.get(t.note)?.type === "note") this.showNoteIn("right", t.note);
+    else this.dropPopup("right");
+    this.syncTab();
+  }
+  private activate(side: Side, i: number): void {
+    if (side === "left") {
+      if (i < 0 || i >= this.tabs.length) return;
+      this.syncTab();
+      this.loadTab(i);
+    } else {
+      if (i < 0 || i >= this.rtabs.length) return;
+      this.syncTab();
+      this.loadRTab(i);
+    }
+    this.setActivePane(side);
+  }
+  switchTab(i: number, side: Side = "left"): void {
+    if (i === this.activeOf(side)) return;
+    this.activate(side, i);
   }
   /** 新しいタブでグループを開く。activate = false なら後ろで開く(中ボタン) */
   newTab(group: string = this.canvas.group, activate = true, focusNode?: string): void {
@@ -552,17 +625,31 @@ class App {
       toast(T.tabOpenedBehind(this.groupName(group)));
     }
   }
-  closeTab(i: number = this.activeTab): void {
-    if (this.tabs.length <= 1) return;
+  /** タブを閉じる。左の最後の 1 枚は閉じない(ノートなら、そのボードに戻す)。右の最後の 1 枚なら分割をやめる */
+  closeTab(i: number = this.activeTab, side: Side = "left"): void {
+    const tabs = this.tabsOf(side);
+    const t = tabs[i];
+    if (!t) return;
+    if (side === "right" && tabs.length <= 1) return this.closePeek();
+    if (side === "left" && tabs.length <= 1) {
+      if (!t.note) return;
+      tabs[0] = { group: t.group, back: t.back, fwd: t.fwd };
+      return this.activate("left", 0);
+    }
     this.syncTab();
-    this.tabs.splice(i, 1);
-    if (i === this.activeTab) this.loadTab(Math.min(i, this.tabs.length - 1));
-    else {
-      if (i < this.activeTab) this.activeTab--;
+    const act = this.activeOf(side);
+    tabs.splice(i, 1);
+    if (i === act) {
+      // 閉じたら、ひとつ前(開いた元)のタブへ
+      const n = Math.max(0, i - 1);
+      if (side === "left") this.loadTab(n);
+      else this.loadRTab(n);
+    } else {
+      if (i < act) side === "left" ? this.activeTab-- : this.ractive--;
       this.syncTab();
     }
   }
-  /** このタブ以外を全部閉じる / このタブより右を閉じる */
+  /** このタブ以外を全部閉じる / このタブより右を閉じる(左の列) */
   closeTabs(keep: number, which: "others" | "right"): void {
     this.syncTab();
     const cur = this.tabs[this.activeTab];
@@ -573,36 +660,280 @@ class App {
       this.syncTab();
     } else this.loadTab(which === "others" ? 0 : keep);
   }
-  private renderTabs(): void {
-    if (!this.tabBar) return;
-    this.tabBar.classList.toggle("hidden", this.tabs.length < 2);
-    if (this.tabs.length < 2) return void this.tabBar.replaceChildren();
-    const els = this.tabs.map((t, i) => {
+  /**
+   * タブを動かす(ドラッグ・Ctrl+\)。同じ列なら並べ替え、反対側なら移す(右が無ければ作る)。
+   * 左の最後の 1 枚を右へ出すときは、左にも残す(左は空にしない)。右が空になったら分割をやめる
+   */
+  moveTab(from: Side, i: number, to: Side, at?: number): void {
+    this.syncTab();
+    const src = this.tabsOf(from);
+    const t = src[i];
+    if (!t) return;
+    if (from === to) {
+      const j = Math.max(0, Math.min(at ?? src.length, src.length));
+      if (j === i || j === i + 1) return;
+      src.splice(i, 1);
+      const k = j > i ? j - 1 : j;
+      src.splice(k, 0, t);
+      if (from === "left") this.activeTab = k;
+      else this.ractive = k;
+      this.syncTab();
+      return;
+    }
+    const copy: TabState = { ...t, back: [...t.back], fwd: [...t.fwd] };
+    const keepLeft = from === "left" && src.length <= 1;
+    if (!keepLeft) {
+      const act = this.activeOf(from);
+      src.splice(i, 1);
+      const na = Math.min(i < act ? act - 1 : i === act ? Math.max(0, i - 1) : act, Math.max(0, src.length - 1));
+      if (src.length) {
+        if (from === "left") {
+          if (i === act) this.loadTab(na);
+          else this.activeTab = na;
+        } else {
+          if (i === act) this.loadRTab(na);
+          else this.ractive = na;
+        }
+      }
+    }
+    if (to === "right") {
+      this.ensureRight();
+      const j = Math.min(at ?? this.rtabs.length, this.rtabs.length);
+      this.rtabs.splice(j, 0, copy);
+      this.loadRTab(j);
+    } else {
+      const j = Math.min(at ?? this.tabs.length, this.tabs.length);
+      this.tabs.splice(j, 0, copy);
+      this.loadTab(j);
+    }
+    if (from === "right" && !this.rtabs.length) this.closePeek();
+    this.setActivePane(to);
+  }
+  /** Ctrl+\: 今のタブを反対側へ(分けていなければ右へ出して分ける) */
+  moveActiveTabAcross(): void {
+    const side = this.activeSide();
+    this.moveTab(side, this.activeOf(side), side === "left" ? "right" : "left");
+  }
+
+  // ---------- ノートのタブ ----------
+  /** ノートをタブで開く(その側にもう開いていれば、そのタブへ)。anchor があればその所を見せる */
+  private openNoteTab(side: Side, id: string, anchor?: string): void {
+    if (side === "right") this.ensureRight();
+    this.syncTab();
+    const tabs = this.tabsOf(side);
+    let i = tabs.findIndex((t) => t.note === id);
+    if (i < 0) {
+      i = this.activeOf(side) + 1;
+      tabs.splice(i, 0, { group: side === "left" ? this.canvas.group : this.peek!.group, back: [], fwd: [], note: id });
+    }
+    this.activate(side, i);
+    if (anchor) (side === "left" ? this.popup : this.popupR)?.scrollToAnchor(anchor);
+  }
+  /** その側の画面に、ノートを大画面で出す(タブの中身) */
+  private showNoteIn(side: Side, id: string): void {
+    const cur = side === "left" ? this.popup : this.popupR;
+    if (cur && cur.id === id && this.popupTab[side]) return;
+    this.dropPopup(side);
+    const right = side === "right";
+    const cv = right ? this.peek! : this.canvas;
+    cv.commitDraft("esc");
+    const pop: BodyPopup = new BodyPopup(
+      {
+        vault: this.vault,
+        goToGroup: (g, focus) => (right ? this.openPeek(g, focus) : this.openGroup(g, focus)),
+        goToNode: (n, ob, anchor) => this.goToNode(n, ob, false, anchor, side),
+        closedEditor: () => {
+          if ((right ? this.popupR : this.popup) !== pop) return; // タブを切り替えて閉じた
+          if (right) this.popupR = null;
+          else this.popup = null;
+          this.popupTab[side] = false;
+          // Esc・× でノートを閉じた: そのタブを閉じて、開いた元へ
+          const tabs = this.tabsOf(side);
+          const i = tabs.findIndex((t) => t.note === id);
+          if (i >= 0) this.closeTab(i, side);
+          cv.el.focus();
+        },
+        openSearch: () => this.search(),
+        anchorPassage: (c) => this.anchorPassage(c),
+      },
+      id,
+      right ? this.peekWrap! : this.leftPane,
+      true,
+    );
+    if (right) this.popupR = pop;
+    else this.popup = pop;
+    this.popupTab[side] = true;
+  }
+  /** その側の画面の本文(ノートのタブ・小さなポップアップ)を、タブは閉じずに片付ける */
+  private dropPopup(side: Side): void {
+    const p = side === "left" ? this.popup : this.popupR;
+    if (side === "left") this.popup = null;
+    else this.popupR = null;
+    this.popupTab[side] = false;
+    p?.close();
+  }
+  /** 左でノートのタブを見ているときにグループへ移る: ボードのタブ(前のもの)へ切り替える。無ければ作る */
+  private leaveNoteTab(): void {
+    const t = this.tabs[this.activeTab];
+    if (!t?.note) return;
+    for (let k = this.activeTab - 1; k >= 0; k--) if (!this.tabs[k].note) return this.activate("left", k);
+    for (let k = this.activeTab + 1; k < this.tabs.length; k++) if (!this.tabs[k].note) return this.activate("left", k);
+    this.syncTab();
+    this.tabs.splice(this.activeTab, 0, { group: t.group, back: [], fwd: [] });
+    this.loadTab(this.activeTab);
+  }
+
+  // ---------- タブの列(左右それぞれ)とドラッグ ----------
+  private tabDrag: { side: Side; i: number } | null = null;
+  private tabLabel(t: TabState): string {
+    return t.note ? "📄 " + (this.vault.get(t.note)?.title || T.untitled) : this.groupName(t.group);
+  }
+  private tabStrip(side: Side): HTMLElement[] {
+    const tabs = this.tabsOf(side);
+    const act = this.activeOf(side);
+    const els = tabs.map((t, i) => {
       const x = h("button", { class: "tab-x", title: T.tabClose + " (Ctrl+W)", "aria-label": T.tabClose, text: "×" });
-      const el = h("div", { class: "tab" + (i === this.activeTab ? " active" : ""), role: "tab", "aria-selected": String(i === this.activeTab), title: this.groupName(t.group) }, h("span", { class: "tab-t", text: this.groupName(t.group) }), x);
+      const label = this.tabLabel(t);
+      const el = h("div", { class: "tab" + (i === act ? " active" : "") + (t.note ? " note-tab" : ""), role: "tab", "aria-selected": String(i === act), title: label, draggable: "true", "data-side": side, "data-i": String(i) }, h("span", { class: "tab-t", text: label }), x);
       el.addEventListener("mousedown", (e) => {
         if (e.button === 1) e.preventDefault(); // 中ボタンのスクロールを出さない
       });
       el.addEventListener("click", (e) => {
-        if (e.target === x) return this.closeTab(i);
-        this.switchTab(i);
+        if (e.target === x) return this.closeTab(i, side);
+        if (i === act) this.setActivePane(side);
+        else this.switchTab(i, side);
       });
-      el.addEventListener("auxclick", (e) => e.button === 1 && this.closeTab(i));
+      el.addEventListener("auxclick", (e) => e.button === 1 && this.closeTab(i, side));
+      el.addEventListener("dragstart", (e) => {
+        this.tabDrag = { side, i };
+        e.dataTransfer?.setData("application/x-td-tab", `${side}:${i}`);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+        document.body.classList.add("tab-dragging");
+      });
+      el.addEventListener("dragend", () => this.endTabDrag());
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        showMenu(e.clientX, e.clientY, [
-          { label: T.tabClose, hint: "Ctrl+W", action: () => this.closeTab(i) },
-          { label: T.tabCloseOthers, action: () => this.closeTabs(i, "others") },
-          { label: T.tabCloseRight, disabled: i === this.tabs.length - 1, action: () => this.closeTabs(i, "right") },
+        const items: MenuItem[] = [
+          { label: T.tabClose, hint: "Ctrl+W", action: () => this.closeTab(i, side) },
+          ...(side === "left"
+            ? [
+                { label: T.tabCloseOthers, action: () => this.closeTabs(i, "others") },
+                { label: T.tabCloseRight, disabled: i === tabs.length - 1, action: () => this.closeTabs(i, "right") },
+              ]
+            : []),
           { separator: true, label: "" },
-          { label: T.tabDuplicate, hint: "Ctrl+T", action: () => this.newTab(t.group) },
-        ]);
+          { label: side === "left" ? T.tabToRight : T.tabToLeft, hint: "Ctrl+\\", action: () => this.moveTab(side, i, side === "left" ? "right" : "left") },
+        ];
+        if (side === "left" && !t.note) items.push({ label: T.tabDuplicate, hint: "Ctrl+T", action: () => this.newTab(t.group) });
+        showMenu(e.clientX, e.clientY, items);
       });
       return el;
     });
     const plus = h("button", { class: "tab-new", title: T.tabNew + " (Ctrl+T)", "aria-label": T.tabNew, text: "＋" });
-    plus.addEventListener("click", () => this.newTab());
-    this.tabBar.replaceChildren(...els, plus);
+    plus.addEventListener("click", () => {
+      if (side === "left") return this.newTab();
+      this.syncTab();
+      this.rtabs.splice(this.ractive + 1, 0, { group: this.peek?.group ?? ROOT_ID, back: [], fwd: [] });
+      this.activate("right", this.ractive + 1);
+    });
+    return [...els, plus];
+  }
+  /** タブの列にドラッグを受ける(並べ替え・反対側から移す) */
+  private bindStrip(strip: HTMLElement, side: Side): void {
+    const indexAt = (cx: number) => {
+      const ts = [...strip.querySelectorAll<HTMLElement>(".tab")];
+      const k = ts.findIndex((t) => cx < t.getBoundingClientRect().left + t.getBoundingClientRect().width / 2);
+      return k < 0 ? ts.length : k;
+    };
+    strip.addEventListener("dragover", (e) => {
+      if (!this.tabDrag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.showDropHint(null);
+      const k = indexAt(e.clientX);
+      strip.querySelectorAll(".tab").forEach((t, j) => t.classList.toggle("drop-before", j === k));
+      strip.classList.toggle("drop-end", k === strip.querySelectorAll(".tab").length);
+    });
+    strip.addEventListener("dragleave", () => {
+      strip.querySelectorAll(".drop-before").forEach((t) => t.classList.remove("drop-before"));
+      strip.classList.remove("drop-end");
+    });
+    strip.addEventListener("drop", (e) => {
+      if (!this.tabDrag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const d = this.tabDrag;
+      const k = indexAt(e.clientX);
+      this.endTabDrag();
+      this.moveTab(d.side, d.i, side, k);
+    });
+  }
+  /** 画面の中に落とす: 分けていなければ左の右半分で「右に分ける」、分けていれば反対側へ移す */
+  private bindPaneDrop(pane: HTMLElement, side: Side): void {
+    const target = (e: DragEvent): Side | null => {
+      if (!this.tabDrag) return null;
+      if (!this.peek) {
+        if (side !== "left") return null;
+        const r = pane.getBoundingClientRect();
+        return e.clientX > r.left + r.width / 2 ? "right" : null;
+      }
+      return this.tabDrag.side === side ? null : side;
+    };
+    pane.addEventListener(
+      "dragover",
+      (e) => {
+        const to = target(e);
+        if (!this.tabDrag) return;
+        if (!to) return this.showDropHint(null);
+        e.preventDefault();
+        const r = pane.getBoundingClientRect();
+        this.showDropHint(!this.peek ? { x: r.left + r.width / 2, y: r.top, w: r.width / 2, h: r.height } : { x: r.left, y: r.top, w: r.width, h: r.height });
+      },
+      true,
+    );
+    pane.addEventListener(
+      "drop",
+      (e) => {
+        const to = target(e);
+        if (!to || !this.tabDrag) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const d = this.tabDrag;
+        this.endTabDrag();
+        this.moveTab(d.side, d.i, to);
+      },
+      true,
+    );
+  }
+  private dropHint: HTMLElement | null = null;
+  private showDropHint(r: { x: number; y: number; w: number; h: number } | null): void {
+    if (!r) {
+      this.dropHint?.remove();
+      this.dropHint = null;
+      return;
+    }
+    if (!this.dropHint) {
+      this.dropHint = h("div", { class: "tab-drop-hint" });
+      document.body.append(this.dropHint);
+    }
+    Object.assign(this.dropHint.style, { left: r.x + "px", top: r.y + "px", width: r.w + "px", height: r.h + "px" });
+  }
+  private endTabDrag(): void {
+    this.tabDrag = null;
+    document.body.classList.remove("tab-dragging");
+    this.showDropHint(null);
+    document.querySelectorAll(".drop-before").forEach((t) => t.classList.remove("drop-before"));
+    document.querySelectorAll(".drop-end").forEach((t) => t.classList.remove("drop-end"));
+  }
+  private renderTabs(): void {
+    if (!this.tabBar || this.tabDrag) return; // ドラッグの間は作り直さない
+    const split = !!this.peek;
+    // 分けていないときは上に 1 列(1 枚なら出さない)。分けたときは、左右それぞれの見出しにタブの列
+    const top = !split && this.tabs.length >= 2;
+    this.tabBar.classList.toggle("hidden", !top);
+    this.tabBar.replaceChildren(...(top ? this.tabStrip("left") : []));
+    this.lStrip.replaceChildren(...(split ? this.tabStrip("left") : []));
+    this.rStrip?.replaceChildren(...this.tabStrip("right"));
   }
   /** 題の横の▾: 所属先とホームへ移る */
   goUp(): void {
@@ -883,6 +1214,7 @@ class App {
   }
   openGroup(id: string, focusNode?: string): void {
     if (this.vault.get(id)?.type !== "group") return;
+    this.leaveNoteTab(); // ノートのタブを見ていたら、ボードのタブへ
     this.closePopup();
     if (id !== this.canvas.group) {
       pushHist(this.backStack, this.here());
@@ -1084,12 +1416,18 @@ class App {
   /** そのノード(が含まれるグループ)へ移る。home = 引用ではなく、所属しているグループへ */
   goToNode(id: string, openBody: boolean, home = false, anchor?: string, pane: "left" | "right" = "left"): void {
     if (!this.vault.exists(id)) return;
-    // もう左右のどちらかで開いているノートなら、そこを見せる(2026-11-26 修正14)
-    const open = openBody ? [this.popup, this.popupR].find((p) => p?.id === id) : undefined;
-    if (open) {
-      if (anchor) open.scrollToAnchor(anchor);
-      else open.focus();
-      return;
+    // もう左右のどちらかのタブで開いているノートなら、そのタブを見せる(2026-11-26 修正14)
+    if (openBody && this.vault.get(id)?.type === "note") {
+      for (const side of ["left", "right"] as Side[]) {
+        if (side === "right" && !this.peek) continue;
+        const i = this.tabsOf(side).findIndex((t) => t.note === id);
+        if (i < 0) continue;
+        if (i !== this.activeOf(side)) this.activate(side, i);
+        const p = side === "left" ? this.popup : this.popupR;
+        if (anchor) p?.scrollToAnchor(anchor);
+        else p?.focus();
+        return;
+      }
     }
     let g = this.canvas.group;
     const here = this.vault.itemPos(g, id);
@@ -1123,13 +1461,12 @@ class App {
     }
     // ノートは最初から大画面で開く(2026-11-22 利用者の希望)。ほかは小さいポップアップ
     const expanded = this.vault.get(id)!.type === "note";
+    // ノートはタブで開く(Obsidian のように。分割していれば押した側に。2026-11-26 修正14)
+    if (expanded) return this.openNoteTab(opts.pane === "right" && this.peek ? "right" : "left", id, opts.anchor);
     // 分割しているときは、押した側の画面の中だけに開く(反対側のボード・ノートは見えたまま。2026-11-26 修正14)
     const right = opts.pane === "right" && !!this.peek && !!this.peekWrap;
     const cv = right ? this.peek! : this.canvas;
-    if (right) {
-      this.popupR?.close();
-      this.popupR = null;
-    } else this.closePopup();
+    this.dropPopup(right ? "right" : "left");
     cv.commitDraft("esc");
     const pop = new BodyPopup(
       {
@@ -1182,7 +1519,9 @@ class App {
     );
     return { close: () => ed.close(), focus: () => ed.focus() };
   }
+  /** 小さなポップアップを閉じる(ノートのタブは閉じない) */
   private closePopup(): void {
+    if (this.popupTab.left) return;
     this.popup?.close();
     this.popup = null;
   }
@@ -1274,17 +1613,20 @@ class App {
   }
 
   // ---------- 横の画面 ----------
-  private openPeek(group: string, focus?: string): void {
+  /** 右の画面(分割)を作る。タブはまだ入れない(2026-11-26 修正14: 右にもタブの列) */
+  private ensureRight(): void {
     if (this.whole) this.closeWhole();
     if (!this.peek) {
-      this.peekTitle = h("button", { class: "pane-title peek-title", title: T.panePick });
-      this.peekTitle.addEventListener("click", () => this.pickBeside());
       const up = h("button", { class: "tbtn pane-up", title: T.upMenu, "aria-label": T.upMenu, text: "↑" });
       up.addEventListener("click", () => this.peekUp(up));
       const close = h("button", { class: "tbtn peek-close", title: T.besideClose, "aria-label": T.besideClose, text: "×" });
       close.addEventListener("click", () => this.closePeek());
-      const head = h("div", { class: "pane-head", title: T.besideHint }, up, this.peekTitle, h("span", { class: "pane-space" }), close);
+      this.rStrip = h("div", { class: "pane-tabs", role: "tablist" });
+      this.bindStrip(this.rStrip, "right");
+      const head = h("div", { class: "pane-head" }, up, this.rStrip, close);
       this.peekWrap = h("div", { class: "pane peek" }, head);
+      this.bindPaneDrop(this.peekWrap, "right");
+      this.peekWrap.addEventListener("pointerdown", () => this.setActivePane("right"), true);
       this.splitBar = h("div", { class: "split-bar", title: T.splitBarTip });
       this.splitBar.addEventListener("pointerdown", (e) => this.dragSplit(e));
       this.splitBar.addEventListener("dblclick", () => this.setSplit(0.5));
@@ -1324,29 +1666,48 @@ class App {
         this.peekWrap,
       );
       this.peek.el.classList.add("peek-canvas");
+      this.peekNew = true; // まだ何も見せていない(グループが同じでも一度は描く)
       this.peek.el.addEventListener("focusin", () => this.setActivePane("right"));
       this.peek.el.addEventListener("pointerdown", () => this.setActivePane("right"));
     }
-    if (this.peek.group !== group || !this.peek.el.isConnected) this.peek.show(group, this.state.views[group] ?? null);
-    else this.peek.requestRender();
-    if (focus) {
-      this.peek.renderNow();
-      this.peek.centerOn(focus);
-      this.peek.setSelection([focus]);
+  }
+  /** 右の画面で、そのグループを見せる(右が無ければ作る。右でノートのタブを見ていれば、ボードのタブへ) */
+  private openPeek(group: string, focus?: string): void {
+    this.ensureRight();
+    const peek = this.peek!;
+    this.syncTab();
+    if (!this.rtabs.length) {
+      this.rtabs = [{ group, back: [], fwd: [] }];
+      this.ractive = 0;
+    } else if (this.rtabs[this.ractive]?.note) {
+      let k = -1;
+      for (let j = this.ractive - 1; j >= 0 && k < 0; j--) if (!this.rtabs[j].note) k = j;
+      for (let j = this.ractive + 1; j < this.rtabs.length && k < 0; j++) if (!this.rtabs[j].note) k = j;
+      if (k < 0) {
+        this.rtabs.splice(this.ractive + 1, 0, { group, back: [], fwd: [] });
+        k = this.ractive + 1;
+      }
+      this.ractive = k;
     }
-    this.state.peekGroup = group;
-    this.saveState();
-    this.updatePeekTitle();
+    this.rtabs[this.ractive].group = group;
+    this.dropPopup("right");
+    if (this.peekNew || peek.group !== group || !peek.el.isConnected) peek.show(group, this.state.views[group] ?? null);
+    else peek.requestRender();
+    this.peekNew = false;
+    if (focus) {
+      peek.renderNow();
+      peek.centerOn(focus);
+      peek.setSelection([focus]);
+    }
+    this.syncTab();
   }
   private updatePeekTitle(): void {
-    if (!this.peek || !this.peekTitle) return;
-    const g = this.vault.get(this.peek.group);
-    this.peekTitle.textContent = (this.peek.group === ROOT_ID ? T.home : g?.title || T.untitledGroup) + " ▾";
+    if (!this.peek) return;
     this.peekWrap?.querySelector<HTMLButtonElement>(".pane-up")?.toggleAttribute("disabled", this.peek.group === ROOT_ID);
   }
+  /** 分割をやめる(右のタブは閉じる) */
   closePeek(): void {
-    this.popupR?.close();
-    this.popupR = null;
+    this.dropPopup("right");
     this.peek?.commitDraft("esc");
     this.peekWrap?.remove();
     this.splitBar?.remove();
@@ -1357,8 +1718,11 @@ class App {
     this.peek = null;
     this.peekWrap = null;
     this.peekTitle = null;
+    this.rStrip = null;
+    this.rtabs = [];
+    this.ractive = 0;
     this.state.peekGroup = null;
-    this.saveState();
+    this.syncTab();
     this.canvas.el.focus({ preventScroll: true });
   }
   /** 「まわり」: この画面のまま、つながりを外へ広げて見る(外の物は見るだけ。ドラッグで引用) */
@@ -1491,9 +1855,9 @@ class App {
     const r = await openPicker(this.vault, { title: T.besidePick, mode: "group" });
     if (r && "id" in r) this.openPeek(r.id);
   }
+  /** Ctrl+\: 今のタブを反対側へ(分けていなければ、右に分ける) */
   toggleBeside(): void {
-    if (this.peek) this.closePeek();
-    else void this.pickBeside();
+    this.moveActiveTabAcross();
   }
   /** 新しいタブで開く: グループならその中を、ほかはそれのある所(所属先、なければ引用している所)を開いて選ぶ */
   openInTab(id: string, activate = true): void {
@@ -1851,16 +2215,20 @@ class App {
         this.newTab();
         return;
       }
+      // Ctrl+W・Ctrl+Tab は、今使っている側のタブに(2026-11-26 修正14)
       if (e.ctrlKey && !e.shiftKey && k === "w") {
         e.preventDefault();
-        this.closeTab();
+        const side = this.activeSide();
+        this.closeTab(this.activeOf(side), side);
         return;
       }
       if (e.ctrlKey && (e.key === "Tab" || e.key === "PageDown" || e.key === "PageUp")) {
         e.preventDefault();
-        if (this.tabs.length > 1) {
+        const side = this.activeSide();
+        const n = this.tabsOf(side).length;
+        if (n > 1) {
           const d = e.key === "PageUp" || (e.key === "Tab" && e.shiftKey) ? -1 : 1;
-          this.switchTab((this.activeTab + d + this.tabs.length) % this.tabs.length);
+          this.switchTab((this.activeOf(side) + d + n) % n, side);
         }
         return;
       }
@@ -1929,10 +2297,11 @@ class App {
       }
       if (inField) return;
       if (e.key === "Escape" && (this.popup || this.popupR)) {
-        if (this.popupR && (this.main.dataset.active === "right" || !this.popup)) {
-          this.popupR.close();
-          this.popupR = null;
-        } else this.closePopup();
+        // ノートのタブなら、そのタブを閉じて開いた元へ(BodyPopup の close から)
+        const side: Side = this.popupR && (this.main.dataset.active === "right" || !this.popup) ? "right" : "left";
+        (side === "left" ? this.popup : this.popupR)?.close();
+        if (side === "right" && !this.popupTab.right) this.popupR = null;
+        if (side === "left" && !this.popupTab.left) this.popup = null;
         return;
       }
       if (e.key === "Escape" && this.canvas.pen.on) {

@@ -1093,3 +1093,16 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .linkbubble.cited .cited-row { border: 0; background: none; color: var(--fg); text-align: left; padding: 3px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
 .linkbubble.cited .cited-row:hover { background: var(--accent-soft); }
 .node.t-text.cite .label { white-space: pre-wrap; }
+
+/* ---------- 左右それぞれのタブの列(2026-11-26 修正14。Obsidian のようにタブをドラッグして分ける) ---------- */
+.pane-tabs { flex: 1; min-width: 0; display: flex; align-items: flex-end; gap: 2px; height: 100%; overflow-x: auto; scrollbar-width: none; }
+.pane-tabs .tab { height: 28px; min-width: 70px; margin-bottom: -1px; }
+.main.split .left-pane .pane-title { display: none; }
+.pane-head .peek-close { margin-left: 2px; }
+.tab.note-tab .tab-t { font-weight: 500; }
+.tab.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
+.tabbar.drop-end, .pane-tabs.drop-end { box-shadow: inset -3px 0 0 var(--accent); }
+.tab-drop-hint { position: fixed; z-index: 70; pointer-events: none; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 2px dashed var(--accent); border-radius: 6px; }
+body.tab-dragging .tab { cursor: grabbing; }
+/* 分けたときは、ノートのタブの中身を見出し(タブの列)の下に */
+.main.split .pane > .popup.expanded { top: 34px; height: calc(100% - 34px); }
