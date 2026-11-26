@@ -1775,7 +1775,8 @@ class App {
       if (document.querySelector(".backdrop") || menuOpen() || drawMenuOpen()) return; // 窓が開いている
       const inField = (e.target as Element)?.closest?.("input, textarea, .ProseMirror");
       const k = e.key.toLowerCase();
-      if (e.ctrlKey && k === "k") {
+      // 検索は Ctrl+F・ボードの中を探すのは Ctrl+K(2026-11-26 利用者が入れ替え)
+      if (e.ctrlKey && !e.shiftKey && k === "f") {
         e.preventDefault();
         this.search();
         return;

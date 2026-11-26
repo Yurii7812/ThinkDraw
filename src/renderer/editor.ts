@@ -211,7 +211,7 @@ export class BodyPopup {
             this.makeLink();
             return true;
           },
-          "Mod-k": () => {
+          "Mod-f": () => {
             this.host.openSearch();
             return true;
           },

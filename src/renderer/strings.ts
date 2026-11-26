@@ -47,7 +47,7 @@ export const T = {
   back: "戻る",
   forward: "進む",
   goHome: "ホームへ",
-  searchPlaceholder: "検索 Ctrl+K",
+  searchPlaceholder: "検索 Ctrl+F",
   draw: "引く",
   theme: "テーマ(ライト/ダーク)",
   graph: "グラフ",
@@ -546,7 +546,8 @@ export const SHORTCUTS: ShortcutSection[] = [
     title: "移る",
     icon: "↗",
     items: [
-      { keys: [["Ctrl", "K"]], desc: "検索して移る(Ctrl+Enter で新しいタブに)" },
+      { keys: [["Ctrl", "F"]], desc: "検索して移る(Ctrl+Enter で新しいタブに)" },
+      { keys: [["Ctrl", "K"]], desc: "このボードの中を探す(Enter で次・Shift+Enter で前)" },
       { keys: [["Ctrl", "T"]], desc: "新しいタブ(今のグループ)。グループを中ボタンで、後ろのタブに開く" },
       { keys: [["Ctrl", "W"]], desc: "タブを閉じる(タブを右クリックで、ほかを全部閉じる など)" },
       { keys: [["Ctrl", "Tab"], ["Ctrl", "Shift", "Tab"]], desc: "次のタブ/前のタブ" },

@@ -1,4 +1,4 @@
-// 検索の窓(Ctrl+K)。リンク先・入れる先のグループを選ぶのにも、同じ部品を使う(SPEC 4.3・4.4)
+// 検索の窓(Ctrl+F。2026-11-26 までは Ctrl+K)。リンク先・入れる先のグループを選ぶのにも、同じ部品を使う(SPEC 4.3・4.4)
 import type { Vault } from "../core/vault";
 import { ROOT_ID, type TDNode } from "../core/types";
 import { T } from "./strings";

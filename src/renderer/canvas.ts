@@ -1814,7 +1814,7 @@ export class Canvas {
     else this.setSelection([id]);
   }
 
-  // ---------- ボードの中を探す(Ctrl+F。2026-11-24 利用者) ----------
+  // ---------- ボードの中を探す(Ctrl+K。2026-11-24 利用者。2026-11-26 に Ctrl+F と入れ替え) ----------
   private findBox: HTMLElement | null = null;
   findInBoard(): void {
     if (this.findBox) {
@@ -2055,7 +2055,7 @@ export class Canvas {
       this.copySelection(ids, true);
       return true;
     }
-    if (e.ctrlKey && !e.shiftKey && k === "f") {
+    if (e.ctrlKey && !e.shiftKey && k === "k") {
       this.findInBoard();
       return true;
     }

@@ -114,7 +114,7 @@ test("束ねる・開く・戻る、検索、グラフ", async () => {
   await expect(page.locator(".node")).toHaveCount(2);
   await page.locator(".i-back").click();
   await expect(page.locator(".group-title")).toHaveText("ホーム");
-  await page.keyboard.press("Control+k");
+  await page.keyboard.press("Control+f");
   await page.keyboard.type("みかん");
   await page.keyboard.press("Enter");
   await expect(page.locator(".group-title")).toHaveText("果物");
@@ -845,7 +845,7 @@ test("2026-11-24: 検索は グループの名前 → 中身 → ノード の�
   await page.keyboard.type("果物");
   await page.keyboard.press("Escape");
   await settle();
-  await page.keyboard.press("Control+k");
+  await page.keyboard.press("Control+f");
   await page.keyboard.type("りんご");
   await expect(page.locator(".picker-sec")).toHaveText(["中身に当たったグループ", "ノード"]);
   await expect(page.locator(".picker-row .pr-inside")).toHaveText("中: 青いりんご");
@@ -902,7 +902,7 @@ test("2026-11-24: タブ。1 枚のときは出さない・Ctrl+T・切り替え
   await page.keyboard.press("Escape");
   await settle();
   // 検索して Ctrl+Enter で新しいタブ
-  await page.keyboard.press("Control+k");
+  await page.keyboard.press("Control+f");
   await page.keyboard.type("箱A");
   await page.keyboard.press("Control+Enter");
   await expect(page.locator(".tabbar .tab")).toHaveCount(2);
@@ -1060,7 +1060,7 @@ test("2026-11-24: Ctrl+X で切り取って、別のグループで Ctrl+V す�
 test("2026-11-24: Ctrl+F でボードの中を探す・書いている文字から Ctrl+L で同じボードの物とつなぐ・線の文字は Esc でも残る", async () => {
   await write(200, 150, "りんご");
   await write(600, 500, "みかん");
-  await page.keyboard.press("Control+f");
+  await page.keyboard.press("Control+k");
   await page.keyboard.type("みかん");
   await expect(page.locator(".find-count")).toHaveText("1/1");
   await expect(page.locator(".node.selected", { hasText: "みかん" })).toHaveCount(1);
