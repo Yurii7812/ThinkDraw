@@ -1,11 +1,13 @@
 // vault のフォルダの読み書き(Node.js)。main プロセスと試験で使う。
 
-import { promises as fs } from "node:fs";
+import { existsSync, renameSync, promises as fs } from "node:fs";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import type { FileEntry, VaultIO } from "../core/vault";
 
-export const APP_DIR = ".thinkdraw";
+export const APP_DIR = ".bresuto";
+/** 前の名前(ThinkDraw)のときのアプリの置き場所。開いたときに .bresuto へ名前を変える(2026-11-26) */
+export const OLD_APP_DIR = ".thinkdraw";
 export const TRASH_DIR = ".trash";
 export const ASSETS_DIR = "assets";
 
@@ -29,7 +31,14 @@ function safeName(name: string): string {
 }
 
 export class FsVaultIO implements VaultIO {
-  constructor(readonly dir: string) {}
+  constructor(readonly dir: string) {
+    const old = path.join(dir, OLD_APP_DIR), cur = path.join(dir, APP_DIR);
+    try {
+      if (existsSync(old) && !existsSync(cur)) renameSync(old, cur);
+    } catch {
+      /* 変えられなければ新しく作る(前のフォルダはそのまま) */
+    }
+  }
 
   async write(name: string, content: string): Promise<void> {
     await atomicWrite(path.join(this.dir, safeName(name)), content);

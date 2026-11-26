@@ -50,5 +50,5 @@ const api = {
     }),
 };
 
-contextBridge.exposeInMainWorld("thinkdraw", api);
-export type ThinkDrawApi = typeof api;
+contextBridge.exposeInMainWorld("bresuto", api);
+export type BresutoApi = typeof api;

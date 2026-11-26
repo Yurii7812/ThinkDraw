@@ -6,7 +6,7 @@ import { FsVaultIO } from "../src/main/fsio";
 import { Vault } from "../src/core/vault";
 
 export function tempDir(): { dir: string; cleanup: () => void } {
-  const dir = mkdtempSync(path.join(process.env.TMPDIR || tmpdir(), "thinkdraw-test-"));
+  const dir = mkdtempSync(path.join(process.env.TMPDIR || tmpdir(), "bresuto-test-"));
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 

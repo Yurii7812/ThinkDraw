@@ -8,7 +8,7 @@ import * as path from "node:path";
 // xvfb-run の外では動かさない(npm run test:e2e を使う)
 const HEADLESS_ARGS = ["--ozone-platform=x11", "."];
 function headlessEnv(): Record<string, string> {
-  if (!process.env.THINKDRAW_HEADLESS) throw new Error("画面の試験は npm run test:e2e で(xvfb の中で)動かしてください");
+  if (!process.env.BRESUTO_HEADLESS) throw new Error("画面の試験は npm run test:e2e で(xvfb の中で)動かしてください");
   const env = { ...process.env } as Record<string, string>;
   delete env.WAYLAND_DISPLAY;
   delete env.ELECTRON_OZONE_PLATFORM_HINT;
@@ -20,7 +20,7 @@ let page: Page;
 let vault = "";
 let userData = "";
 let exportDir = "";
-const shots = process.env.THINKDRAW_SHOTS;
+const shots = process.env.BRESUTO_SHOTS;
 
 function mdFiles(): Record<string, string> {
   const out: Record<string, string> = {};
@@ -40,7 +40,7 @@ test.beforeEach(async () => {
   vault = mkdtempSync(path.join(base, "td-vault-"));
   userData = mkdtempSync(path.join(base, "td-user-"));
   exportDir = mkdtempSync(path.join(base, "td-export-"));
-  app = await electron.launch({ args: HEADLESS_ARGS, env: { ...headlessEnv(), THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1", THINKDRAW_EXPORT_DIR: exportDir } });
+  app = await electron.launch({ args: HEADLESS_ARGS, env: { ...headlessEnv(), BRESUTO_VAULT: vault, BRESUTO_USERDATA: userData, BRESUTO_TEST: "1", BRESUTO_EXPORT_DIR: exportDir } });
   page = await app.firstWindow();
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.waitForSelector(".canvas");
@@ -291,7 +291,7 @@ test("右ドラッグで動かす・重ねるとグループ・状態の復元",
   await expect(page.locator(".edge")).toHaveCount(1);
   await settle();
   await app.close();
-  app = await electron.launch({ args: HEADLESS_ARGS, env: { ...headlessEnv(), THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1" } });
+  app = await electron.launch({ args: HEADLESS_ARGS, env: { ...headlessEnv(), BRESUTO_VAULT: vault, BRESUTO_USERDATA: userData, BRESUTO_TEST: "1" } });
   page = await app.firstWindow();
   await page.waitForSelector(".canvas");
   await expect(page.locator(".group-title")).not.toHaveText("ホーム");
@@ -585,11 +585,11 @@ test("2026-11-24 統合仕様 10〜15: 日付グループの題・Ctrl+D は題�
   await expect(page.locator(`.rec-cell.has[data-date='${ymd}']`)).toHaveCount(1);
   // 題をここで直すと、グループの名前に入る
   await page.locator(".rec-sw", { hasText: "この日" }).click(); // しるしを選ぶと一覧になるので、この日へ
-  await page.locator("input.rec-day-name").fill("ThinkDraw-設計");
+  await page.locator("input.rec-day-name").fill("BRESUTO-設計");
   await page.locator("input.rec-day-name").press("Enter");
   await page.locator(".rec-mk[data-marker='']").click(); // 絞り込みをやめる(次に開いたときも この日 から)
   await settle();
-  expect(titles()).toContain(`${ymd}-ThinkDraw-設計`);
+  expect(titles()).toContain(`${ymd}-BRESUTO-設計`);
   // 同じ日・同じ種類のノートを 2 枚
   for (let k = 0; k < 2; k++) {
     if (!(await page.locator(".records").count())) await page.keyboard.press("Control+j");
@@ -618,7 +618,7 @@ test("2026-11-24 統合仕様 10〜15: 日付グループの題・Ctrl+D は題�
   // ボードを開く・Esc で閉じる
   await page.keyboard.press("Control+j");
   await page.locator(".rec-open-day").click();
-  await expect(page.locator(".group-title")).toHaveText(`${ymd}-ThinkDraw-設計`);
+  await expect(page.locator(".group-title")).toHaveText(`${ymd}-BRESUTO-設計`);
   await page.keyboard.press("Control+j");
   await page.keyboard.press("Escape");
   await expect(page.locator(".records")).toHaveCount(0);
@@ -980,7 +980,7 @@ test("2026-11-24: 自分の種類を作って、並べる・直す", async () =>
   const chip = page.locator(".node.pchip", { hasText: "感謝" });
   await chip.click();
   await expect(chip.locator(".pchip-q")).toContainText("今日ありがたいことは?");
-  expect(readFileSync(path.join(vault, ".thinkdraw", "prompt-sets.json"), "utf8")).toContain("朝の問い");
+  expect(readFileSync(path.join(vault, ".bresuto", "prompt-sets.json"), "utf8")).toContain("朝の問い");
   await shot("27-custom");
 });
 
@@ -1257,7 +1257,7 @@ test("2026-11-24 統合仕様 1・2・7: Ctrl+←/→ の履歴(ボードの中�
   await page.locator(".node", { hasText: "外へ貼る文" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+c");
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe("外へ貼る文");
-  // ThinkDraw の中で貼ると引用(同じボードなのでボードの中の引用)
+  // BRESUTO の中で貼ると引用(同じボードなのでボードの中の引用)
   await page.keyboard.press("Escape");
   await page.keyboard.press("Control+q");
   await expect(page.locator(".node.alias")).toHaveCount(1);
@@ -1293,7 +1293,7 @@ test("2026-11-24 統合仕様 1・2・7: Ctrl+←/→ の履歴(ボードの中�
 
 test("2026-11-24 統合仕様 8〜10・15: 画像の大きさ(置いた場所ごと・名前は出さない)・ペンの帯・上の鉛筆でグループ名・起動時に最大化", async () => {
   // 起動時に最大化を呼んでいる(xvfb には窓の管理が無いので、最大化した状態そのものは実機で確かめる)
-  expect(await app.evaluate(() => (globalThis as { __thinkdrawMaximizeCalled?: boolean }).__thinkdrawMaximizeCalled)).toBe(true);
+  expect(await app.evaluate(() => (globalThis as { __bresutoMaximizeCalled?: boolean }).__bresutoMaximizeCalled)).toBe(true);
   // 画像
   await page.mouse.click(400, 300, { button: "right" });
   const chooser = page.waitForEvent("filechooser");
@@ -1862,7 +1862,7 @@ test("2026-11-25: タロット解説書を、アプリの中でそのまま読�
   await expect(fr.locator(".page").first()).toBeVisible();
   expect(await fr.locator(".page").count()).toBe(144);
   await expect(fr.locator(".page").first()).toContainText("タロット解説書");
-  await expect(fr.locator("body")).not.toContainText("ThinkDraw");
+  await expect(fr.locator("body")).not.toContainText("BRESUTO");
   await expect(fr.locator(".depict").first()).toContainText("若者");
   await expect.poll(() => fr.locator(".ctop img").first().evaluate((i) => (i as HTMLImageElement).naturalWidth)).toBeGreaterThan(100);
   expect(await fr.locator("h4", { hasText: "逆位置の意味" }).count()).toBe(78);

@@ -2145,7 +2145,7 @@ export class Canvas {
     refClip = ids.map((id) => ({ id: pick(id), ...(this.v.itemPos(this.group, id) ?? { x: 0, y: 0 }) }));
     refCutFrom = cut ? this.group : null;
     // システムのコピーには Markdown を入れる(外のエディタや AI にそのまま貼れる。2026-11-24 統合仕様 2)。
-    // ThinkDraw の中で貼ると、同じ文字なので引用(切り取りなら移動)になる。外で別の物をコピーすると、文字が変わるので使わない
+    // BRESUTO の中で貼ると、同じ文字なので引用(切り取りなら移動)になる。外で別の物をコピーすると、文字が変わるので使わない
     refClipMark = selectionToMarkdown(this.v, this.group, ids).trim() || (cut ? T.cutMark : T.copiedMark)(ids.length);
     void navigator.clipboard?.writeText(refClipMark).catch(() => {});
     setClip({ kind: "nodes" }, refClipMark);

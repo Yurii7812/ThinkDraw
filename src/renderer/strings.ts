@@ -31,7 +31,7 @@ export const T = {
   customNamePh: "例: 朝の問い",
   customLines: "カード(1 行 1 枚)",
   customLinesPh: "感謝: 今日ありがたいと思ったことは?\n体: 今、体はどう感じている?\n一番大事なことは?",
-  customHelp: "「言葉: 問い」と書くと、札には言葉、選ぶと問いが出ます。問いだけでもかまいません。保存先はこのフォルダの .thinkdraw/prompt-sets.json。",
+  customHelp: "「言葉: 問い」と書くと、札には言葉、選ぶと問いが出ます。問いだけでもかまいません。保存先はこのフォルダの .bresuto/prompt-sets.json。",
   customDelete: "この種類を消す",
   customSaved: (n: string) => `「${n}」を保存しました`,
   tabClose: "タブを閉じる",

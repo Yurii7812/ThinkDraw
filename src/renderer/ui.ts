@@ -1,12 +1,12 @@
 // 画面の小さな部品: 要素の作成・知らせ・右クリックのメニュー
-import type { ThinkDrawApi } from "../main/preload";
+import type { BresutoApi } from "../main/preload";
 
 declare global {
   interface Window {
-    thinkdraw: ThinkDrawApi;
+    bresuto: BresutoApi;
   }
 }
-export const api = (): ThinkDrawApi => window.thinkdraw;
+export const api = (): BresutoApi => window.bresuto;
 
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,

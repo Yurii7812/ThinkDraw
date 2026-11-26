@@ -280,7 +280,7 @@ export const PROMPT_SETS: PromptSet[] = DEF.map((s) => ({
 export const PROMPT_ITEMS: PromptItem[] = PROMPT_SETS.flatMap((s) => s.items);
 export const PROMPT_BY_ID: Record<string, PromptItem> = Object.fromEntries(PROMPT_ITEMS.map((p) => [p.id, p]));
 
-// ---- 自分で作る種類(2026-11-24)。vault の .thinkdraw/prompt-sets.json に保存。ID は my-<連番>、カードは my-<連番>-<行> ----
+// ---- 自分で作る種類(2026-11-24)。vault の .bresuto/prompt-sets.json に保存。ID は my-<連番>、カードは my-<連番>-<行> ----
 export const CUSTOM_GROUP = "自分の種類";
 export const CUSTOM_FILE = "prompt-sets.json";
 export interface CustomPromptSet {

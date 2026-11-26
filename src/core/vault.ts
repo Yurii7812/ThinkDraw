@@ -84,7 +84,7 @@ export class Vault {
     this.broken.length = 0;
     for (const f of files) {
       const id = f.name.replace(/\.md$/, "");
-      if (id !== ROOT_ID && !ID_RE.test(id)) continue; // ThinkDraw のノードではない .md
+      if (id !== ROOT_ID && !ID_RE.test(id)) continue; // BRESUTO のノードではない .md
       try {
         const n = parseNode(f.content, id);
         this.nodes.set(id, n);

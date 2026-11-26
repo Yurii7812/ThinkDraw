@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 
 function headlessEnv(): Record<string, string> {
-  if (!process.env.THINKDRAW_HEADLESS) throw new Error("画面の試験は npm run test:e2e で(xvfb の中で)動かしてください");
+  if (!process.env.BRESUTO_HEADLESS) throw new Error("画面の試験は npm run test:e2e で(xvfb の中で)動かしてください");
   const env = { ...process.env } as Record<string, string>;
   delete env.WAYLAND_DISPLAY;
   delete env.ELECTRON_OZONE_PLATFORM_HINT;
@@ -29,7 +29,7 @@ function sheet(name: string, id: string): string {
 async function launch() {
   app = await electron.launch({
     args: ["--ozone-platform=x11", "."],
-    env: { ...headlessEnv(), THINKDRAW_VAULT: vault, THINKDRAW_USERDATA: userData, THINKDRAW_TEST: "1", THINKDRAW_PICK_FILES: JSON.stringify(files) },
+    env: { ...headlessEnv(), BRESUTO_VAULT: vault, BRESUTO_USERDATA: userData, BRESUTO_TEST: "1", BRESUTO_PICK_FILES: JSON.stringify(files) },
   });
   page = await app.firstWindow();
   await page.setViewportSize({ width: 1280, height: 800 });

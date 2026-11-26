@@ -1,4 +1,4 @@
-/* ThinkDraw の見た目。色はすべて :root の変数(ライト/ダーク) */
+/* BRESUTO の見た目。色はすべて :root の変数(ライト/ダーク) */
 :root {
   --bg: #fbfbfa;
   --canvas: #f6f6f4;

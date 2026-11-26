@@ -9,7 +9,7 @@ import { DEFAULT_CROP, PaperStore, type CropSettings } from "./paperio";
 
 // 試験のときは、利用者の設定・フォルダに触らないよう、環境変数で場所を差し替える
 // 設定の置き場所: ~/.config/bresuto(2026-11-26 に ThinkDraw から改名。前の ~/.config/thinkdraw があれば最初の起動で写す)
-if (process.env.THINKDRAW_USERDATA) app.setPath("userData", process.env.THINKDRAW_USERDATA);
+if (process.env.BRESUTO_USERDATA) app.setPath("userData", process.env.BRESUTO_USERDATA);
 else {
   const dir = path.join(app.getPath("appData"), "bresuto");
   const old = path.join(app.getPath("appData"), "thinkdraw");
@@ -23,7 +23,7 @@ else {
   app.setPath("userData", dir);
 }
 // 画面の試験(xvfb)では、窓が隠れていると見なされて描画が止まることがあるので、止めないようにする
-if (process.env.THINKDRAW_TEST) {
+if (process.env.BRESUTO_TEST) {
   app.commandLine.appendSwitch("ozone-platform", "x11"); // 試験の窓は xvfb の中だけに出す
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
@@ -74,7 +74,7 @@ async function openVault(dir: string): Promise<string> {
   io = new FsVaultIO(dir);
   await fs.mkdir(dir, { recursive: true });
   const c = await readConfig();
-  if (!process.env.THINKDRAW_VAULT) await writeConfig({ ...c, lastFolder: dir });
+  if (!process.env.BRESUTO_VAULT) await writeConfig({ ...c, lastFolder: dir });
   return dir;
 }
 
@@ -95,7 +95,7 @@ function startWatch(): void {
   });
 }
 
-// ---------- URL の題(通信が必要。結果は .thinkdraw/ にキャッシュ) ----------
+// ---------- URL の題(通信が必要。結果は .bresuto/ にキャッシュ) ----------
 const URL_CACHE = "url-cache.json";
 let urlCache: Record<string, { title: string; at: string }> | null = null;
 async function urlTitle(url: string): Promise<string | null> {
@@ -142,7 +142,7 @@ function registerIpc(): void {
   ipcMain.handle("config:set", async (_e, patch: Config) => writeConfig({ ...(await readConfig()), ...patch }));
 
   ipcMain.handle("vault:initial", async () => {
-    const forced = process.env.THINKDRAW_VAULT;
+    const forced = process.env.BRESUTO_VAULT;
     if (forced) return openVault(forced);
     const c = await readConfig();
     if (c.lastFolder && existsSync(c.lastFolder)) return openVault(c.lastFolder);
@@ -161,7 +161,7 @@ function registerIpc(): void {
   ipcMain.handle("vault:writeApp", (_e, name: string, content: string) => needIO().writeAppFile(name, content));
   ipcMain.handle("vault:saveAsset", (_e, ext: string, data: Uint8Array) => needIO().saveAsset(ext, data));
   ipcMain.handle("export:save", async (_e, name: string, label: string, exts: string[], data: string | Uint8Array) => {
-    const forced = process.env.THINKDRAW_EXPORT_DIR; // 試験: 窓を出さず、この場所へ書く
+    const forced = process.env.BRESUTO_EXPORT_DIR; // 試験: 窓を出さず、この場所へ書く
     let file: string;
     if (forced) file = path.join(forced, path.basename(name));
     else {
@@ -227,12 +227,12 @@ function registerIpc(): void {
   });
   ipcMain.handle("paper:pickFiles", async () => {
     // 試験では選ぶ窓を出さず、決めたファイルを使う
-    if (process.env.THINKDRAW_PICK_FILES) return JSON.parse(process.env.THINKDRAW_PICK_FILES) as string[];
+    if (process.env.BRESUTO_PICK_FILES) return JSON.parse(process.env.BRESUTO_PICK_FILES) as string[];
     const r = await dialog.showOpenDialog(win!, { properties: ["openFile", "multiSelections"], filters: [{ name: "PDF・画像", extensions: ["pdf", "jpg", "jpeg", "png", "tif", "tiff", "webp"] }] });
     return r.canceled ? [] : r.filePaths;
   });
   ipcMain.handle("paper:export", async () => {
-    if (process.env.THINKDRAW_EXPORT_DIR) return { dir: process.env.THINKDRAW_EXPORT_DIR, n: await needPaper().exportTo(path.join(process.env.THINKDRAW_EXPORT_DIR, "紙PKM")) };
+    if (process.env.BRESUTO_EXPORT_DIR) return { dir: process.env.BRESUTO_EXPORT_DIR, n: await needPaper().exportTo(path.join(process.env.BRESUTO_EXPORT_DIR, "紙PKM")) };
     const memo = path.join(app.getPath("userData"), "last-export-dir.txt");
     const last = await fs.readFile(memo, "utf8").then((t) => t.trim()).catch(() => "");
     const r = await dialog.showOpenDialog(win!, { title: "紙PKM の書き出し先", properties: ["openDirectory", "createDirectory"], ...(last && existsSync(last) ? { defaultPath: last } : {}) });
@@ -262,7 +262,7 @@ function createWindow(): void {
   w0.once("ready-to-show", () => {
     w0.maximize();
     w0.show();
-    (globalThis as { __thinkdrawMaximizeCalled?: boolean }).__thinkdrawMaximizeCalled = true; // 試験用(xvfb には窓の管理が無く、最大化そのものは確かめられない)
+    (globalThis as { __bresutoMaximizeCalled?: boolean }).__bresutoMaximizeCalled = true; // 試験用(xvfb には窓の管理が無く、最大化そのものは確かめられない)
   });
   Menu.setApplicationMenu(null);
   win.loadFile(path.join(__dirname, "../renderer/index.html"));
@@ -288,7 +288,7 @@ function createWindow(): void {
     });
     win!.webContents.send("app:flush");
   });
-  if (process.env.THINKDRAW_DEVTOOLS) win.webContents.openDevTools();
+  if (process.env.BRESUTO_DEVTOOLS) win.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {

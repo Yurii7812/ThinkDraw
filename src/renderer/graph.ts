@@ -70,7 +70,7 @@ export class GraphPanel {
     }
   }
 
-  /** 構造が変わったときだけ計算し直す。計算した位置は .thinkdraw/graph-layout.json に保存 */
+  /** 構造が変わったときだけ計算し直す。計算した位置は .bresuto/graph-layout.json に保存 */
   async render(): Promise<void> {
     if (!this.el.isConnected || this.el.offsetParent === null) return;
     await this.loadCache();
