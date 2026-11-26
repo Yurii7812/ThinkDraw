@@ -29,7 +29,8 @@ DESKTOP
 # 前の名前(ThinkDraw)で入れた物を消す
 rm -f "$HOME/.local/bin/thinkdraw" "$HOME/.local/share/applications/thinkdraw.desktop" "$HOME/.local/share/icons/hicolor/scalable/apps/thinkdraw.svg"
 for s in 16 24 32 48 64 128 256 512; do rm -f "$HOME/.local/share/icons/hicolor/${s}x${s}/apps/thinkdraw.png"; done
-gtk-update-icon-cache -q "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+# index.theme が無いと失敗して古い一覧が残り、アイコンが変わらないので -f --ignore-theme-index
+gtk-update-icon-cache -q -f --ignore-theme-index "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 kbuildsycoca6 >/dev/null 2>&1 || kbuildsycoca5 >/dev/null 2>&1 || true
 echo "入れました: $HOME/.local/bin/bresuto と bresuto.desktop"
