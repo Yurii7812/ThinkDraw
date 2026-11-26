@@ -19,7 +19,7 @@ describe("記録の名前と種類", () => {
   });
   it("日付グループの名前: 先頭 10 文字が日付、その後の - より後ろ全部が題(題の中の - もそのまま)", () => {
     expect(parseDayGroup("2026-11-24")).toEqual({ date: "2026-11-24", title: "" });
-    expect(parseDayGroup("2026-11-24-BRESUTOの設計を考えた日")).toEqual({ date: "2026-11-24", title: "BRESUTOの設計を考えた日" });
+    expect(parseDayGroup("2026-11-24-bresutoの設計を考えた日")).toEqual({ date: "2026-11-24", title: "bresutoの設計を考えた日" });
     expect(parseDayGroup("2026-11-24-A-B-C")?.title).toBe("A-B-C");
     expect(parseDayGroup("2026-02-30")).toBeNull();
     expect(parseDayGroup("2026-11")).toBeNull();

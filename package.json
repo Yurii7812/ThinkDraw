@@ -1,8 +1,8 @@
 {
   "name": "bresuto",
-  "productName": "BRESUTO",
+  "productName": "bresuto",
   "version": "0.1.0",
-  "description": "BRESUTO(ブレスト。旧 ThinkDraw): ページが一つだけの無限キャンバスで考えを書き散らし、束ねて整理するアプリ",
+  "description": "bresuto(ブレスト。旧 ThinkDraw): ページが一つだけの無限キャンバスで考えを書き散らし、束ねて整理するアプリ",
   "main": "dist/main/main.js",
   "desktopName": "bresuto.desktop",
   "private": true,

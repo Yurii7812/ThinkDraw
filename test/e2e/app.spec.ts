@@ -585,11 +585,11 @@ test("2026-11-24 統合仕様 10〜15: 日付グループの題・Ctrl+D は題�
   await expect(page.locator(`.rec-cell.has[data-date='${ymd}']`)).toHaveCount(1);
   // 題をここで直すと、グループの名前に入る
   await page.locator(".rec-sw", { hasText: "この日" }).click(); // しるしを選ぶと一覧になるので、この日へ
-  await page.locator("input.rec-day-name").fill("BRESUTO-設計");
+  await page.locator("input.rec-day-name").fill("bresuto-設計");
   await page.locator("input.rec-day-name").press("Enter");
   await page.locator(".rec-mk[data-marker='']").click(); // 絞り込みをやめる(次に開いたときも この日 から)
   await settle();
-  expect(titles()).toContain(`${ymd}-BRESUTO-設計`);
+  expect(titles()).toContain(`${ymd}-bresuto-設計`);
   // 同じ日・同じ種類のノートを 2 枚
   for (let k = 0; k < 2; k++) {
     if (!(await page.locator(".records").count())) await page.keyboard.press("Control+j");
@@ -618,7 +618,7 @@ test("2026-11-24 統合仕様 10〜15: 日付グループの題・Ctrl+D は題�
   // ボードを開く・Esc で閉じる
   await page.keyboard.press("Control+j");
   await page.locator(".rec-open-day").click();
-  await expect(page.locator(".group-title")).toHaveText(`${ymd}-BRESUTO-設計`);
+  await expect(page.locator(".group-title")).toHaveText(`${ymd}-bresuto-設計`);
   await page.keyboard.press("Control+j");
   await page.keyboard.press("Escape");
   await expect(page.locator(".records")).toHaveCount(0);
@@ -1257,7 +1257,7 @@ test("2026-11-24 統合仕様 1・2・7: Ctrl+←/→ の履歴(ボードの中�
   await page.locator(".node", { hasText: "外へ貼る文" }).click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+c");
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe("外へ貼る文");
-  // BRESUTO の中で貼ると引用(同じボードなのでボードの中の引用)
+  // bresuto の中で貼ると引用(同じボードなのでボードの中の引用)
   await page.keyboard.press("Escape");
   await page.keyboard.press("Control+q");
   await expect(page.locator(".node.alias")).toHaveCount(1);
@@ -1862,7 +1862,7 @@ test("2026-11-25: タロット解説書を、アプリの中でそのまま読�
   await expect(fr.locator(".page").first()).toBeVisible();
   expect(await fr.locator(".page").count()).toBe(144);
   await expect(fr.locator(".page").first()).toContainText("タロット解説書");
-  await expect(fr.locator("body")).not.toContainText("BRESUTO");
+  await expect(fr.locator("body")).not.toContainText("bresuto");
   await expect(fr.locator(".depict").first()).toContainText("若者");
   await expect.poll(() => fr.locator(".ctop img").first().evaluate((i) => (i as HTMLImageElement).naturalWidth)).toBeGreaterThan(100);
   expect(await fr.locator("h4", { hasText: "逆位置の意味" }).count()).toBe(78);

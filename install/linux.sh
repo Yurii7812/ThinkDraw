@@ -1,5 +1,5 @@
 #!/bin/sh
-# ランチャー(アプリの検索)から「BRESUTO」、端末から「bresuto」で起動できるようにする
+# ランチャー(アプリの検索)から「bresuto」、端末から「bresuto」で起動できるようにする
 # (2026-11-26 に ThinkDraw から改名。前の thinkdraw のコマンド・ランチャー・アイコンは消す)
 set -e
 DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
@@ -15,14 +15,14 @@ ln -sf "$DIR/install/bresuto.sh" "$HOME/.local/bin/bresuto"
 cat > "$HOME/.local/share/applications/bresuto.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=BRESUTO
+Name=bresuto
 GenericName=ブレスト・ノート
 Comment=無限キャンバスに書き散らして、束ねて整理する
 Exec="$HOME/.local/bin/bresuto" %U
 Icon=bresuto
 Terminal=false
 Categories=Office;Utility;
-Keywords=bresuto;BRESUTO;ブレスト;ノート;タロット;thinkdraw;
+Keywords=bresuto;bresuto;ブレスト;ノート;タロット;thinkdraw;
 StartupNotify=true
 StartupWMClass=bresuto
 DESKTOP

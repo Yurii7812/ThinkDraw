@@ -112,7 +112,7 @@ async function urlTitle(url: string): Promise<string | null> {
   try {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), 6000);
-    const res = await net.fetch(url, { signal: ctl.signal, headers: { "User-Agent": "Mozilla/5.0 BRESUTO" } });
+    const res = await net.fetch(url, { signal: ctl.signal, headers: { "User-Agent": "Mozilla/5.0 bresuto" } });
     clearTimeout(t);
     if (!res.ok || !(res.headers.get("content-type") ?? "").includes("html")) return null;
     const html = (await res.text()).slice(0, 300_000);
@@ -251,7 +251,7 @@ function createWindow(): void {
   win = new BrowserWindow({
     width: 1280,
     height: 820,
-    title: "BRESUTO",
+    title: "bresuto",
     icon: path.join(__dirname, "../../assets/icon.png"),
     backgroundColor: "#1e1e1e",
     show: false,

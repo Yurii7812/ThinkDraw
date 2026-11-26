@@ -1,5 +1,5 @@
 #!/bin/sh
-# BRESUTO の起動: 作業フォルダを、その場でまとめてから起動する(古い複製を起動しないように)
+# bresuto の起動: 作業フォルダを、その場でまとめてから起動する(古い複製を起動しないように)
 DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 NODE="$(command -v node || echo "$HOME/.local/bin/node")"
 cd "$DIR" || exit 1

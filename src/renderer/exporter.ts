@@ -191,7 +191,7 @@ export type ExportKind = "md" | "png" | "jpg" | "html" | "copy";
 /** sel を渡すと、選んでいる物(とペンの線)だけを書き出す */
 export async function exportGroup(v: Vault, group: string, canvas: Canvas, kind: ExportKind, sel?: ExportSel, img: ImageOpts = DEFAULT_IMAGE): Promise<void> {
   const g = v.get(group);
-  const base = ((group === ROOT_ID ? g?.title || "ホーム" : g ? labelOf(g) : "BRESUTO") || "BRESUTO").replace(/[\\/:*?"<>|\n]/g, "_").slice(0, 60);
+  const base = ((group === ROOT_ID ? g?.title || "ホーム" : g ? labelOf(g) : "bresuto") || "bresuto").replace(/[\\/:*?"<>|\n]/g, "_").slice(0, 60);
   const name = sel ? `${base}-選択` : base;
   const md = () => groupToMarkdown(v, group, 1, new Set(), sel ? new Set(sel.ids) : undefined);
   try {

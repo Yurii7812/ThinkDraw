@@ -1,7 +1,7 @@
 // UI の文字は、すべてここに置く(後から翻訳できるように)。いまは日本語のみ。
 
 export const T = {
-  appName: "BRESUTO",
+  appName: "bresuto",
   untitled: "(無題)",
   untitledGroup: "(名前なし)",
   home: "ホーム",
@@ -318,16 +318,16 @@ export const T = {
   refMark: "引用(ほかのグループの物を見せている)",
   pickQuoteTitle: "引用する先のグループを選ぶ",
   pickRefTitle: "ここに引用するものを選ぶ",
-  copiedMark: (n: number) => `BRESUTO: ${n} 件をコピー(Ctrl+V で複製・Ctrl+Q で引用として貼ります)`,
+  copiedMark: (n: number) => `bresuto: ${n} 件をコピー(Ctrl+V で複製・Ctrl+Q で引用として貼ります)`,
   copiedToast: (n: number) => `${n} 件をコピーしました(Markdown)。ここで Ctrl+V すると引用、ほかのアプリに貼ると文章になります。`,
-  cutMark: (n: number) => `BRESUTO: ${n} 件を切り取り(Ctrl+V で貼った所へ移します)`,
+  cutMark: (n: number) => `bresuto: ${n} 件を切り取り(Ctrl+V で貼った所へ移します)`,
   cutToast: (n: number) => `${n} 件を切り取りました。移したい所で Ctrl+V(やめるのは Esc)。`,
   pastedRefs: (n: number) => `${n} 件を引用として貼りました。`,
   pastedCut: (n: number) => `${n} 件を移しました。`,
   pastedCopies: (n: number) => `${n} 件を複製して貼りました(引用は Ctrl+Q)。`,
   pastedGroupsSkipped: (n: number) => `グループ ${n} 件は複製できないので貼っていません(Ctrl+Q で引用できます)。`,
   pastedGroupsOnly: "グループは複製できません。Ctrl+Q で引用として貼れます。",
-  quoteNothing: "引用できる物がありません(BRESUTO の中で Ctrl+C した物を、Ctrl+Q で引用として貼れます)",
+  quoteNothing: "引用できる物がありません(bresuto の中で Ctrl+C した物を、Ctrl+Q で引用として貼れます)",
   citePlaced: "ノートの文章を引用しました(押すと元の所へ)",
   citeTip: (t: string) => `「${t}」からの引用。押すと元の所を開く`,
   citeQuotedInNote: "引用しました(↩ で元の所へ)",

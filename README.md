@@ -1,4 +1,4 @@
-# BRESUTO(ブレスト)
+# bresuto(ブレスト)
 
 2026-11-26 に ThinkDraw から改名。起動のコマンドは `bresuto`。
 
@@ -12,7 +12,7 @@
 ```sh
 npm install
 npm start          # まとめてから起動
-sh install/linux.sh   # ランチャー(アプリの検索)から「BRESUTO」、端末から「bresuto」で起動できるようにする
+sh install/linux.sh   # ランチャー(アプリの検索)から「bresuto」、端末から「bresuto」で起動できるようにする
 ```
 
 `install/linux.sh` は `~/.local/bin/bresuto`(この作業フォルダの `install/bresuto.sh` へのリンク)と `bresuto.desktop` を入れる(前の名前の `thinkdraw` は消す)。設定は `~/.config/bresuto/`(前の `~/.config/thinkdraw/` は最初の起動で写す。前のフォルダはそのまま残る)。起動のたびに作業フォルダをまとめ直すので、変更はすぐ効く。
