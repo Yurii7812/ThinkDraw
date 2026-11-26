@@ -2,7 +2,8 @@
 import { NEW_LINK_KINDS, ROOT_ID } from "../core/types";
 import { kindPreview } from "./edgeshape";
 import { Vault } from "../core/vault";
-import { isImageFile, Canvas, PRESET_COLORS, refClipboard, type PenState, type View } from "./canvas";
+import { isCheckOrTable } from "./mdschema";
+import { isImageFile, Canvas, groupPrefs, PRESET_COLORS, refClipboard, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
 import type { GraphMode } from "./graph";
 import { DEFAULT_IMAGE, exportGroup, type ExportKind, type ImageOpts } from "./exporter";
@@ -61,6 +62,8 @@ interface Config {
   edgeColors?: Record<string, number>;
   /** 画像の書き出しの画質(2026-11-25) */
   image?: Partial<ImageOpts>;
+  /** 束ねたときに題にする文字の背景の色(0 = しない。無ければ赤 = 1。2026-11-26 修正13) */
+  groupTitleFill?: number;
 }
 /** 線の種類のいつもの色の初期値(2026-11-25 利用者の設定から): 矢印 6・点線 4・両矢印 1・部分と全体 5・通常の線は色なし */
 const DEFAULT_EDGE_COLORS: Record<string, number> = { arrow: 6, dashed: 4, double: 1, part: 5 };
@@ -140,6 +143,7 @@ class App {
     this.config = (await api().getConfig()) ?? {};
     // 線の種類のいつもの色の初期値(利用者が決めた色。2026-11-25 修正11)。設定で変えたらそちら
     if (!this.config.edgeColors) this.config.edgeColors = { ...DEFAULT_EDGE_COLORS };
+    groupPrefs.titleFill = this.config.groupTitleFill ?? 1;
     this.draw = { ...DEFAULT_CONFIG, ...(this.config.draw ?? {}) };
     this.applyTheme();
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => this.applyTheme());
@@ -1089,6 +1093,14 @@ class App {
   // ---------- ポップアップ ----------
   openBody(id: string): void {
     if (!this.vault.exists(id)) return;
+    // 表・チェックリストは大画面で開かない。そのボードへ行って、その場で書く(2026-11-26 修正13)
+    const tn = this.vault.get(id)!;
+    if (tn.type === "note" && isCheckOrTable(tn.body)) {
+      if (!this.vault.itemPos(this.canvas.group, id)) this.goToNode(id, false, true);
+      this.canvas.renderNow();
+      this.canvas.openNote(id);
+      return;
+    }
     // ノートは最初から大画面で開く(2026-11-22 利用者の希望)。ほかは小さいポップアップ
     const expanded = this.vault.get(id)!.type === "note";
     this.closePopup();
@@ -1655,6 +1667,22 @@ class App {
     const drawSet = h("button", { class: "btn", text: T.drawSettings });
     const lineSet = h("button", { class: "btn", text: T.lineSettings });
     lineSet.addEventListener("click", () => this.lineSettings());
+    // 束ねたときの題にする背景の色(しない・1〜8)
+    const gtRow = h("div", { class: "swatches gt-swatches", title: T.groupTitleHelp });
+    const drawGt = () =>
+      gtRow.replaceChildren(
+        ...Array.from({ length: PRESET_COLORS + 1 }, (_, c) => {
+          const b = h("button", { class: `sw c${c}${groupPrefs.titleFill === c ? " active" : ""}`, title: c ? `${T.fill} ${c}` : T.groupTitleOff, "aria-label": c ? `${T.fill} ${c}` : T.groupTitleOff, "data-gt": String(c) });
+          b.addEventListener("click", () => {
+            groupPrefs.titleFill = c;
+            this.config.groupTitleFill = c;
+            api().setConfig({ groupTitleFill: c });
+            drawGt();
+          });
+          return b;
+        }),
+      );
+    drawGt();
     const open = h("button", { class: "btn", text: T.openFolder });
     open.addEventListener("click", async () => {
       const d = await api().chooseVault();
@@ -1688,6 +1716,7 @@ class App {
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.theme }), ...radios),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.draw }), drawSet),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.lineSettingsShort }), lineSet),
+      h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.groupTitleSet }), gtRow, h("span", { class: "muted small", text: T.groupTitleHelp })),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.vaultLabel }), h("code", { text: this.dir }), open),
       h("div", { class: "modal-title sub", text: T.shortcutsTitle }),
       table,
@@ -1734,11 +1763,8 @@ class App {
         c.pasteRefs();
         return;
       }
-      if (!files?.length) {
-        // 2 行以上の文字(表・チェックリストの形)を貼ったら、表・チェックリストにする
-        if (!c.readOnly && c.pasteText(e.clipboardData?.getData("text/plain") ?? "")) e.preventDefault();
-        return;
-      }
+      // 何もない所に文字を貼っても何もしない(表・チェックリストへの貼り付けは、その中で。2026-11-26 修正13)
+      if (!files?.length) return;
       e.preventDefault();
       const p = c.visibleCenter();
       void c.attachFilesAt(files, p.x, p.y);
@@ -1874,6 +1900,28 @@ class App {
     });
   }
 }
+
+// ホイールクリック(中ボタン)で、選んでいた文字が貼られないようにする(Linux の「選択したものを貼る」。2026-11-26 修正13)。
+// 中ボタンでタブを開く・閉じるのは auxclick なので、そのまま使える
+let middleUpAt = 0;
+addEventListener(
+  "mouseup",
+  (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    middleUpAt = Date.now();
+  },
+  true,
+);
+addEventListener(
+  "paste",
+  (e) => {
+    if (Date.now() - middleUpAt > 400) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  },
+  true,
+);
 
 const app = new App();
 (window as unknown as { __app: App }).__app = app; // 画面の試験から中を覗くため

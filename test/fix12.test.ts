@@ -1,18 +1,9 @@
-// 2026-11-26 修正12: 貼り付けで表・チェックリスト / 検索は上位のグループが先
+// 2026-11-26 修正12: 検索は上位のグループが先(貼り付けは修正13 で作り直し → fix13.test.ts)
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Vault } from "../src/core/vault";
 import { ROOT_ID } from "../src/core/types";
 import { searchTiered } from "../src/core/search";
-import { bodyFromPaste } from "../src/renderer/mdschema";
 import { openVault, tempDir } from "./helpers";
-
-describe("貼った文字から表・チェックリスト", () => {
-  it("1 行だけなら何もしない", () => expect(bodyFromPaste("あ")).toBeNull());
-  it("タブ区切りは表", () => expect(bodyFromPaste("名前\t値\nA\t1")).toBe("| 名前 | 値 |\n| --- | --- |\n| A | 1 |\n"));
-  it("CSV は表(囲みのカンマも)", () => expect(bodyFromPaste('a,b\n"x,y",2')).toBe("| a | b |\n| --- | --- |\n| x,y | 2 |\n"));
-  it("空白で区切って同じ数なら表", () => expect(bodyFromPaste("a b c\n1 2 3")).toContain("| 1 | 2 | 3 |"));
-  it("数が揃わない複数行は、1 行ずつのチェックリスト", () => expect(bodyFromPaste("牛乳を買う\n- 卵 を 2 つ\n3. 掃除")).toBe("- [ ] 牛乳を買う\n- [ ] 卵 を 2 つ\n- [ ] 掃除\n"));
-});
 
 describe("検索は上位のグループが先", () => {
   let cleanup = () => {};

@@ -11,10 +11,11 @@ import { cardFace, faceHeight } from "./cardface";
 import { openPicker } from "./picker";
 import { PT, T } from "./strings";
 import { paperStore } from "./paperstore";
-import { bodyFromPaste, isCheckOrTable, makeChecklist, makeTable, renderBodyDom, schema as mdSchema, serializeMarkdown, toggleTask } from "./mdschema";
+import { isCheckOrTable, makeChecklist, makeTable, renderBodyDom, schema as mdSchema, serializeMarkdown, toggleTask } from "./mdschema";
 import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
 import { pickIslands, placeIslands } from "../core/islands";
 import { selectionToMarkdown } from "../core/export";
+import { autoGroupTitle } from "../core/grouptitle";
 import { allTags, splitTags } from "../core/tags";
 
 export interface View {
@@ -111,6 +112,8 @@ const LABEL_SIZES: [string, number][] = [["小", 12], ["ふつう(文章と同�
 /** Tab・Enter で次の文字を置くときに見込む幅 */
 const SPOT_W = 110;
 export const PRESET_COLORS = 8;
+/** 束ねたときに題にする文字の背景の色(0 = 切る)。アプリの設定から入れる(2026-11-26 修正13。初期値は赤 = 1) */
+export const groupPrefs = { titleFill: 1 };
 
 /** Ctrl+C でコピーした物(どの画面のキャンバスからでも貼れる)と、システムのコピーに入れた目印の文字 */
 let refClip: { id: string; x: number; y: number; w?: number }[] = [];
@@ -856,27 +859,15 @@ export class Canvas {
   }
 
   /**
-   * 書いている間、文字がほかの物や線にかぶらないように(2026-11-24 利用者)。
-   * 左に置いた文字は左へ伸ばす。それでもかぶったら、今の大きさで置き直す
+   * 書いている間は文字を動かさない(2026-11-26 修正13。前はかぶるたびに余白へ置き直していた)。
+   * かぶっても、書いている文字がいちばん手前(下の文字・線は隠れる)。書き終えたら fitNew で余白へ。
+   * 左に置いた文字は、右のはしをそのままに左へ伸ばす
    */
   private keepDraftClear(): void {
     const d = this.draft;
     if (!d) return;
-    const w = d.ta.offsetWidth, hh = d.ta.offsetHeight;
+    const w = d.ta.offsetWidth;
     if (d.right !== undefined) d.x = Math.round(d.right - w);
-    const a = d.parent ? this.rects.get(d.parent) : undefined;
-    if (a && w > 0) {
-      const me = { x: d.x, y: d.y, w, h: hh };
-      const others = [...this.tabObstacles(d.parent!, new Set(d.id ? [d.id] : [])), ...this.edgeBoxes(d.parent!)];
-      if (gap(me, a) < 12 || others.some((o) => gap(me, o) < 4)) {
-        const fr = this.frameIds();
-        const boxes = [...this.rects.entries()].filter(([i]) => i !== d.parent && i !== d.id && !fr.has(i)).map(([, b]) => b);
-        const p = placeAround(a, others, { size: { w: w + 20, h: hh }, lineBlockers: boxes, rand: () => 0.5 });
-        d.x = p.x + 10;
-        d.y = p.y;
-        d.right = p.x + 10 + w / 2 < a.x ? d.x + w : undefined;
-      }
-    }
     d.ta.style.left = d.x + "px";
     d.ta.style.top = d.y + "px";
   }
@@ -1667,7 +1658,7 @@ export class Canvas {
 
   /**
    * 文字: 1 回クリックですぐ書き直す(選ぶだけなら Ctrl+クリックか範囲選択)。
-   * グループ・ノート・カード: 1 回目 = 選ぶ、選んであるものをもう一度 = 開く。
+   * グループ・ノート: 1 回クリックで開く。カード: 1 回目 = 選ぶ、選んであるものをもう一度 = 開く。
    */
   private clickNode(id: string, ctrl: boolean, target: Element, wasSelected: boolean): void {
     if (ctrl) {
@@ -1679,6 +1670,8 @@ export class Canvas {
     }
     const node = this.v.get(id);
     if (!node) return;
+    // キャンバスの上のチェックの箱: 押すだけ(開かない。ノートは 1 回クリックで開くようになったため。2026-11-26 修正13)
+    if (target.closest(".task-box")) return;
     if (target.closest("[data-act=tree]")) {
       this.setSelection([id]);
       return this.host.groupTree?.(id, target.closest("[data-act=tree]")!);
@@ -1709,7 +1702,8 @@ export class Canvas {
       return this.open(id, target);
     }
     // グループは 1 回クリックで中へ(2026-11-24 利用者)。選ぶだけなら Ctrl+クリックか範囲選択
-    if (!wasSelected && node.type !== "group") {
+    // ノートも 1 回クリックで開く(2026-11-26 修正13)
+    if (!wasSelected && node.type !== "group" && node.type !== "note") {
       this.setSelection([id]);
       return;
     }
@@ -1722,7 +1716,12 @@ export class Canvas {
   openNote(id: string): void {
     const n = this.v.get(id);
     if (!n) return;
-    if (n.type === "note" && isCheckOrTable(n.body) && this.host.editInline && !this.readOnly) return this.startInline(id);
+    // 表・チェックリストは大画面のノートでは開かない(2026-11-26 修正13)。書けない画面では選ぶだけ
+    if (n.type === "note" && isCheckOrTable(n.body)) {
+      if (this.host.editInline && !this.readOnly) this.startInline(id);
+      else this.setSelection([id]);
+      return;
+    }
     this.host.openBody(id);
   }
   private startInline(id: string): void {
@@ -1732,7 +1731,7 @@ export class Canvas {
     const el = this.el.querySelector<HTMLElement>(`.node[data-id="${id}"]`);
     if (!el) {
       this.inline = null;
-      return this.host.openBody(id);
+      return;
     }
     el.querySelector(".cv-body")?.setAttribute("hidden", "");
     const mount = h("div", { class: "cv-edit" });
@@ -1962,14 +1961,15 @@ export class Canvas {
       } else {
         // 普通のノードの上に重ねた: その場でグループになる
         const tpos = this.v.itemPos(this.group, over)!;
+        const title = this.autoTitle([over, ...d.ids]);
         const g = this.v.tx(() => {
-          const g = this.v.bundle(this.group, [over, ...d.ids], "", d.strokes);
+          const g = this.v.bundle(this.group, [over, ...d.ids], title, d.strokes);
           this.v.move(this.group, [{ id: g.id, x: tpos.x, y: tpos.y }]);
           return g;
         });
         this.renderNow();
         this.setSelection([g.id]);
-        this.renameGroup(g.id);
+        if (!title) this.renameGroup(g.id);
       }
     } catch (err) {
       this.renderNow();
@@ -2207,10 +2207,19 @@ export class Canvas {
     const ids = [...this.selection];
     const strokes = [...this.strokeSel];
     if (!ids.length && !strokes.length) return;
-    const g = this.v.bundle(this.group, ids, "", strokes);
+    const title = this.autoTitle(ids);
+    const g = this.v.bundle(this.group, ids, title, strokes);
     this.renderNow();
     this.setSelection([g.id]);
-    this.renameGroup(g.id);
+    if (!title) this.renameGroup(g.id); // 題が決まったら、名前の入力は出さない(直すのは鉛筆か右クリック)
+  }
+  /** 束ねる物の中の、決めた色の背景の文字(左上のもの)。無ければ "" */
+  private autoTitle(ids: string[]): string {
+    const items = ids.flatMap((id) => {
+      const n = this.v.get(id), p = this.v.itemPos(this.group, id);
+      return n && p ? [{ type: n.type, title: n.title, fill: n.fill, file: n.file, paper: n.paper, x: p.x, y: p.y }] : [];
+    });
+    return autoGroupTitle(items, groupPrefs.titleFill);
   }
 
   /** 選んだ物の外接の箱(この画面の座標) */
@@ -2229,10 +2238,11 @@ export class Canvas {
     const strokes = [...this.strokeSel];
     const b = this.selBox(ids, strokes);
     if (!b) return;
-    const g = this.v.quoteGroup(this.group, ids, Math.round(b.x + b.w + 60), Math.round(b.y + b.h / 2 - 14), "", strokes);
+    const title = this.autoTitle(ids);
+    const g = this.v.quoteGroup(this.group, ids, Math.round(b.x + b.w + 60), Math.round(b.y + b.h / 2 - 14), title, strokes);
     this.renderNow();
     this.setSelection([g.id]);
-    this.renameGroup(g.id);
+    if (!title) this.renameGroup(g.id);
   }
 
   private frameIds(): Set<string> {
@@ -2515,14 +2525,6 @@ export class Canvas {
     }
     this.setSelection([n.id]);
     if (!pasted) this.openNote(n.id);
-  }
-  /** 貼った文字が表(タブ・CSV・空白区切り)か 2 行以上なら、表・チェックリストのノードにする。作ったら true */
-  pasteText(text: string): boolean {
-    const body = bodyFromPaste(text);
-    if (!body) return false;
-    const c = this.visibleCenter();
-    this.attachNodeAt(body.startsWith("|") ? "table" : "check", c.x - 60, c.y - 40, body);
-    return true;
   }
   /** 添付の選び方(右上の「添付」と空きの右クリックで共通) */
   attachItems(x: number, y: number): MenuItem[] {

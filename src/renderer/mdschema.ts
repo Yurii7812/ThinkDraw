@@ -355,44 +355,94 @@ export function openTasks(body: string): { text: string; index: number }[] {
   return out;
 }
 
-// ---------- 貼り付けた文字から作る(2026-11-26 修正12) ----------
-const cellMd = (t: string) => t.trim().replace(/\|/g, "\\|");
+// ---------- 表・チェックリストへの貼り付け(2026-11-26 修正13。前の「何もない所に貼ると表・チェックリスト」はやめた) ----------
 
-/** タブ・カンマ(「"」で囲んだ所も)・空白で区切った行の並び。どの行も同じ数(2 つ以上)に割れたときだけ */
-function splitRows(lines: string[]): string[][] | null {
-  const csv = (l: string): string[] => {
-    const out: string[] = [];
-    let cur = "", q = false;
-    for (let i = 0; i < l.length; i++) {
-      const c = l[i];
-      if (q) {
-        if (c === '"' && l[i + 1] === '"') (cur += '"', i++);
-        else if (c === '"') q = false;
-        else cur += c;
-      } else if (c === '"') q = true;
-      else if (c === ",") (out.push(cur), (cur = ""));
+const lineSplit = (text: string): string[] => text.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
+
+/** CSV の 1 行(「"」で囲んだ所のカンマ・「""」も) */
+function csvLine(l: string): string[] {
+  const out: string[] = [];
+  let cur = "", q = false;
+  for (let i = 0; i < l.length; i++) {
+    const c = l[i];
+    if (q) {
+      if (c === '"' && l[i + 1] === '"') (cur += '"', i++);
+      else if (c === '"') q = false;
       else cur += c;
-    }
-    out.push(cur);
-    return out;
-  };
-  const seps: ((l: string) => string[])[] = [(l) => l.split("\t"), csv, (l) => l.trim().split(/[ 　]+/)];
-  for (const f of seps) {
-    const rows = lines.map(f);
-    if (rows[0].length >= 2 && rows.every((r) => r.length === rows[0].length)) return rows;
+    } else if (c === '"') q = true;
+    else if (c === ",") (out.push(cur), (cur = ""));
+    else cur += c;
   }
-  return null;
+  out.push(cur);
+  return out;
 }
 
-/** 貼った文字を、表(タブ・CSV・空白区切り)かチェックリスト(2 行以上)の本文にする。どちらでもなければ null */
-export function bodyFromPaste(text: string): string | null {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n").filter((l) => l.trim());
-  if (lines.length < 2 || lines.length > 500) return null;
-  const rows = splitRows(lines);
-  if (rows) {
-    const [head, ...rest] = rows;
-    const line = (r: string[]) => "| " + r.map(cellMd).join(" | ") + " |";
-    return [line(head), "| " + head.map(() => "---").join(" | ") + " |", ...rest.map(line)].join("\n") + "\n";
-  }
-  return lines.map((l) => "- [ ] " + l.trim().replace(/^(?:[-*・●○□☐]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, "")).join("\n") + "\n";
+/** 貼った文字をセルの並びに割る: タブがあればタブ、無ければカンマ(CSV)、無ければ空白(どの行も同じ数に割れるときだけ)、それも無ければ 1 行 1 セル */
+export function splitCells(text: string): string[][] {
+  const lines = lineSplit(text);
+  if (lines.some((l) => l.includes("\t"))) return lines.map((l) => l.split("\t").map((x) => x.trim()));
+  if (lines.some((l) => l.includes(","))) return lines.map((l) => csvLine(l).map((x) => x.trim()));
+  const ws = lines.filter((l) => l.trim()).map((l) => l.trim().split(/[ 　]+/));
+  if (ws.length && ws[0].length >= 2 && ws.every((r) => r.length === ws[0].length)) return lines.map((l) => (l.trim() ? l.trim().split(/[ 　]+/) : [""]));
+  return lines.map((l) => [l.trim()]);
 }
+
+/** 表のセルの中で貼る: 今のセルから右・下へ埋める(足りなければ行・列を足す)。1 行で区切りも無い文字はふつうに貼る */
+export const pasteIntoTable = (text: string): Command => (state, dispatch) => {
+  const c = cellAt(state);
+  if (!c) return false;
+  // 1 行ならタブで割るときだけ(文の中の空白・カンマで割らない)
+  const one = lineSplit(text).length === 1;
+  const data = one ? [lineSplit(text)[0].split("\t").map((x) => x.trim())] : splitCells(text);
+  if (data.length === 1 && data[0].length === 1) return false;
+  if (dispatch) {
+    const rows = Math.max(c.table.childCount, c.row + data.length);
+    const cols = Math.max(c.table.child(0).childCount, c.col + Math.max(...data.map((r) => r.length)));
+    const out: PMNode[] = [];
+    for (let r = 0; r < rows; r++) {
+      const cells: PMNode[] = [];
+      for (let k = 0; k < cols; k++) {
+        const type = r === 0 ? schema.nodes.table_header : schema.nodes.table_cell;
+        const d = data[r - c.row]?.[k - c.col];
+        if (d !== undefined) cells.push(type.create(null, d ? schema.text(d) : null));
+        else {
+          const old = r < c.table.childCount && k < c.table.child(r).childCount ? c.table.child(r).child(k) : null;
+          cells.push(type.create(null, old?.content ?? null));
+        }
+      }
+      out.push(schema.nodes.table_row.create(null, cells));
+    }
+    const table = schema.nodes.table.create(null, out);
+    const tr = state.tr.replaceWith(c.tablePos, c.tablePos + c.table.nodeSize, table);
+    const lr = c.row + data.length - 1;
+    const lc = c.col + data[data.length - 1].length - 1;
+    cursorTo(tr, c.tablePos, table, lr, lc);
+    const end = tr.selection.$from.end();
+    dispatch(tr.setSelection(TextSelection.create(tr.doc, end)).scrollIntoView());
+  }
+  return true;
+};
+
+/** 箇条書き・番号・チェックの印を取る(空白はそのまま残す) */
+const stripMark = (l: string) => l.trim().replace(/^(?:[-*・●○□☐]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, "");
+
+/** チェックリストの項目の中で貼る: 改行ごとに 1 項目(空白で割らない)。1 行だけならふつうに貼る */
+export const pasteIntoChecklist = (text: string): Command => (state, dispatch) => {
+  const $f = state.selection.$from;
+  let d = $f.depth;
+  while (d > 0 && !($f.node(d).type === schema.nodes.list_item && $f.node(d).attrs.checked != null)) d--;
+  if (d <= 0) return false;
+  const lines = lineSplit(text).filter((l) => l.trim());
+  if (lines.length < 2) return false;
+  if (dispatch) {
+    const item = $f.node(d);
+    const items = lines.map((l) => schema.nodes.list_item.create({ checked: false }, [schema.nodes.paragraph.create(null, stripMark(l) ? schema.text(stripMark(l)) : null)]));
+    const empty = item.textContent.trim() === "" && item.childCount === 1;
+    const from = $f.before(d), to = $f.after(d);
+    const tr = empty ? state.tr.replaceWith(from, to, items) : state.tr.insert(to, items);
+    const start = empty ? from : to;
+    const endPos = start + items.reduce((a, n) => a + n.nodeSize, 0) - 2; // 最後の項目の段落の終わり
+    dispatch(tr.setSelection(TextSelection.create(tr.doc, endPos)).scrollIntoView());
+  }
+  return true;
+};

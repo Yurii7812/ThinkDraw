@@ -13,7 +13,7 @@ import type { Vault } from "../core/vault";
 import { cardName } from "../decks";
 import { openPicker } from "./picker";
 import { T } from "./strings";
-import { backspaceEmpty, addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
+import { backspaceEmpty, pasteIntoChecklist, pasteIntoTable, addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
 import { api, h, showMenu, svg, toast } from "./ui";
 
 export interface EditorHost {
@@ -265,7 +265,12 @@ export class BodyPopup {
         this.view.updateState(this.view.state.apply(tr));
         if (tr.docChanged) this.scheduleSave();
       },
-      handlePaste: (_v, e) => this.attachFiles(e.clipboardData?.files),
+      handlePaste: (v, e) => {
+        // 表・チェックリストの中に貼る: 表は区切り(タブ・CSV・空白)でセルへ、チェックリストは 1 行 1 項目(2026-11-26 修正13)
+        const t = e.clipboardData?.getData("text/plain") ?? "";
+        if (t && !e.clipboardData?.files?.length && (pasteIntoTable(t)(v.state, v.dispatch) || pasteIntoChecklist(t)(v.state, v.dispatch))) return true;
+        return this.attachFiles(e.clipboardData?.files);
+      },
       handleDrop: (_v, e) => this.attachFiles((e as DragEvent).dataTransfer?.files),
       handleDOMEvents: {
         keydown: (_v, e) => {

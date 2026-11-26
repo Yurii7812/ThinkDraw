@@ -1121,23 +1121,31 @@ test("2026-11-24: タロットの右の欄は、78 枚の正逆どれでも、�
   await shot("29-tarot-fit");
 });
 
-test("2026-11-24: Tab で書く文字は、ほかの文字にかぶらない", async () => {
+test("2026-11-24/26: Tab で書く文字は、書いている間は手前・書き終えたら余白へ", async () => {
   await write(500, 300, "まんなか");
   for (const t of ["一つ目のとても長い言葉です", "二つ目のとても長い言葉です", "三つ目のとても長い言葉です", "四つ目のとても長い言葉です", "五つ目のとても長い言葉です"]) {
     await page.keyboard.press("Escape"); // 選択を外してから選び直す
     await page.locator(".node", { hasText: "まんなか" }).click({ modifiers: ["Control"] });
     await page.keyboard.press("Tab");
     await page.keyboard.type(t);
-    // 書いている間もかぶらない
-    const over = await page.evaluate(() => {
-      const ta = document.querySelector("textarea.draft")!.getBoundingClientRect();
-      return [...document.querySelectorAll(".node:not(.editing)")].some((n) => {
-        const r = n.getBoundingClientRect();
-        return r.left < ta.right && ta.left < r.right && r.top < ta.bottom && ta.top < r.bottom;
-      });
+    // 書いている間は動かず、いちばん手前に出る(2026-11-26 修正13)
+    const top = await page.evaluate(() => {
+      const ta = document.querySelector("textarea.draft")!;
+      const r = ta.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === ta;
     });
-    expect(over, t).toBe(false);
+    expect(top, t).toBe(true);
     await page.keyboard.press("Escape");
+    // 書き終えたら余白へ(ほかの文字にかぶらない)
+    const over = await page.evaluate((t) => {
+      const me = [...document.querySelectorAll(".node")].find((n) => n.textContent === t)!.getBoundingClientRect();
+      return [...document.querySelectorAll(".node")].some((n) => {
+        if (n.textContent === t) return false;
+        const r = n.getBoundingClientRect();
+        return r.left < me.right && me.left < r.right && r.top < me.bottom && me.top < r.bottom;
+      });
+    }, t);
+    expect(over, t).toBe(false);
   }
   await expect(page.locator(".edge")).toHaveCount(5);
   await shot("30-tab-place");
@@ -1735,7 +1743,9 @@ test("2026-11-25 修正9: ノートの題は折り返さない・ノートの右
   expect(Math.abs(tb1!.height - tb0!.height)).toBeLessThanOrEqual(3);
   await shot("41-inline-table");
   // 名前: 題の無い表は右クリックの「名前を変える」で付ける。付いたあとは、書いている間に題をそのまま直せる
+  await expect(page.locator(".popup .ProseMirror-focused")).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(page.locator(".popup")).toHaveCount(0);
   await tb.click({ button: "right", position: { x: 4, y: 4 } });
   await page.keyboard.press("r"); // 右クリックして R で名前
   await page.locator(".modal.ask .ask-input").fill("成績");
@@ -2032,7 +2042,7 @@ test("2026-11-25: 画像や HTML に書き出すと、タロットの絵柄も�
   if (shots) writeFileSync(path.join(shots, "44-export-tarot.png"), readFileSync(path.join(exportDir, "ホーム-選択.png")));
 });
 
-test("2026-11-26 修正12: 数字キーで背景色・貼り付けで表とチェックリスト・Tab で表が右に広がる・空の列は Backspace で消える", async () => {
+test("2026-11-26 修正12/13: 数字キーで背景色・表とチェックリストの中に貼る・Tab で表が右に広がる・空の列は Backspace で消える", async () => {
   await write(300, 200, "色をつける");
   const nd = page.locator(".node", { hasText: "色をつける" });
   await nd.click({ modifiers: ["Control"] });
@@ -2045,19 +2055,32 @@ test("2026-11-26 修正12: 数字キーで背景色・貼り付けで表とチ�
   await page.keyboard.press("5");
   await expect(nd).toHaveClass(/\bf5\b/);
   await page.keyboard.press("Escape");
-  // 貼り付け: タブ区切り → 表、複数行 → チェックリスト
+  // 貼り付け(修正13): 何もない所に貼っても何もしない。表・チェックリストの中に貼る
   const paste = (t: string) => page.evaluate((txt) => {
     const dt = new DataTransfer();
     dt.setData("text/plain", txt);
-    document.body.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    (document.activeElement ?? document.body).dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
   }, t);
   await page.mouse.click(900, 500);
+  await page.keyboard.press("Escape");
+  await page.locator(".canvas").first().focus();
   await paste("名前\t値\nA\t1");
+  await expect(page.locator(".node.t-note")).toHaveCount(0);
+  await page.locator(".tbtn.attach-btn").click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "表" }).click();
+  await expect(page.locator(".popup .ProseMirror-focused")).toBeVisible();
+  await paste("名前\t値\nA\t1");
+  await expect(page.locator(".popup.inline td", { hasText: "A" })).toHaveCount(1);
+  await page.keyboard.press("Escape");
   await expect(page.locator(".node.t-note table")).toHaveCount(1);
   await expect(page.locator(".node.t-note td", { hasText: "A" })).toHaveCount(1);
+  await page.locator(".tbtn.attach-btn").click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "チェック" }).click();
+  await expect(page.locator(".popup .ProseMirror-focused")).toBeVisible();
+  await paste("牛乳 を 2 本\n卵\nパン");
   await page.keyboard.press("Escape");
-  await paste("牛乳\n卵\nパン");
   await expect(page.locator(".node.t-note li.task")).toHaveCount(3);
+  await expect(page.locator(".node.t-note li.task", { hasText: "牛乳 を 2 本" })).toHaveCount(1);
   // Tab で右に広がる・空の列で Backspace
   const tb = page.locator(".node.t-note", { has: page.locator("table") });
   await tb.locator("td", { hasText: "1" }).click();
@@ -2075,4 +2098,50 @@ test("2026-11-26 修正12: 数字キーで背景色・貼り付けで表とチ�
   await page.keyboard.press("r");
   await expect(page.locator(".modal.ask .ask-input")).toBeVisible();
   await page.keyboard.press("Escape");
+});
+
+test("2026-11-26 修正13: ノートは 1 回クリックで開く・表は大画面で開かない", async () => {
+  // ノート
+  await page.locator(".canvas").first().click({ position: { x: 300, y: 300 }, button: "right" });
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => {
+    const a = (window as unknown as { __app: { vault: { create(x: object): { id: string } }; canvas: { group: string; renderNow(): void } } }).__app;
+    a.vault.create({ type: "note", title: "ひとつめのノート", group: a.canvas.group, x: 300, y: 300 });
+    a.canvas.renderNow();
+  });
+  await page.locator(".node.t-note", { hasText: "ひとつめのノート" }).click();
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".popup")).toHaveCount(0);
+  // 表: 1 回クリックでその場で書く(大画面は出ない)
+  await page.locator(".tbtn.attach-btn").click();
+  await page.locator(".ctxmenu .mb-btn", { hasText: "表" }).click();
+  await page.keyboard.type("あ");
+  await page.keyboard.press("Escape");
+  const tb = page.locator(".node.t-note", { has: page.locator("table") });
+  await tb.click({ position: { x: 4, y: 4 } });
+  await expect(page.locator(".popup.inline")).toBeVisible();
+  await expect(page.locator(".popup.expanded")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+});
+
+test("2026-11-26 修正13: 赤い背景の文字が束ねたときの題になる(設定で切れる)", async () => {
+  // 束ねる: 赤(1)の背景の文字が題になり、文字は中に残る
+  await write(500, 300, "題にする");
+  await write(640, 300, "中身");
+  const red = page.locator(".node", { hasText: "題にする" });
+  await red.click({ modifiers: ["Control"] });
+  await page.keyboard.press("1");
+  await page.locator(".node", { hasText: "中身" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Control+g");
+  await expect(page.locator(".node.t-group", { hasText: "題にする" })).toHaveCount(1);
+  await expect(page.locator(".modal.ask, .title-input")).toHaveCount(0);
+  await page.locator(".node.t-group", { hasText: "題にする" }).click();
+  await expect(page.locator(".node.t-text", { hasText: "題にする" })).toHaveCount(1);
+  // 設定で切れる
+  await page.keyboard.press("Control+/");
+  await page.locator('.gt-swatches [data-gt="0"]').click();
+  await page.keyboard.press("Escape");
+  await settle();
+  expect(JSON.parse(readFileSync(path.join(userData, "config.json"), "utf8")).groupTitleFill).toBe(0);
 });

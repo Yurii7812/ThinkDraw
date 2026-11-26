@@ -938,6 +938,9 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .return-btn:hover { border-color: var(--accent); color: var(--accent); }
 /* 書いている途中の文字は、下の線が透けないように(2026-11-24) */
 .draft { background: var(--canvas); }
+/* 書いている文字は、ほかの文字・線より手前(かぶっても下が透けない。2026-11-26 修正13) */
+.nodes.drafts { z-index: 10; }
+.draft:not(.for-group):not(.for-frame) { box-shadow: 0 0 0 3px var(--canvas); }
 /* 矢印は大きく・はっきり(2026-11-24) */
 .edge.k-arrow .vis, .edge.k-double .vis { stroke-width: 1.8; }
 .marker { fill: color-mix(in srgb, var(--fg) 70%, var(--edge)); }
