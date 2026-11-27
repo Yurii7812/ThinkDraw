@@ -6,6 +6,8 @@ import { pathToFileURL } from "node:url";
 import { atomicWrite, FsVaultIO } from "./fsio";
 import { DEFAULT_OCR, makeEngines, type OcrSettings } from "./ocr";
 import { DEFAULT_CROP, PaperStore, type CropSettings } from "./paperio";
+import { ShareServer } from "./share";
+import type { BoardState } from "../core/session";
 
 // 試験のときは、利用者の設定・フォルダに触らないよう、環境変数で場所を差し替える
 // 設定の置き場所: ~/.config/bresuto(2026-11-26 に ThinkDraw から改名。前の ~/.config/thinkdraw があれば最初の起動で写す)
@@ -251,6 +253,10 @@ function registerIpc(): void {
     return { dir, n: await needPaper().exportTo(dir) };
   });
   ipcMain.handle("url:title", (_e, url: string) => urlTitle(url));
+  // 共有ボード(2026-11-28): このPCで中継を始める・終える
+  ipcMain.handle("share:start", (_e, title: string, initial?: BoardState) => share().start(title, initial));
+  ipcMain.handle("share:stop", () => share().stop());
+  ipcMain.handle("share:info", () => share().info);
   ipcMain.handle("win:capture", async (_e, r: { x: number; y: number; width: number; height: number }) => {
     const img = await win!.webContents.capturePage({ x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) });
     return new Uint8Array(img.toPNG());
@@ -346,4 +352,11 @@ async function checkUpdates(): Promise<void> {
     /* つながらない・Releases が無いときは何もしない */
   }
 }
-app.on("window-all-closed", () => app.quit());
+app.on("window-all-closed", () => {
+  if (shareServer?.running) void shareServer.stop();
+  app.quit();
+});
+let shareServer: ShareServer | null = null;
+function share(): ShareServer {
+  return (shareServer ??= new ShareServer(path.join(app.getPath("userData"), "bin")));
+}

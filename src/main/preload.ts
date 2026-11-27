@@ -24,6 +24,9 @@ const api = {
     ipcRenderer.invoke("export:save", name, label, exts, data),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open", url),
   /** 窓の中の、その四角(CSS の px)を写した PNG(書き出しを画面と同じ見た目にする。2026-11-27) */
+  shareStart: (title: string, initial?: unknown) => ipcRenderer.invoke("share:start", title, initial),
+  shareStop: () => ipcRenderer.invoke("share:stop"),
+  shareInfo: () => ipcRenderer.invoke("share:info"),
   capture: (r: { x: number; y: number; width: number; height: number }): Promise<Uint8Array> => ipcRenderer.invoke("win:capture", r),
   // 紙PKM
   paperIndex: () => ipcRenderer.invoke("paper:index"),

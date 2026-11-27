@@ -21,6 +21,10 @@ import { PaperView } from "./paperview";
 import { paperStore } from "./paperstore";
 import { cardTip, closeDrawMenu, DEFAULT_CONFIG, drawLabel, drawMenuOpen, openDrawMenu, runDraw, type DrawConfig, type DrawKind } from "./tarot";
 import { api, askText, closeMenu, h, menuOpen, showMenu, svg, toast, type MenuItem } from "./ui";
+import { parseInvite, SharedClient, type Me } from "./shared";
+import { authorOf, boardOf, type BoardState } from "../core/session";
+import { parseNode } from "../core/frontmatter";
+import type { TDNode } from "../core/types";
 
 type Theme = "system" | "light" | "dark";
 interface AppState {
@@ -94,6 +98,7 @@ const TOP_ICONS: Record<string, string> = {
   surround: '<circle cx="12" cy="12" r="2.5"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="7" r="1.5"/><circle cx="6" cy="19" r="1.5"/><path d="M10 11 6 7M14 11l4-3M10.5 14 7 18"/>',
   whole: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   export: '<path d="M12 4v11M8 8l4-4 4 4"/><path d="M5 14v6h14v-6"/>',
+  share: '<circle cx="8" cy="9" r="3"/><circle cx="17" cy="10" r="2.5"/><path d="M3 19c.6-3 2.6-5 5-5s4.4 2 5 5M13.5 18c.4-2.2 1.8-3.6 3.5-3.6s3.1 1.4 3.5 3.6"/>',
   draw: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="m12 8 1.2 2.6 2.8.4-2 2 .5 2.8-2.5-1.4-2.5 1.4.5-2.8-2-2 2.8-.4z"/>',
 };
 
@@ -314,6 +319,7 @@ class App {
         this.btnPen,
         btn("backlinks-btn", T.backlinksTip, () => this.toggleBacklinks(), T.backlinksBtn, "surround"),
         btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn, "whole"),
+        btn("share-btn", T.shareTip, () => this.shareMenu(), T.shareBtn, "share"),
         btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn, "export"),
         h("div", { class: "split" }, this.btnDraw),
         btn("i-theme", T.theme, () => this.setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")),
@@ -344,6 +350,9 @@ class App {
     this.canvas = new Canvas(
       {
         vault: this.vault,
+        // 共有ボードから貼った物(複製)に「元: 誰・どの共有ボード」、自分が持ち込んだ物は元へ飛べる(2026-11-28)
+        foreignExtra: (src) => this.sharedPasteExtra(src),
+        nodeDecor: (n, el) => this.decorOrigin(n, el),
         kindColor: (k: string) => this.config.edgeColors?.[k] ?? 0,
         openGroup: (id) => this.openGroup(id),
         openBody: (id) => this.openBody(id),
@@ -1787,6 +1796,299 @@ class App {
   }
 
   // ---------- 全体の画面(見るだけ) ----------
+  // ---------- 共有ボード(みんなで使う。2026-11-28 利用者。質問票 br-1128a) ----------
+  // 右上の「共有」から。共有ボードは右に出る(左は自分のボード)。左右のあいだは Ctrl+C → Ctrl+V(複製)・Ctrl+Q(自分だけ元へ飛べる)。
+  // 終わると(開いた人が終える・自分が抜ける)、参加した全員の自分のホームにそのボードが入る
+  shared: SharedClient | null = null;
+  sharedCanvas: Canvas | null = null;
+  private sharedWrap: HTMLElement | null = null;
+  private sharedPeople: HTMLElement | null = null;
+  private sharedInvite: { invite: string | null; lanInvite: string | null; code: string; tunnelError?: string } | null = null;
+
+  private shareMenu(): void {
+    const el = document.querySelector(".tbtn.share-btn") as HTMLElement | null;
+    const r = el?.getBoundingClientRect();
+    const items: MenuItem[] = this.shared
+      ? [
+          { label: T.shareHead(this.shared.title), heading: true },
+          ...(this.shared.host ? [{ label: T.shareShowInvite, action: () => this.showInvite() }] : []),
+          { label: this.shared.host ? T.shareEnd : T.shareLeave, desc: this.shared.host ? T.shareEndDesc : T.shareLeaveDesc, danger: true, action: () => void this.endShared() },
+          { separator: true, label: "" },
+          { label: T.shareMe, action: () => void this.editMe() },
+        ]
+      : [
+          { label: T.shareStart, desc: T.shareStartDesc, action: () => void this.startShare() },
+          { label: T.shareJoin, desc: T.shareJoinDesc, action: () => void this.joinShare() },
+          { separator: true, label: "" },
+          { label: T.shareMe, action: () => void this.editMe() },
+        ];
+    showMenu(r?.left ?? 200, (r?.bottom ?? 40) + 2, items);
+  }
+  private static SHARE_COLORS = ["#e5484d", "#f76b15", "#ffb224", "#30a46c", "#12a594", "#0090ff", "#6e56cf", "#d6409f"];
+  /** 共有で見せる自分の名前と色(はじめに聞いて、設定に覚える) */
+  private async ensureMe(): Promise<Me | null> {
+    const c = (this.config as { me?: Me }).me;
+    if (c?.pid && c.name) return c;
+    return this.editMe();
+  }
+  private async editMe(): Promise<Me | null> {
+    const cur = (this.config as { me?: Me }).me;
+    const name = await askText(T.shareNameAsk, cur?.name ?? "");
+    if (!name?.trim()) return cur ?? null;
+    const pick = await askText(T.shareColorAsk, cur?.color ? T.shareColorNames[App.SHARE_COLORS.indexOf(cur.color)] ?? T.shareColorNames[0] : T.shareColorNames[Math.floor(Math.random() * 8)], T.shareColorNames);
+    const k = Math.max(0, T.shareColorNames.indexOf(pick ?? ""));
+    const me: Me = { pid: cur?.pid ?? Math.random().toString(36).slice(2, 12), name: name.trim().slice(0, 30), color: App.SHARE_COLORS[k] };
+    (this.config as { me?: Me }).me = me;
+    api().setConfig({ me });
+    return me;
+  }
+  private async startShare(): Promise<void> {
+    if (this.shared) return;
+    const me = await this.ensureMe();
+    if (!me) return;
+    const title = await askText(T.shareTitleAsk, "");
+    if (title === null) return;
+    toast(T.shareStarting, 30000);
+    try {
+      const info = await api().shareStart(title.trim() || T.shareUntitled);
+      this.sharedInvite = info;
+      await this.openShared(info.local, info.code, me, true);
+      this.showInvite();
+    } catch (e) {
+      toast(T.shareFailed((e as Error).message));
+    }
+  }
+  private async joinShare(): Promise<void> {
+    if (this.shared) return;
+    const me = await this.ensureMe();
+    if (!me) return;
+    const s = await askText(T.shareJoinAsk, "");
+    if (!s) return;
+    const p = parseInvite(s);
+    if (!p) return void toast(T.shareBadInvite);
+    toast(T.shareJoining, 60000);
+    try {
+      await this.openShared(p.ws, p.code, me, false);
+      toast(T.shareJoined((this.shared as SharedClient | null)?.title ?? ""));
+    } catch (e) {
+      toast(T.shareFailed((e as Error).message));
+    }
+  }
+  /** 招待を見せる(コピーして、LINE などで送る) */
+  private showInvite(): void {
+    const i = this.sharedInvite;
+    if (!i) return;
+    const row = (label: string, v: string | null, note?: string) => {
+      const inp = h("input", { class: "share-invite", value: v ?? "", readonly: "" }) as HTMLInputElement;
+      const copy = h("button", { class: "btn", text: T.copyShort });
+      copy.addEventListener("click", () => void navigator.clipboard.writeText(inp.value).then(() => toast(T.shareCopied)));
+      return h("div", { class: "share-row" }, h("div", { class: "share-label", text: label }), v ? h("div", { class: "share-line" }, inp, copy) : h("div", { class: "muted small", text: note ?? "" }));
+    };
+    const ok = h("button", { class: "btn primary", text: "OK" });
+    const box = h(
+      "div",
+      { class: "modal share-modal" },
+      h("div", { class: "modal-title", text: T.shareInviteTitle }),
+      h("p", { class: "muted small", text: T.shareInviteHelp }),
+      row(T.shareInviteOut, i.invite, T.shareNoTunnel(i.tunnelError ?? "")),
+      row(T.shareInviteLan, i.lanInvite),
+      h("div", { class: "modal-actions" }, ok),
+    );
+    const back = h("div", { class: "backdrop" }, box);
+    ok.addEventListener("click", () => back.remove());
+    back.addEventListener("mousedown", (e) => e.target === back && back.remove());
+    document.body.append(back);
+  }
+  private async openShared(url: string, code: string, me: Me, host: boolean): Promise<void> {
+    const c = new SharedClient(url, code, me, host);
+    await c.connect();
+    if (this.whole) this.closeWhole();
+    if (this.peek) this.closePeek();
+    this.shared = c;
+    const title = h("span", { class: "pane-title shared-title", text: "👥 " + (c.title || T.shareUntitled) });
+    this.sharedPeople = h("span", { class: "shared-people" });
+    const end = h("button", { class: "tbtn shared-end", text: host ? T.shareEndShort : T.shareLeaveShort, title: host ? T.shareEndDesc : T.shareLeaveDesc });
+    end.addEventListener("click", () => void this.endShared());
+    const inv = host ? h("button", { class: "tbtn", text: T.shareInviteShort, title: T.shareShowInvite }) : null;
+    inv?.addEventListener("click", () => this.showInvite());
+    const head = h("div", { class: "pane-head" }, title, this.sharedPeople, h("span", { class: "pane-space" }), inv, end);
+    this.sharedWrap = h("div", { class: "pane shared-pane" }, head);
+    const sc: Canvas = new Canvas(
+      {
+        vault: c.vault,
+        kindColor: (k: string) => this.config.edgeColors?.[k] ?? 0,
+        openGroup: () => toast(T.sharedNoGroup),
+        openBody: () => toast(T.sharedNoNote),
+        goToNode: () => {},
+        pickGroup: async () => null,
+        cardHover: () => {},
+        onViewChange: () => {},
+        onSelectionChange: () => {},
+        canEditText: (id) => {
+          const by = authorOf(c.vault.get(id));
+          return !by || by === me.pid;
+        },
+        nodeDecor: (n, el) => this.decorShared(n, el),
+        // 自分のボード → 共有ボード: Ctrl+Q は、ほかの人にはふつうの物・自分だけ元へ飛べる(利用者)
+        foreignExtra: (src, mode) => (mode === "quote" ? { origin: src.id, originBy: me.pid } : null),
+      },
+      this.sharedWrap,
+    );
+    sc.el.classList.add("shared-canvas");
+    this.sharedCanvas = sc;
+    this.splitBar = h("div", { class: "split-bar", title: T.splitBarTip });
+    this.splitBar.addEventListener("pointerdown", (e) => this.dragSplit(e));
+    this.splitBar.addEventListener("dblclick", () => this.setSplit(0.5));
+    this.leftPane.after(this.splitBar, this.sharedWrap);
+    this.main.classList.add("split");
+    this.setSplit(this.state.splitRatio ?? 0.5);
+    sc.show(ROOT_ID, null);
+    sc.fitAll(true);
+    sc.el.addEventListener("pointermove", (e) => {
+      const p = sc.toWorld(e.clientX, e.clientY);
+      c.sendCursor(p.x, p.y);
+    });
+    const presence = () => {
+      const now = Date.now();
+      sc.setPresence(
+        [...c.cursors]
+          .filter(([pid, p]) => pid !== me.pid && now - p.at < 20000)
+          .map(([pid, p]) => {
+            const who = c.personOf(pid);
+            return { x: p.x, y: p.y, name: who?.name ?? "?", color: who?.color ?? "#888" };
+          }),
+      );
+    };
+    c.onCursor = presence;
+    c.onPeople = () => {
+      this.renderPeople();
+      presence();
+    };
+    c.onEnd = (st) => {
+      if (this.shared !== c) return;
+      this.saveShared(st ?? boardOf(c.vault), c);
+      this.closeShared();
+    };
+    c.vault.onChange(() => sc.requestRender());
+    this.renderPeople();
+  }
+  private renderPeople(): void {
+    const c = this.shared;
+    if (!c || !this.sharedPeople) return;
+    this.sharedPeople.replaceChildren(
+      ...c.people.map((p) => {
+        const chip = h("span", { class: "shared-person", title: p.name + (p.pid === c.me.pid ? T.shareYou : "") }, h("span", { class: "sp-dot" }), p.name);
+        chip.style.setProperty("--pc", p.color);
+        return chip;
+      }),
+    );
+  }
+  /** 共有ボードの物の飾り: 書いた人の色の点・自分が Ctrl+Q で持ち込んだ物は元へ飛ぶ */
+  private decorShared(n: TDNode, el: HTMLElement): void {
+    if (typeof n.extra.byColor === "string") {
+      const dot = h("span", { class: "by-dot", title: T.shareBy(String(n.extra.byName ?? "?")) });
+      dot.style.setProperty("--pc", String(n.extra.byColor));
+      el.append(dot);
+    }
+    this.decorOrigin(n, el);
+  }
+  /** 元へ飛ぶ(自分が持ち込んだ物。自分の vault にその物があるときだけ) */
+  decorOrigin(n: TDNode, el: HTMLElement): void {
+    const o = n.extra.origin;
+    const mine = !n.extra.originBy || n.extra.originBy === (this.config as { me?: Me }).me?.pid;
+    if (typeof o !== "string" || !mine || !this.vault.exists(o) || o === n.id) return;
+    const b = h("button", { class: "jump-btn origin-jump", title: T.shareOriginJump, "aria-label": T.shareOriginJump });
+    b.addEventListener("pointerdown", (e) => e.stopPropagation());
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.goToNode(o, false, true);
+    });
+    el.append(b);
+  }
+  /** 共有ボード → 自分のボードへ貼るとき(いつも複製。元: 誰・どの共有ボード) */
+  sharedPasteExtra(src: TDNode): Record<string, unknown> | null {
+    const c = this.shared;
+    if (!c || c.vault.get(src.id) !== src) return null;
+    const me = (this.config as { me?: Me }).me;
+    const ex: Record<string, unknown> = { sharedFrom: c.title, byName: src.extra.byName ?? null, byColor: src.extra.byColor ?? null };
+    if (src.extra.origin && src.extra.originBy === me?.pid) ex.origin = src.extra.origin;
+    return ex;
+  }
+  private async endShared(): Promise<void> {
+    const c = this.shared;
+    if (!c) return;
+    if (c.host) {
+      await api().shareStop(); // みんなに「終わり」が届き、それぞれ自分のホームに保存する(自分のところにも届く)
+      setTimeout(() => {
+        if (this.shared === c) {
+          this.saveShared(boardOf(c.vault), c);
+          this.closeShared();
+        }
+      }, 1500);
+    } else {
+      this.saveShared(boardOf(c.vault), c);
+      this.closeShared();
+    }
+  }
+  private closeShared(): void {
+    this.shared?.close();
+    this.shared = null;
+    this.sharedCanvas = null;
+    this.sharedWrap?.remove();
+    this.sharedWrap = null;
+    this.sharedPeople = null;
+    this.sharedInvite = null;
+    this.splitBar?.remove();
+    this.splitBar = null;
+    this.main.classList.remove("split");
+    this.leftPane.style.flex = "";
+  }
+  /** 共有ボードを、自分のホームに 1 つのグループとして保存する(位置・線・言葉・色・ペン・書いた人のまま) */
+  private saveShared(st: BoardState, c: SharedClient): void {
+    const me = c.me;
+    const day = new Date();
+    const ymd = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+    const name = `${ymd}-共有-${st.title || T.shareUntitled}`;
+    const ids = Object.keys(st.pos).filter((id) => st.nodes[id]);
+    let gid = "";
+    this.vault.tx(() => {
+      const at = this.canvas.group === ROOT_ID ? this.canvas.visibleCenter() : { x: 0, y: 0 };
+      gid = this.vault.create({ type: "group", title: name, group: ROOT_ID, x: Math.round(at.x), y: Math.round(at.y) }).id;
+      const made = new Map<string, string>();
+      const parsed = new Map<string, TDNode>();
+      for (const id of ids) {
+        let n: TDNode;
+        try {
+          n = parseNode(st.nodes[id], id);
+        } catch {
+          continue;
+        }
+        parsed.set(id, n);
+        const p = st.pos[id];
+        const nid =
+          n.type === "frame"
+            ? this.vault.create({ type: "frame", title: n.title, group: gid, x: p.x, y: p.y, size: n.size, color: n.color }).id
+            : this.vault.create({ type: "text", title: n.title || T.untitled, group: gid, x: p.x, y: p.y, color: n.color, fill: n.fill }).id;
+        made.set(id, nid);
+        const ex: Record<string, unknown> = { sharedFrom: st.title, byName: n.extra.byName ?? null, byColor: n.extra.byColor ?? null };
+        // 自分が Ctrl+Q で持ち込んだ物は、自分のところでは元へ飛べる(ほかの人にはふつうの物)
+        if (typeof n.extra.origin === "string" && n.extra.originBy === me.pid) ex.origin = n.extra.origin;
+        this.vault.setExtra(nid, ex);
+      }
+      for (const [from, n] of parsed)
+        for (const l of n.links) {
+          const a = made.get(from), b = made.get(l.to);
+          if (!a || !b) continue;
+          this.vault.addLink(a, b, l.kind);
+          if (l.label) this.vault.setLinkLabel(a, b, l.label);
+          if (l.color) this.vault.setLinkProps(a, b, { color: l.color });
+        }
+      for (const s of st.strokes) this.vault.addStroke(gid, { c: s.c, w: s.w, hl: s.hl, p: [...s.p] });
+    });
+    this.canvas.requestRender();
+    toast(T.shareSaved(name), 6000);
+  }
+
   toggleWhole(): void {
     if (this.whole) this.closeWhole();
     else this.openWhole();
@@ -2229,7 +2531,8 @@ class App {
       const inField = (e.target as Element)?.closest?.("input, textarea, .ProseMirror");
       const rightActive = !!this.peek && this.main.dataset.active === "right";
       if (inField || (rightActive ? this.popupR : this.popup) || this.records || this.paperOpen) return;
-      const c = rightActive ? this.peek! : this.canvas;
+      const sharedOn = !!this.sharedCanvas && this.sharedCanvas.el.contains(document.activeElement);
+      const c = sharedOn ? this.sharedCanvas! : rightActive ? this.peek! : this.canvas;
       // Ctrl+C でコピーした物(目印の文字が入っている)は、複製して貼る(引用は Ctrl+Q。2026-11-26 修正14)
       const norm = (t: string) => t.replace(/\r\n/g, "\n").trim();
       if (!files?.length && refClipboard.size && norm(e.clipboardData?.getData("text/plain") ?? "") === norm(refClipboard.mark)) {
@@ -2372,7 +2675,7 @@ class App {
         this.vault.redo();
         return;
       }
-      const active = this.peek && this.peek.el.contains(document.activeElement) ? this.peek : this.canvas;
+      const active = this.sharedCanvas && this.sharedCanvas.el.contains(document.activeElement) ? this.sharedCanvas : this.peek && this.peek.el.contains(document.activeElement) ? this.peek : this.canvas;
       if (e.key === "Escape" && active === this.peek && !this.peek.selection.size) {
         this.closePeek();
         return;

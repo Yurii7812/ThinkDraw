@@ -40,6 +40,12 @@ export interface PenState {
 
 export interface CanvasHost {
   vault: Vault;
+  /** 共有ボード(2026-11-28): ノードに飾りを足す(書いた人の色の点・元へ飛ぶ) */
+  nodeDecor?(n: TDNode, el: HTMLElement): void;
+  /** 共有ボード: この文字の文章を直してよいか(他人が書いた物は、動かせても直せない) */
+  canEditText?(id: string): boolean;
+  /** ほかのボード(別の vault)から貼るとき、新しい物に付ける情報(元・書いた人など)。mode = copy(Ctrl+V)/ quote(Ctrl+Q) */
+  foreignExtra?(src: TDNode, mode: "copy" | "quote"): Record<string, unknown> | null;
   openGroup(id: string): void;
   /** 開く(文字は書き直し以外。ノート・カード・グループの本文) */
   openBody(id: string): void;
@@ -128,6 +134,8 @@ export const groupPrefs = { titleFill: 1 };
 
 /** Ctrl+C でコピーした物(どの画面のキャンバスからでも貼れる)と、システムのコピーに入れた目印の文字 */
 let refClip: { id: string; x: number; y: number; w?: number }[] = [];
+/** コピーした物のある vault(共有ボードと自分のボードは別の vault。2026-11-28) */
+let refClipVault: Vault | null = null;
 let refClipMark = "";
 /** Ctrl+X で切り取ったとき: 切り取った元のグループ(貼ると、そこから移す) */
 let refCutFrom: string | null = null;
@@ -708,6 +716,7 @@ export class Canvas {
       return h("div", { class: "node t-text ref alias missing", "data-id": n.id }, h("span", { class: "label", text: T.aliasMissing }));
     }
     const el = this.nodeEl0(n, ref);
+    this.host.nodeDecor?.(n, el);
     // 引用はふつう 1 回クリックで元の場所へ飛ぶ。カード(タロット・易・発想)だけは、クリック=選ぶ・右上の ↗=飛ぶ(2026-11-25 修正11)
     if (ref && n.type === "card") el.append(h("button", { class: "jump-btn", "data-act": "jump", title: T.jumpTip, "aria-label": T.jumpTip }));
     return el;
@@ -999,6 +1008,10 @@ export class Canvas {
   }
 
   startEdit(id: string | null, x: number, y: number, parent: string | null, initial = "", left = false): void {
+    if (id && this.host.canEditText && !this.host.canEditText(id)) {
+      toast(T.sharedNotYours);
+      return;
+    }
     this.commitDraft("esc");
     const ta = h("textarea", { class: "draft", rows: 1, spellcheck: "false" }) as HTMLTextAreaElement;
     ta.value = initial;
@@ -2414,6 +2427,7 @@ export class Canvas {
     // ボードの中の引用をコピーしたら、元の物をコピーしたことにする
     const pick = (id: string) => (!cut && this.v.get(id)?.type === "alias" ? this.v.get(id)!.target ?? id : id);
     refClip = ids.map((id) => ({ id: pick(id), ...(this.v.itemPos(this.group, id) ?? { x: 0, y: 0 }) }));
+    refClipVault = this.v;
     refCutFrom = cut ? this.group : null;
     // システムのコピーには Markdown を入れる(外のエディタや AI にそのまま貼れる。2026-11-24 統合仕様 2)。
     // bresuto の中で貼ると、同じ文字なので引用(切り取りなら移動)になる。外で別の物をコピーすると、文字が変わるので使わない
@@ -2475,6 +2489,7 @@ export class Canvas {
    */
   pasteCopies(at?: { x: number; y: number }): boolean {
     if (!refClip.length || this.readOnly) return false;
+    if (refClipVault && refClipVault !== this.v) return this.pasteForeign("copy", at);
     const c = at ?? this.visibleCenter();
     const x0 = Math.min(...refClip.map((r) => r.x)), y0 = Math.min(...refClip.map((r) => r.y));
     const x1 = Math.max(...refClip.map((r) => r.x)), y1 = Math.max(...refClip.map((r) => r.y));
@@ -2513,12 +2528,78 @@ export class Canvas {
     const clip = await currentClip();
     if (clip?.kind === "passage") return this.placeCite(clip, at ?? this.visibleCenter());
     if (clip?.kind === "nodes" && refClip.length) {
+      if (refClipVault && refClipVault !== this.v) return void this.pasteForeign("quote", at);
       this.pasteRefs(at);
       return;
     }
     // ほかのアプリでコピーした文章: 字下げ・箇条書き・見出しの形を、ノードと線のマインドマップにする(2026-11-27 利用者)
     if (await this.pasteOutline(at)) return;
     toast(T.quoteNothing);
+  }
+
+  /**
+   * 別の vault(自分のボード ⇔ 共有ボード)からの貼り付け(2026-11-28)。いつも複製(つながりは持てない)。
+   * 文字・囲い・ノート(題の文字にする)を、元の並び・線・色のまま。元などの情報は host.foreignExtra で付ける
+   */
+  private pasteForeign(mode: "copy" | "quote", at?: { x: number; y: number }): boolean {
+    const src = refClipVault;
+    if (!src || this.readOnly) return false;
+    const list = refClip.filter((r) => src.exists(r.id));
+    if (!list.length) return false;
+    const c = at ?? this.visibleCenter();
+    const x0 = Math.min(...list.map((r) => r.x)), y0 = Math.min(...list.map((r) => r.y));
+    const x1 = Math.max(...list.map((r) => r.x)), y1 = Math.max(...list.map((r) => r.y));
+    const dx = c.x - (x0 + x1) / 2, dy = c.y - (y0 + y1) / 2;
+    const made = new Map<string, string>();
+    this.v.tx(() => {
+      for (const r of list) {
+        const n0 = src.get(r.id)!;
+        const n = n0.type === "alias" && n0.target && src.get(n0.target) ? src.get(n0.target)! : n0;
+        const x = Math.round(r.x + dx), y = Math.round(r.y + dy);
+        const title = n.type === "card" && n.card ? cardName(n.card) : n.type === "text" && n.cite ? this.citeTextIn(src, n) : n.title || T.untitled;
+        const id =
+          n.type === "frame"
+            ? this.v.create({ type: "frame", title: n.title, group: this.group, x, y, size: n.size, color: n.color }).id
+            : this.v.create({ type: "text", title, group: this.group, x, y, color: n.color, fill: n.fill }).id;
+        made.set(r.id, id);
+        const extra = this.host.foreignExtra?.(n, mode);
+        if (extra) this.v.setExtra(id, extra);
+      }
+      for (const [from, to] of made)
+        for (const l of src.get(from)?.links ?? []) {
+          const b = made.get(l.to);
+          if (!b) continue;
+          this.v.addLink(to, b, l.kind);
+          if (l.label) this.v.setLinkLabel(to, b, l.label);
+          if (l.color) this.v.setLinkProps(to, b, { color: l.color });
+        }
+    });
+    this.renderNow();
+    this.setSelection([...made.values()]);
+    toast(T.pastedForeign(made.size));
+    return true;
+  }
+  private citeTextIn(v: Vault, n: TDNode): string {
+    const c = parseCite(n.cite);
+    const note = c ? v.get(c.note) : undefined;
+    return (c && note ? anchorText(note.body, c.anchor) : null) ?? n.title;
+  }
+  /** 共有ボード: ほかの人のマウスの場所(名前と色) */
+  private overlay: HTMLElement | null = null;
+  setPresence(list: { x: number; y: number; name: string; color: string }[]): void {
+    if (!this.overlay?.isConnected) {
+      this.overlay = h("div", { class: "presence" });
+      this.world.append(this.overlay);
+    }
+    this.overlay.replaceChildren(
+      ...list.map((p) => {
+        const el = h("div", { class: "peer-cursor" }, h("span", { class: "pc-dot" }), h("span", { class: "pc-name", text: p.name }));
+        el.style.left = p.x + "px";
+        el.style.top = p.y + "px";
+        el.style.setProperty("--pc", p.color);
+        return el;
+      }),
+    );
   }
 
   // ---------- 文章からマインドマップ(2026-11-27 利用者。質問票 br-1127b) ----------

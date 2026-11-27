@@ -1174,3 +1174,22 @@ body.capturing .canvas, body.capturing .canvas * { cursor: none !important; }
 .edge.hl .end-fill { fill: var(--accent); }
 .edge.hl .end-stroke { stroke: var(--accent); }
 .node.hl-near > .label, .node.hl-near .note-head .label, .node.hl-near .g-head .label { text-decoration: underline 2px var(--accent); text-underline-offset: 4px; text-decoration-skip-ink: none; }
+
+/* ---------- 共有ボード(2026-11-28) ---------- */
+.shared-pane .pane-head { display: flex; gap: 6px; }
+.shared-title { color: var(--accent); }
+.shared-people { display: flex; gap: 4px; flex-wrap: nowrap; overflow: hidden; }
+.shared-person { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 1px 8px 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--pc) 14%, transparent); white-space: nowrap; }
+.shared-person .sp-dot, .peer-cursor .pc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--pc); flex: none; }
+.shared-end { color: var(--danger, #c33); }
+.node .by-dot { position: absolute; left: -9px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--pc); pointer-events: auto; }
+.presence { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 50; }
+.peer-cursor { position: absolute; display: flex; align-items: center; gap: 4px; transform: translate(-4px, -4px) scale(var(--inv-z, 1)); transform-origin: 0 0; transition: left 0.08s linear, top 0.08s linear; }
+.peer-cursor .pc-dot { width: 10px; height: 10px; box-shadow: 0 0 0 2px var(--panel); }
+.peer-cursor .pc-name { font-size: 11px; color: #fff; background: var(--pc); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+.share-modal { width: min(560px, 92vw); }
+.share-row { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.share-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+.share-line { display: flex; gap: 6px; }
+.share-invite { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.origin-jump { opacity: 0.7; }

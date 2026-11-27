@@ -767,6 +767,39 @@ export class Vault {
   }
 
   /** 外部のエディタでファイルが変わった(content=null は消えた)。変わったら true */
+  /** ノードの付け足しの情報(extra)を足す・消す(null で消す)。2026-11-28 共有(書いた人・元) */
+  setExtra(id: string, patch: Record<string, unknown>): void {
+    this.tx(() => {
+      const n = this.mut(id);
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === undefined) delete n.extra[k];
+        else n.extra[k] = v;
+      }
+    });
+  }
+
+  /**
+   * 共有ボードで、ほかの人の変更を入れる(元に戻すには積まない・書いた人には送り返さない。2026-11-28)。
+   * nodes = ノードを丸ごと置く/消す(null)。pos = 根のボードの中の位置(null で外す)。strokes = 根のペンの線
+   */
+  applyRemote(c: { nodes?: [string, TDNode | null][]; pos?: [string, { x: number; y: number; w?: number } | null][]; strokes?: Stroke[]; title?: string }): void {
+    for (const [id, n] of c.nodes ?? []) {
+      if (id === ROOT_ID) continue;
+      this.setRaw(id, n ? cloneNode(n) : null);
+    }
+    if (c.pos?.length || c.strokes || c.title !== undefined) {
+      const root = cloneNode(this.nodes.get(ROOT_ID)!);
+      for (const [id, p] of c.pos ?? []) {
+        root.members = root.members.filter((m) => m.id !== id);
+        if (p) root.members.push({ id, x: p.x, y: p.y, ...(p.w ? { w: p.w } : {}) });
+      }
+      if (c.strokes) root.strokes = c.strokes.map((s) => ({ ...s, p: [...s.p] }));
+      if (c.title !== undefined) root.title = c.title;
+      this.setRaw(ROOT_ID, root);
+    }
+    this.emit();
+  }
+
   applyExternal(name: string, content: string | null): boolean {
     const id = name.replace(/\.md$/, "");
     if (id !== ROOT_ID && !ID_RE.test(id)) return false;
