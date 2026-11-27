@@ -95,28 +95,45 @@ function parseXmindXml(src: string): OutlineNode[] {
 }
 
 /**
- * 字下げ・箇条書き・見出しの文章(2026-11-27)。網にする書き方も読む(AI にも書きやすいように、記号は少しだけ):
- * - 「(1) 気候変動」= この物に 1 番を付ける。ほかの所で「(1)」とだけ書くと、同じ物を指す(線がつながる)
- * - 「A → B」「A -> B」= A から B へ矢印。「A →(原因) B」で線に言葉。「A → B → C」も
+ * 字下げ・箇条書き・見出しの文章(2026-11-27)。網にする書き方も読む(AI にも書きやすいように、記号は少しだけ。
+ * 2026-11-27 夜に利用者と決め直した。矢印の記号は使わない):
+ * - 「気候変動 (1)」「気候変動(1)」= この物に 1 番を付ける(番号は文の後ろ。空白はあってもなくても)
+ * - 「(1)」とだけ書いた子の行 = 親から 1 番の物へ線
+ * - 「(1): 移住」「(1):移住」= 1 番の物から「移住」へ線(移住は 1 番の物の子として並ぶ)。「(1): (2)」も
+ * - 「移住 :(1)」「移住:(1)」= 「移住」から 1 番の物へ線
+ * - 子の行の頭の「(原因)」= 親からの線の言葉。「(1): (原因)移住」も
+ * - コロンは番号の隣にあるときだけ区切り(「注意: 傘」「10:30」はそのまま 1 つの文)
  * - 同じ言葉でも、別々に書けば別の物(まとめない)
  */
 function parseIndented(text: string): { roots: OutlineNode[]; links: OutlineLink[] } {
   const roots: OutlineNode[] = [];
   const links: OutlineLink[] = [];
   const named = new Map<string, OutlineNode>();
-  // 番号は後ろで付けてもよいので、最後にまとめて探す。from / parent は物か番号
+  // 番号は後ろで付けてもよいので、最後にまとめて探す
   type End = OutlineNode | { ref: string };
-  const pendLinks: { from: End; to: string; label?: string; arrow?: boolean }[] = [];
+  const pendLinks: { from: End; to: End; label?: string }[] = [];
   const pendKids: { parent: string; node: OutlineNode }[] = [];
   // 見出しは #1〜#6 の順位、ふつうの行は 10 + 字下げの幅(見出しの下に入る)。自分より順位の小さい、直前のものが親
   const stack: { rank: number; node: OutlineNode }[] = [];
   let fence = false;
-  /** 「(n) 文」「(n)」「文」を読む */
-  const piece = (t: string): { ref?: string; title: string } => {
-    const m = /^\((\d{1,4}|[a-zA-Z][\w-]{0,15})\)\s*(.*)$/.exec(t.trim());
-    return m ? { ref: m[1], title: m[2].trim() } : { title: t.trim() };
+  const REF = "\\((\\d{1,4})\\)";
+  /** 頭の「(言葉)」(数字だけのかっこは番号なので、言葉ではない) */
+  const takeLabel = (t: string): { label?: string; rest: string } => {
+    const m = /^\(([^()]*[^()\d\s][^()]*)\)\s*(.*)$/.exec(t);
+    return m && m[2] ? { label: m[1].trim(), rest: m[2] } : { rest: t };
   };
-  const ARROW = /\s*(?:→|->|⇒)(?:\(([^()]*)\))?\s*/;
+  /** 「文 (n)」「(n)」「文」 */
+  const item = (t: string): { ref?: string; title: string } => {
+    const only = new RegExp(`^${REF}$`).exec(t.trim());
+    if (only) return { ref: only[1], title: "" };
+    const m = new RegExp(`^(.*?)\\s*${REF}$`).exec(t.trim());
+    return m && m[1] ? { ref: m[2], title: m[1].trim() } : { title: t.trim() };
+  };
+  const make = (t: { ref?: string; title: string }, label?: string): OutlineNode => {
+    const n: OutlineNode = { title: t.title, children: [], label };
+    if (t.ref) named.set(t.ref, n);
+    return n;
+  };
   for (const raw of text.replace(/\r\n?/g, "\n").split("\n")) {
     if (/^\s*(```|~~~)/.test(raw)) {
       fence = !fence;
@@ -139,51 +156,32 @@ function parseIndented(text: string): { roots: OutlineNode[]; links: OutlineLink
     }
     body = body.replace(/\s+/g, " ").trim();
     if (!body) continue;
-    // 矢印で分ける: [文, 言葉, 文, 言葉, 文 …]
-    const parts: { text: string; label?: string }[] = [];
-    let rest = body;
-    let lab: string | undefined;
-    for (let m: RegExpExecArray | null; (m = ARROW.exec(rest)); ) {
-      parts.push({ text: rest.slice(0, m.index), label: lab });
-      lab = m[1]?.trim() || undefined;
-      rest = rest.slice(m.index + m[0].length);
-    }
-    parts.push({ text: rest, label: lab });
     while (stack.length && stack[stack.length - 1].rank >= rank) stack.pop();
     const parent = stack.length ? stack[stack.length - 1].node : null;
-    // 1 つ目: 木の中の物(番号だけなら、前・後の番号の物を指す)
-    const first = piece(parts[0].text);
-    let cur: OutlineNode | null = null;
-    let curRef: string | null = null;
-    if (first.ref && !first.title) {
-      curRef = first.ref;
-      if (parent) pendLinks.push({ from: parent, to: first.ref }); // 字下げの中の「(n)」= 親から (n) へ線
-    } else if (first.title) {
-      cur = { title: first.title, children: [] };
-      if (first.ref) named.set(first.ref, cur);
-      (parent ? parent.children : roots).push(cur);
-      stack.push({ rank, node: cur });
-    } else continue;
-    // 2 つ目から: 矢印の先
-    for (const p of parts.slice(1)) {
-      const q = piece(p.text);
-      if (!q.title && !q.ref) continue;
-      if (q.ref && !q.title) {
-        // 番号の物へ線(あとで探す)
-        const from: End | null = cur ?? (curRef ? { ref: curRef } : null);
-        if (from) pendLinks.push({ from, to: q.ref, label: p.label, arrow: true });
-        curRef = q.ref;
-        cur = null;
-        continue;
-      }
-      const n: OutlineNode = { title: q.title, children: [], label: p.label, arrow: true };
-      if (q.ref) named.set(q.ref, n);
-      if (cur) cur.children.push(n);
-      else if (curRef) pendKids.push({ parent: curRef, node: n }); // 「(1) → 文」: 文は (1) の子として並べる
-      else roots.push(n);
-      cur = n;
-      curRef = null;
+    // 「(n): …」= 番号の物から
+    const from = new RegExp(`^${REF}\\s*[:：]\\s*(.+)$`).exec(body);
+    if (from) {
+      const { label, rest } = takeLabel(from[2]);
+      const it = item(rest);
+      if (!it.title && it.ref) pendLinks.push({ from: { ref: from[1] }, to: { ref: it.ref }, label });
+      else if (it.title) pendKids.push({ parent: from[1], node: make(it, label) });
+      continue;
     }
+    const { label, rest } = parent ? takeLabel(body) : { label: undefined, rest: body };
+    // 「… :(n)」= その文から番号の物へ
+    const to = new RegExp(`^(.*?)\\s*[:：]\\s*${REF}$`).exec(rest);
+    const it = item(to ? to[1] : rest);
+    if (!it.title && it.ref) {
+      // 「(n)」だけの子の行: 親からその物へ
+      if (parent) pendLinks.push({ from: parent, to: { ref: it.ref }, label });
+      if (to) pendLinks.push({ from: { ref: it.ref }, to: { ref: to[2] } });
+      continue;
+    }
+    if (!it.title) continue;
+    const n = make(it, label);
+    (parent ? parent.children : roots).push(n);
+    stack.push({ rank, node: n });
+    if (to) pendLinks.push({ from: n, to: { ref: to[2] } });
   }
   // 番号を探す(書いていない番号は、その番号の物を作る)
   const find = (ref: string) => {
@@ -195,8 +193,9 @@ function parseIndented(text: string): { roots: OutlineNode[]; links: OutlineLink
     }
     return n;
   };
+  const end = (e: End) => ("ref" in e ? find(e.ref) : e);
   for (const k of pendKids) find(k.parent).children.push(k.node);
-  for (const l of pendLinks) links.push({ from: "ref" in l.from ? find(l.from.ref) : l.from, to: find(l.to), label: l.label, arrow: l.arrow });
+  for (const l of pendLinks) links.push({ from: end(l.from), to: end(l.to), label: l.label });
   return { roots, links };
 }
 
@@ -225,7 +224,7 @@ export interface Box {
  */
 export function layoutOutline(roots: OutlineNode[], size: (i: number) => Box, cx: number, cy: number, gapX = 64, gapY = 12): { x: number; y: number }[] {
   // 線に言葉があれば、その分だけ間を広げる(言葉で線が隠れないように)
-  const gapOf = (n: OutlineNode) => gapX + (n.label ? [...n.label].length * 15 + 40 : 0) + (n.arrow ? 10 : 0);
+  const gapOf = (n: OutlineNode) => gapX + (n.label ? [...n.label].length * 15 + 40 : 0);
   const idx = new Map<OutlineNode, number>();
   let k = 0;
   const number = (n: OutlineNode) => {

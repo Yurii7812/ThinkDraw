@@ -50,31 +50,41 @@ describe("文章からマインドマップ(2026-11-27)", () => {
 });
 
 import { parseOutlineGraph } from "../src/core/outline";
-describe("番号 (n) と矢印で網にする(2026-11-27)", () => {
+describe("番号 (n) とコロンで網にする(2026-11-27 夜に決め直し)", () => {
   const g = (t: string) => {
     const r = parseOutlineGraph(t);
-    return { tree: show(r.roots), links: r.links.map((l) => `${l.from.title}>${l.to.title}${l.label ? ":" + l.label : ""}${l.arrow ? "!" : ""}`) };
+    return { tree: show(r.roots), links: r.links.map((l) => `${l.from.title}>${l.to.title}${l.label ? ":" + l.label : ""}`) };
   };
-  it("A → B は矢印の子、→(言葉) で線に言葉", () => {
-    expect(g("雨 →(原因) 洪水 → 避難")).toEqual({ tree: [{ 雨: [{ 洪水: ["避難"] }] }], links: [] });
-    const r = parseOutlineGraph("雨 →(原因) 洪水");
-    expect(r.roots[0].children[0].label).toBe("原因");
-    expect(r.roots[0].children[0].arrow).toBe(true);
-  });
-  it("(n) で番号を付け、ほかの所の (n) で同じ物を指す(網)", () => {
-    const t = "(1) 気候変動\n  海面上昇\n    (2) 島の水没\n農業\n  (1)\n  (2)\n(2) → 移住";
-    const r = g(t);
-    expect(r.tree).toEqual([{ 気候変動: [{ 海面上昇: [{ 島の水没: ["移住"] }] }] }, "農業"]);
+  it("番号は文の後ろ(空白はあってもなくても)。子の行の「(n)」だけで親から線", () => {
+    const r = g("気候変動 (1)\n  海面上昇\n    島の水没(2)\n農業\n  (1)\n  (2)");
+    expect(r.tree).toEqual([{ 気候変動: [{ 海面上昇: ["島の水没"] }] }, "農業"]);
     expect(r.links).toEqual(["農業>気候変動", "農業>島の水没"]);
   });
-  it("番号どうしの矢印・後ろで付けた番号・無い番号", () => {
-    const r = g("(a) → (b)\n(b) 結果\n(1) 原因\n(1) →(生む) (b)\n(9) → x");
-    expect(r.links).toContain("原因>結果:生む!");
-    expect(r.links).toContain("(a)>結果!");
+  it("(n):い は n から い へ、い :(n) は い から n へ(空白は関係ない)", () => {
+    const r = g("あ(1)\n(1):い\n(1): う\nえ :(1)\nお:(1)");
+    expect(r.tree).toEqual([{ あ: ["い", "う"] }, "え", "お"]);
+    expect(r.links).toEqual(["え>あ", "お>あ"]);
+  });
+  it("子の行の頭の (言葉) は親からの線の言葉", () => {
+    const r = parseOutlineGraph("雨\n\t(原因)洪水\n(1)\nx (1)\n(1): (結果)y");
+    expect(r.roots[0].children[0]).toMatchObject({ title: "洪水", label: "原因" });
+    const x = r.roots.find((n) => n.title === "x")!;
+    expect(x.children[0]).toMatchObject({ title: "y", label: "結果" });
+  });
+  it("コロンは番号の隣だけ。ふつうの文のコロン・時刻はそのまま", () => {
+    expect(g("注意: 傘を持つ\n10:30 集合")).toEqual({ tree: ["注意: 傘を持つ", "10:30 集合"], links: [] });
+  });
+  it("番号どうし・後ろで付けた番号・無い番号", () => {
+    const r = g("(1): (2)\n原因(1)\n結果 (2)\n(9): z");
+    expect(r.links).toContain("原因>結果");
+    expect(r.tree).toContainEqual({ "(9)": ["z"] });
   });
   it("同じ言葉でも別々に書けば別の物", () => {
     const r = parseOutlineGraph("a\n b\nc\n b");
     expect(r.roots[0].children[0]).not.toBe(r.roots[1].children[0]);
+  });
+  it("見出しの番号「1. 」「1) 」は番号 (n) ではない", () => {
+    expect(g("1. 一つ目\n2) 二つ目").tree).toEqual(["一つ目", "二つ目"]);
   });
 });
 
@@ -83,8 +93,9 @@ describe("AI に渡す書き方の例", () => {
   it("例のとおりに読める", () => {
     const ex = T.outlineGuide.split("例:\n")[1];
     const r = parseOutlineGraph(ex);
-    expect(show(r.roots)).toEqual([{ 気候変動: [{ 海面上昇: [{ 島の水没: ["移住"] }] }, "農業への影響"] }]);
-    expect(r.links.map((l) => `${l.from.title}>${l.to.title}:${l.label}`)).toEqual(["気候変動>島の水没:原因"]);
-    expect(r.roots[0].children[0].children[0].children[0].label).toBe("引き起こす");
+    expect(show(r.roots)).toEqual([{ 気候変動: [{ 海面上昇: ["島の水没"] }, { 農業: ["収入の減少"] }, "異常気象"] }, "移住"]);
+    expect(r.links.map((l) => `${l.from.title}>${l.to.title}`)).toEqual(["移住>島の水没"]);
+    expect(r.roots[0].children[1].children[0].label).toBe("打撃");
+    expect(r.roots[0].children[2].label).toBe("原因");
   });
 });

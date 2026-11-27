@@ -261,7 +261,7 @@ test("修正15(2): コピーした字下げの文章を Ctrl+Q でマインド�
   await expect.poll(() => app.evaluate(() => (globalThis as { __bresutoOpened?: string[] }).__bresutoOpened ?? [])).toContain("https://example.com/");
 });
 
-test("修正15(3): 線はまっすぐ・選ぶと線が太く色付きでつながる文字に下線・Alt+D で線と重なる文字だけどかす・番号で網を貼る", async () => {
+test("修正15(3): 線はまっすぐ・選ぶと線が太く色付きでつながる文字に下線・Alt+D で線と重なる文字だけどかす・番号 (n) で網を貼る(線の言葉は子の行の頭のかっこ)", async () => {
   // 親と子をつなぎ、その線の上に別の文字を置く
   await page.evaluate(() => {
     const a = (window as any).__app;
@@ -308,7 +308,7 @@ test("修正15(3): 線はまっすぐ・選ぶと線が太く色付きでつな�
     return a.vault.itemPos(a.canvas.group, [...a.vault.nodes.values()].find((n: any) => n.title === "じゃま").id);
   })).toEqual(before.j);
   // 番号で網: (1) を 2 か所から
-  await page.evaluate(() => navigator.clipboard.writeText("(1) 気候変動\n  海面上昇\n農業\n  (1)\n農業 →(打撃) 収入"));
+  await page.evaluate(() => navigator.clipboard.writeText("気候変動 (1)\n  海面上昇\n農業\n  (1)\n農業\n  (打撃)収入"));
   await page.mouse.move(400, 150);
   await page.keyboard.press("Control+q");
   await expect(page.locator(".node", { hasText: "気候変動" })).toHaveCount(1);
