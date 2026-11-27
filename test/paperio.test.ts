@@ -9,6 +9,16 @@ import type { OcrEngine } from "../src/main/ocr";
 import { DEFAULT_CROP, PaperStore } from "../src/main/paperio";
 
 let tmp = "";
+/** magick と pdftoppm が入っている所だけで試す(GitHub Actions の Windows・Mac などには無い) */
+const hasTools = (() => {
+  try {
+    execFileSync("magick", ["-version"], { stdio: "ignore" });
+    execFileSync("pdftoppm", ["-v"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
 /** 左上に ID を青で書いた、A4 の紙の画像を作る */
 function page(name: string, id: string, color = "#2040c0"): string {
   const f = path.join(tmp, "in", name);
@@ -37,7 +47,7 @@ describe("OCR の返事の読み方", () => {
   });
 });
 
-describe("紙PKM の取り込み", () => {
+describe.skipIf(!hasTools)("紙PKM の取り込み", () => {
   const vault = () => path.join(tmp, "vault");
 
   it("PDF と画像をページに分け、読みが一致したものは自動・分かれたものは要確認。確定すると一覧に入る", async () => {
