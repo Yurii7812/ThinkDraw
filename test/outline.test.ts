@@ -48,3 +48,43 @@ describe("文章からマインドマップ(2026-11-27)", () => {
     expect(two[2].x).toBeGreaterThan(two[0].x);
   });
 });
+
+import { parseOutlineGraph } from "../src/core/outline";
+describe("番号 (n) と矢印で網にする(2026-11-27)", () => {
+  const g = (t: string) => {
+    const r = parseOutlineGraph(t);
+    return { tree: show(r.roots), links: r.links.map((l) => `${l.from.title}>${l.to.title}${l.label ? ":" + l.label : ""}${l.arrow ? "!" : ""}`) };
+  };
+  it("A → B は矢印の子、→(言葉) で線に言葉", () => {
+    expect(g("雨 →(原因) 洪水 → 避難")).toEqual({ tree: [{ 雨: [{ 洪水: ["避難"] }] }], links: [] });
+    const r = parseOutlineGraph("雨 →(原因) 洪水");
+    expect(r.roots[0].children[0].label).toBe("原因");
+    expect(r.roots[0].children[0].arrow).toBe(true);
+  });
+  it("(n) で番号を付け、ほかの所の (n) で同じ物を指す(網)", () => {
+    const t = "(1) 気候変動\n  海面上昇\n    (2) 島の水没\n農業\n  (1)\n  (2)\n(2) → 移住";
+    const r = g(t);
+    expect(r.tree).toEqual([{ 気候変動: [{ 海面上昇: [{ 島の水没: ["移住"] }] }] }, "農業"]);
+    expect(r.links).toEqual(["農業>気候変動", "農業>島の水没"]);
+  });
+  it("番号どうしの矢印・後ろで付けた番号・無い番号", () => {
+    const r = g("(a) → (b)\n(b) 結果\n(1) 原因\n(1) →(生む) (b)\n(9) → x");
+    expect(r.links).toContain("原因>結果:生む!");
+    expect(r.links).toContain("(a)>結果!");
+  });
+  it("同じ言葉でも別々に書けば別の物", () => {
+    const r = parseOutlineGraph("a\n b\nc\n b");
+    expect(r.roots[0].children[0]).not.toBe(r.roots[1].children[0]);
+  });
+});
+
+import { T } from "../src/renderer/strings";
+describe("AI に渡す書き方の例", () => {
+  it("例のとおりに読める", () => {
+    const ex = T.outlineGuide.split("例:\n")[1];
+    const r = parseOutlineGraph(ex);
+    expect(show(r.roots)).toEqual([{ 気候変動: [{ 海面上昇: [{ 島の水没: ["移住"] }] }, "農業への影響"] }]);
+    expect(r.links.map((l) => `${l.from.title}>${l.to.title}:${l.label}`)).toEqual(["気候変動>島の水没:原因"]);
+    expect(r.roots[0].children[0].children[0].children[0].label).toBe("引き起こす");
+  });
+});

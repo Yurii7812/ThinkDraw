@@ -1,6 +1,7 @@
 // 無限キャンバス(SPEC 4.2)。1 つのグループの中身(所属 + 引用)とペンの線を描き、操作をデータの操作に翻訳する。
 import { freeOffset, gap, placeAround, segHitsRect, type Rect } from "../core/placement";
-import { flattenOutline, layoutOutline, parseOutline, type OutlineNode } from "../core/outline";
+import { flattenOutline, layoutOutline, parseOutlineGraph, type OutlineLink, type OutlineNode } from "../core/outline";
+import { alignItems, resolveOverlaps, spreadFrom, type ArrItem } from "../core/arrange";
 import { readZipEntry } from "./unzip";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
@@ -131,6 +132,9 @@ let refClipMark = "";
 let refCutFrom: string | null = null;
 export const refClipboard = { get mark() { return refClipMark; }, get size() { return refClip.length; }, get ids() { return refClip.map((r) => r.id); } };
 const CARD_FACE_H = CARD_H;
+
+/** 線が文字の枠に沿ってよける(2026-11-24〜11-27)。利用者の答えで、まっすぐに戻した */
+const ROUTE_AROUND = false;
 
 export function isImageFile(f: string): boolean {
   return /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(f);
@@ -371,6 +375,7 @@ export class Canvas {
     for (const [id, el] of this.els) el.classList.toggle("selected", this.selection.has(id));
     for (const p of this.strokesSvg.querySelectorAll<SVGPathElement>("path.stroke")) p.classList.toggle("selected", this.strokeSel.has(p.dataset.sid!));
     this.updateSelBar();
+    this.applyEmphasis();
     this.host.onSelectionChange([...this.selection]);
   }
 
@@ -859,7 +864,9 @@ export class Canvas {
     const attach = new Map<string, Pt[]>();
     for (const g of geom) for (const [id, p] of [[g.from, g.p1], [g.to, g.p2]] as [string, Pt][]) (attach.get(id) ?? attach.set(id, []).get(id)!).push(p);
     const routes = new Map<string, Pt[]>();
-    for (const e of geom) {
+    // 2026-11-27 利用者(質問票 br-1127c): 文字の枠に沿ってよけるのはやめ、線はまっすぐ。重なった所は文字の下で線を隠す(マスク)。
+    // 重なりは Alt+D で文字の方をどかす
+    for (const e of ROUTE_AROUND ? geom : []) {
       const list = obstacles.filter(([i]) => i !== e.from && i !== e.to);
       const rt = routeAround(e.ends.start, e.ends.end, list.map(([i, r]) => ({ ...this.visualBox(i, r), pad: 14 + 6 * (around.get(i) ?? 0), avoid: attach.get(i) })));
       if (!rt) continue;
@@ -939,6 +946,38 @@ export class Canvas {
     defs.append(mask);
     this.drawOuterEdges();
     this.draftLine();
+    this.applyEmphasis();
+  }
+
+  /**
+   * 選んだ文・線を目立たせる(2026-11-27 利用者。zip 4.2): 選んだ文の線(と選んだ線)は太く色付きで、ほかの線より手前に。
+   * その線の先の文には色の下線。ほかの文・線は薄くしない
+   */
+  private applyEmphasis(): void {
+    const linesG = this.edgesSvg.querySelector(".edge-lines");
+    const near = new Set<string>();
+    this.edgesSvg.querySelector(".edge-hot")?.remove();
+    if (linesG) {
+      // 手前に描く写し(元の線は並べ替えない。並べ替えるとダブルクリックが効かなくなる)
+      const hotG = svg("g", { class: "edge-hot", mask: "url(#edge-mask)" });
+      for (const g of linesG.querySelectorAll<SVGGElement>(".edge[data-from]")) {
+        const f = g.getAttribute("data-from")!, t = g.getAttribute("data-to")!;
+        const on = this.selection.has(f) || this.selection.has(t) || this.edgeSel.has(f + ">" + t);
+        g.classList.toggle("hl", on);
+        if (!on) continue;
+        near.add(f);
+        near.add(t);
+        // 写しは、元の線と同じ形・名前を変えて(線を数える所・押す所に入らないように)
+        const c = svg("g", { class: "hot-line" });
+        for (const [sel, cls, prop] of [[".vis", "h-vis", "stroke"], [".end-fill", "h-fill", "fill"], [".end-stroke", "h-stroke", "stroke"]] as const) {
+          const src = g.querySelector(sel);
+          if (src) c.append(svg("path", { d: src.getAttribute("d") ?? "", class: cls, "data-p": prop }));
+        }
+        hotG.append(c);
+      }
+      if (hotG.childNodes.length) linesG.after(hotG);
+    }
+    for (const [id, el] of this.els) el.classList.toggle("hl-near", near.has(id) && !this.selection.has(id));
   }
 
   private renderStrokes(): void {
@@ -1035,13 +1074,7 @@ export class Canvas {
       this.commitDraft("esc");
       this.el.focus();
       void this.quotePaste(at);
-    } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "v" && this.draft && !this.draft.ta.value.trim() && !this.draft.id) {
-      // 何もない所を押して出た書く欄で Ctrl+Shift+V: その場所にマインドマップとして貼る(2026-11-27)
-      e.preventDefault();
-      const at = { x: this.draft.x + 40, y: this.draft.y };
-      this.commitDraft("esc");
-      this.el.focus();
-      void this.pasteOutline(at).then((ok) => ok || toast(T.outlineNothing));
+
     } else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l") {
       // 書いている文字から Ctrl+L: 決めてから、その文字とつなぐ物を探す(2026-11-24 利用者)
       e.preventDefault();
@@ -2181,6 +2214,56 @@ export class Canvas {
   }
 
   // ---------- キー ----------
+  // ---------- 配置の補助(2026-11-27 利用者。zip「配置補助・接続線改善 統合版」) ----------
+  private arrItems(ids?: Iterable<string>): ArrItem[] {
+    const fr = this.frameIds();
+    const want = ids ? new Set(ids) : null;
+    return [...this.rects].filter(([id]) => !fr.has(id) && (!want || want.has(id))).map(([id, r]) => ({ id, r: { ...r } }));
+  }
+  private applyMoves(moves: Map<string, { x: number; y: number }>): void {
+    if (!moves.size) return;
+    this.v.move(this.group, [...moves].map(([id, p]) => ({ id, x: p.x, y: p.y })));
+    this.renderNow();
+  }
+  /** Alt+D: 重なりをどかす。線を選んでいれば その線と重なる文字だけ、いくつか選んでいれば その中だけ、何も選んでいなければボード全体 */
+  resolveOverlapsNow(): void {
+    if (this.readOnly) return;
+    const items = this.arrItems();
+    const here = new Set(items.map((i) => i.id));
+    const links = items.flatMap((i) => (this.v.get(i.id)?.links ?? []).filter((l) => here.has(l.to)).map((l) => ({ from: i.id, to: l.to })));
+    const edges = this.edgeSel.size ? new Set(this.edgeSel) : null;
+    const ends = new Set([...(edges ?? [])].flatMap((k) => k.split(">")));
+    const sel = this.selection.size > 1 ? new Set(this.selection) : null;
+    const movable = (id: string) => (edges ? !ends.has(id) : sel ? sel.has(id) : true);
+    const r = resolveOverlaps(items, links, movable, { onlyLinks: edges ?? undefined });
+    this.v.tx(() => this.applyMoves(r.moves));
+    toast(r.moves.size || r.unresolved.length ? T.arrResolved(r.moves.size, r.unresolved.length) : T.arrNothing);
+  }
+  /** Alt+↑ / Alt+↓: 選んだ物の間かくを広げる・狭める */
+  spreadSelection(factor: number): void {
+    if (this.readOnly || this.selection.size < 2) return;
+    this.v.tx(() => this.applyMoves(spreadFrom(this.arrItems(this.selection), factor)));
+  }
+  alignSelection(axis: "v" | "h"): void {
+    if (this.readOnly || this.selection.size < 2) return;
+    this.v.tx(() => this.applyMoves(alignItems(this.arrItems(this.selection), axis)));
+  }
+  /** 空きの右クリック: ここから右(下)にある物を全部ずらして、場所を空ける(Excel の行・列の挿入のように。ペンの線も) */
+  insertSpace(px: number, py: number, axis: "x" | "y", amount = 200): void {
+    if (this.readOnly) return;
+    const moves = new Map<string, { x: number; y: number }>();
+    for (const [id, r] of this.rects) if ((axis === "x" ? r.x : r.y) >= (axis === "x" ? px : py)) moves.set(id, { x: r.x + (axis === "x" ? amount : 0), y: r.y + (axis === "y" ? amount : 0) });
+    const strokes = this.v.strokesOf(this.group).filter((s) => {
+      const b = strokeBox(s);
+      return (axis === "x" ? b.x : b.y) >= (axis === "x" ? px : py);
+    });
+    this.v.tx(() => {
+      this.applyMoves(moves);
+      this.v.moveStrokes(this.group, strokes.map((s) => s.id), axis === "x" ? amount : 0, axis === "y" ? amount : 0);
+    });
+    this.renderNow();
+  }
+
   /** このボードの中で、線でつながっている物を全部(directed = 線を引いた向きの先だけ。両矢印は両方へ) */
   connectedFrom(start: string[], directed: boolean): string[] {
     const here = new Set(this.rects.keys());
@@ -2271,9 +2354,13 @@ export class Canvas {
       this.setSelection(this.connectedFrom(ids, e.shiftKey));
       return true;
     }
-    // Ctrl+Shift+V: コピーした文章を、マインドマップとして貼る(2026-11-27)
-    if (e.ctrlKey && e.shiftKey && k === "v") {
-      void this.pasteOutline().then((ok) => ok || toast(T.outlineNothing));
+    // 配置の補助: Alt+D 重なりをどかす・Alt+↑/↓ 選んだ物の間を広げる/狭める(2026-11-27)
+    if (e.altKey && !e.ctrlKey && k === "d") {
+      this.resolveOverlapsNow();
+      return true;
+    }
+    if (e.altKey && !e.ctrlKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.selection.size > 1) {
+      this.spreadSelection(e.key === "ArrowUp" ? 1.25 : 1 / 1.25);
       return true;
     }
     if (e.ctrlKey && k === "a") {
@@ -2444,9 +2531,9 @@ export class Canvas {
     } catch {
       text = "";
     }
-    const roots = parseOutline(text);
+    const { roots, links } = parseOutlineGraph(text);
     if (!roots.length) return false;
-    this.placeOutline(roots, at ?? this.lastPt ?? this.visibleCenter());
+    this.placeOutline(roots, at ?? this.lastPt ?? this.visibleCenter(), links);
     return true;
   }
   /** OPML・FreeMind・XMind のファイルを落とした: マインドマップにして置く。読めなければ null(ふつうの添付にする) */
@@ -2457,20 +2544,31 @@ export class Canvas {
       text = (await readZipEntry(data, (n) => n === "content.json")) ?? (await readZipEntry(data, (n) => n === "content.xml"));
     } else if (/\.(opml|mm)$/i.test(f.name)) text = await f.text();
     if (!text) return false;
-    const roots = parseOutline(text, f.name);
+    const { roots, links } = parseOutlineGraph(text, f.name);
     if (!roots.length) return false;
-    this.placeOutline(roots, at);
+    this.placeOutline(roots, at, links);
     return true;
   }
-  placeOutline(roots: OutlineNode[], at: { x: number; y: number }): void {
+  placeOutline(roots: OutlineNode[], at: { x: number; y: number }, extra: OutlineLink[] = []): void {
     const flat = flattenOutline(roots);
     if (flat.length > 2000) return void toast(T.outlineTooMany(flat.length));
     const ids: string[] = [];
+    const idOf = new Map<OutlineNode, string>();
+    const link = (a: string, b: string, arrow?: boolean, label?: string) => {
+      this.v.addLink(a, b, arrow ? "arrow" : "line");
+      if (label) this.v.setLinkLabel(a, b, label);
+    };
     this.v.tx(() => {
       for (const f of flat) {
         const n = this.v.create({ type: "text", title: f.node.title, group: this.group, x: Math.round(at.x), y: Math.round(at.y) });
         ids.push(n.id);
-        if (f.parent >= 0) this.v.addLink(ids[f.parent], n.id);
+        idOf.set(f.node, n.id);
+        if (f.parent >= 0) link(ids[f.parent], n.id, f.node.arrow, f.node.label);
+      }
+      // 番号 (n) で指した線(網になる所)
+      for (const l of extra) {
+        const a = idOf.get(l.from), b = idOf.get(l.to);
+        if (a && b && a !== b) link(a, b, l.arrow, l.label);
       }
       this.renderNow();
       const size = (i: number) => {
@@ -2769,6 +2867,18 @@ export class Canvas {
     if (!many && !isRef && n.type === "text" && n.file) more.push({ label: T.rename, action: () => this.editText(id) });
     if (!many && !isRef && n.type === "text" && n.cite) more.push({ label: T.citeToPlain, action: () => this.v.update(id, { title: this.citeText(n), cite: null }) });
     if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") more.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
+    // 配置の補助(2026-11-27)。いくつか選んだときだけ(1 つのときのメニューは小さいまま。見本 X)
+    if (many)
+      items.push({
+        label: T.arrMenu,
+        sub: [
+          { label: T.arrResolve, hint: "Alt+D", desc: T.arrResolveSelDesc, action: () => this.resolveOverlapsNow() },
+          { label: T.arrSpread, hint: "Alt+↑", action: () => this.spreadSelection(1.25) },
+          { label: T.arrShrink, hint: "Alt+↓", action: () => this.spreadSelection(1 / 1.25) },
+          { label: T.arrAlignV, action: () => this.alignSelection("v") },
+          { label: T.arrAlignH, action: () => this.alignSelection("h") },
+        ],
+      });
     items.push({ label: T.mMoreMenu, sub: more });
     showMenu(x, y, items);
   }
@@ -2925,7 +3035,23 @@ export class Canvas {
           this.openNote(n.id);
         },
       },
-      { label: T.pasteOutline, hint: "Ctrl+Shift+V", action: () => void this.pasteOutline({ x: px, y: py }).then((ok) => ok || toast(T.outlineNothing)) },
+      {
+        label: T.arrMenu,
+        sub: [
+          { label: T.arrInsertRight, desc: T.arrInsertDesc, action: () => this.insertSpace(px, py, "x") },
+          { label: T.arrInsertDown, desc: T.arrInsertDesc, action: () => this.insertSpace(px, py, "y") },
+          { label: T.arrResolve, hint: "Alt+D", desc: T.arrResolveAllDesc, action: () => this.resolveOverlapsNow() },
+        ],
+      },
+      { label: T.pasteOutline, hint: "Ctrl+Q", action: () => void this.pasteOutline({ x: px, y: py }).then((ok) => ok || toast(T.outlineNothing)) },
+      {
+        label: T.outlineGuideCopy,
+        action: () =>
+          void navigator.clipboard.writeText(T.outlineGuide).then(
+            () => toast(T.outlineGuideCopied),
+            () => toast(T.quoteNothing),
+          ),
+      },
       { label: T.attachHead, heading: true },
       ...this.attachItems(px, py),
       {
@@ -2989,6 +3115,7 @@ export class Canvas {
     if (ks.size && (this.selection.size || this.strokeSel.size)) this.setSelection([]);
     this.edgeSel = ks;
     for (const g of this.edgesSvg.querySelectorAll<SVGGElement>("g.edge, g.elabel")) g.classList.toggle("selected", ks.has(g.getAttribute("data-from") + ">" + g.getAttribute("data-to")));
+    this.applyEmphasis();
   }
   private edgeLinks(keys: Iterable<string>): { from: string; to: string; l: Link }[] {
     const out: { from: string; to: string; l: Link }[] = [];

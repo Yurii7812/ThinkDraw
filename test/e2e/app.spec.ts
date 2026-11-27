@@ -1421,12 +1421,16 @@ test("2026-11-24 修正8: 括弧はノードの手前で欠けない・線は文
   await shot("32-fix8");
 });
 
-test("2026-11-24: 線は文字の枠に沿ってよける・線だけを囲むと(ふつうのドラッグでも)線を選ぶ・右クリックは見本 X", async () => {
+test("2026-11-24: 線と重なる文字は Alt+D でどかす(2026-11-27 から。前は線が枠に沿ってよけた)・線だけを囲むと(ふつうのドラッグでも)線を選ぶ・右クリックは見本 X", async () => {
   await write(300, 150, "上の端");
   await write(300, 560, "下の端");
   await write(300, 360, "まんなかの文字");
   await linkTo("上の端", "下の端");
   await expect(page.locator("g.edge")).toHaveCount(1);
+  await page.waitForTimeout(200);
+  // 2026-11-27 から線はまっすぐ(文字の下は隠れる)。Alt+D で、線と重なる文字の方をどかす
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Alt+d");
   await page.waitForTimeout(200);
   // 線のどの点も、まんなかの文字の箱に入らない
   const inside = await page.evaluate(() => {
@@ -1503,63 +1507,7 @@ test("2026-11-24: @ を打つと候補(これまでのしるし・記録の種�
   await expect(page.locator(".node.selected", { hasText: "アリストテレス" })).toHaveCount(1);
 });
 
-test("2026-11-24: グループをよける線は、上・横・下で同じくらい離れる", async () => {
-  await write(300, 120, "上の端A");
-  await write(320, 560, "下の端A");
-  await write(300, 340, "まんなかの箱");
-  await page.locator(".node", { hasText: "まんなかの箱" }).click({ modifiers: ["Control"] });
-  await page.keyboard.press("Control+g");
-  await page.keyboard.press("Enter");
-  await page.keyboard.press("Escape");
-  await linkTo("上の端A", "下の端A");
-  await expect(page.locator("g.edge")).toHaveCount(1);
-  await page.waitForTimeout(200);
-  const gaps = await page.evaluate(() => {
-    const p = document.querySelector("g.edge .vis") as SVGPathElement;
-    const ctm = p.getScreenCTM()!;
-    const n = document.querySelector(".node.t-group")!;
-    const r = n.getBoundingClientRect();
-    const bottom = r.bottom + 3; // 下に重ねた影
-    let top = Infinity, side = Infinity, bot = Infinity;
-    const L = p.getTotalLength();
-    for (let i = 0; i <= 400; i++) {
-      const m = p.getPointAtLength((L * i) / 400);
-      const x = ctm.a * m.x + ctm.c * m.y + ctm.e, y = ctm.b * m.x + ctm.d * m.y + ctm.f;
-      if (x > r.left && x < r.right && y < r.top) top = Math.min(top, r.top - y);
-      if (x > r.left && x < r.right && y > bottom) bot = Math.min(bot, y - bottom);
-      if (y > r.top && y < bottom) side = Math.min(side, x < r.left ? r.left - x : x - r.right);
-    }
-    return { top, side, bot };
-  });
-  const used = [gaps.top, gaps.side, gaps.bot].filter((g) => isFinite(g));
-  expect(used.length).toBeGreaterThanOrEqual(2);
-  expect(Math.max(...used) - Math.min(...used)).toBeLessThanOrEqual(2);
-  // 箱につながる線と、箱を回る線: 回る線はつながる線の端より外を通り、またぐ所は弧で乗り越える(つながって見えない)
-  await write(60, 345, "横から");
-  const grp = (await page.locator(".node.t-group").boundingBox())!;
-  await page.locator(".node", { hasText: "横から" }).click({ modifiers: ["Control"] });
-  await page.keyboard.press("Control+l");
-  await page.keyboard.type("まんなかの箱");
-  await page.locator(".picker-row", { hasText: "まんなかの箱" }).first().click();
-  await expect(page.locator("g.edge")).toHaveCount(2);
-  await page.waitForTimeout(200);
-  // 回る線は、つながる線の無い側(右)を通る
-  const xs = await page.evaluate(() => {
-    const ps = [...document.querySelectorAll("g.edge .vis")] as SVGPathElement[];
-    const p = ps.find((q) => (q.getAttribute("d") ?? "").includes("Q"))!;
-    const ctm = p.getScreenCTM()!;
-    const out: number[] = [];
-    const L = p.getTotalLength();
-    for (let i = 0; i <= 100; i++) {
-      const m = p.getPointAtLength((L * i) / 100);
-      out.push(ctm.a * m.x + ctm.c * m.y + ctm.e);
-    }
-    return out;
-  });
-  expect(Math.max(...xs)).toBeGreaterThan(grp.x + grp.width);
-  expect(Math.min(...xs)).toBeGreaterThan(grp.x - 2);
-  await shot("36-around");
-});
+// 「グループをよける線は、上・横・下で同じくらい離れる」の試験は、2026-11-27 に線をまっすぐに戻したので外した(利用者の答え br-1127c)
 
 test("2026-11-24: 線の右クリックの「線の設定…」で、種類ごとのいつもの色を決める(色を付けていない線はその色・付けた線はそのまま)", async () => {
   await write(250, 200, "甲");

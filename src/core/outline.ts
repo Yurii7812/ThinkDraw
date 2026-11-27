@@ -6,6 +6,17 @@
 export interface OutlineNode {
   title: string;
   children: OutlineNode[];
+  /** 親からの線の言葉(「A →(原因) B」の 原因) */
+  label?: string;
+  /** 親からの線が矢印か(→ で書いた) */
+  arrow?: boolean;
+}
+/** 木のほかの線(番号 (n) で指した所へ。網になる所) */
+export interface OutlineLink {
+  from: OutlineNode;
+  to: OutlineNode;
+  label?: string;
+  arrow?: boolean;
 }
 
 const decode = (s: string) =>
@@ -83,12 +94,29 @@ function parseXmindXml(src: string): OutlineNode[] {
   return prune(roots);
 }
 
-/** 字下げ・箇条書き・見出しの文章 */
-function parseIndented(text: string): OutlineNode[] {
+/**
+ * 字下げ・箇条書き・見出しの文章(2026-11-27)。網にする書き方も読む(AI にも書きやすいように、記号は少しだけ):
+ * - 「(1) 気候変動」= この物に 1 番を付ける。ほかの所で「(1)」とだけ書くと、同じ物を指す(線がつながる)
+ * - 「A → B」「A -> B」= A から B へ矢印。「A →(原因) B」で線に言葉。「A → B → C」も
+ * - 同じ言葉でも、別々に書けば別の物(まとめない)
+ */
+function parseIndented(text: string): { roots: OutlineNode[]; links: OutlineLink[] } {
   const roots: OutlineNode[] = [];
+  const links: OutlineLink[] = [];
+  const named = new Map<string, OutlineNode>();
+  // 番号は後ろで付けてもよいので、最後にまとめて探す。from / parent は物か番号
+  type End = OutlineNode | { ref: string };
+  const pendLinks: { from: End; to: string; label?: string; arrow?: boolean }[] = [];
+  const pendKids: { parent: string; node: OutlineNode }[] = [];
   // 見出しは #1〜#6 の順位、ふつうの行は 10 + 字下げの幅(見出しの下に入る)。自分より順位の小さい、直前のものが親
   const stack: { rank: number; node: OutlineNode }[] = [];
   let fence = false;
+  /** 「(n) 文」「(n)」「文」を読む */
+  const piece = (t: string): { ref?: string; title: string } => {
+    const m = /^\((\d{1,4}|[a-zA-Z][\w-]{0,15})\)\s*(.*)$/.exec(t.trim());
+    return m ? { ref: m[1], title: m[2].trim() } : { title: t.trim() };
+  };
+  const ARROW = /\s*(?:→|->|⇒)(?:\(([^()]*)\))?\s*/;
   for (const raw of text.replace(/\r\n?/g, "\n").split("\n")) {
     if (/^\s*(```|~~~)/.test(raw)) {
       fence = !fence;
@@ -97,36 +125,93 @@ function parseIndented(text: string): OutlineNode[] {
     if (fence || !raw.trim()) continue;
     const line = raw.replace(/\t/g, "    ");
     let rank: number;
-    let title: string;
+    let body: string;
     const h = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
     if (h) {
       rank = h[1].length;
-      title = h[2];
+      body = h[2];
     } else {
-      const indent = /^ */.exec(line)![0].length;
-      rank = 10 + indent;
-      title = line
+      rank = 10 + /^ */.exec(line)![0].length;
+      body = line
         .trim()
         .replace(/^([-*+•・]|\d+[.)])\s+/, "")
         .replace(/^\[[ xX]\]\s+/, "");
     }
-    title = title.replace(/\s+/g, " ").trim();
-    if (!title) continue;
-    const node: OutlineNode = { title, children: [] };
+    body = body.replace(/\s+/g, " ").trim();
+    if (!body) continue;
+    // 矢印で分ける: [文, 言葉, 文, 言葉, 文 …]
+    const parts: { text: string; label?: string }[] = [];
+    let rest = body;
+    let lab: string | undefined;
+    for (let m: RegExpExecArray | null; (m = ARROW.exec(rest)); ) {
+      parts.push({ text: rest.slice(0, m.index), label: lab });
+      lab = m[1]?.trim() || undefined;
+      rest = rest.slice(m.index + m[0].length);
+    }
+    parts.push({ text: rest, label: lab });
     while (stack.length && stack[stack.length - 1].rank >= rank) stack.pop();
-    (stack.length ? stack[stack.length - 1].node.children : roots).push(node);
-    stack.push({ rank, node });
+    const parent = stack.length ? stack[stack.length - 1].node : null;
+    // 1 つ目: 木の中の物(番号だけなら、前・後の番号の物を指す)
+    const first = piece(parts[0].text);
+    let cur: OutlineNode | null = null;
+    let curRef: string | null = null;
+    if (first.ref && !first.title) {
+      curRef = first.ref;
+      if (parent) pendLinks.push({ from: parent, to: first.ref }); // 字下げの中の「(n)」= 親から (n) へ線
+    } else if (first.title) {
+      cur = { title: first.title, children: [] };
+      if (first.ref) named.set(first.ref, cur);
+      (parent ? parent.children : roots).push(cur);
+      stack.push({ rank, node: cur });
+    } else continue;
+    // 2 つ目から: 矢印の先
+    for (const p of parts.slice(1)) {
+      const q = piece(p.text);
+      if (!q.title && !q.ref) continue;
+      if (q.ref && !q.title) {
+        // 番号の物へ線(あとで探す)
+        const from: End | null = cur ?? (curRef ? { ref: curRef } : null);
+        if (from) pendLinks.push({ from, to: q.ref, label: p.label, arrow: true });
+        curRef = q.ref;
+        cur = null;
+        continue;
+      }
+      const n: OutlineNode = { title: q.title, children: [], label: p.label, arrow: true };
+      if (q.ref) named.set(q.ref, n);
+      if (cur) cur.children.push(n);
+      else if (curRef) pendKids.push({ parent: curRef, node: n }); // 「(1) → 文」: 文は (1) の子として並べる
+      else roots.push(n);
+      cur = n;
+      curRef = null;
+    }
   }
-  return roots;
+  // 番号を探す(書いていない番号は、その番号の物を作る)
+  const find = (ref: string) => {
+    let n = named.get(ref);
+    if (!n) {
+      n = { title: `(${ref})`, children: [] };
+      named.set(ref, n);
+      roots.push(n);
+    }
+    return n;
+  };
+  for (const k of pendKids) find(k.parent).children.push(k.node);
+  for (const l of pendLinks) links.push({ from: "ref" in l.from ? find(l.from.ref) : l.from, to: find(l.to), label: l.label, arrow: l.arrow });
+  return { roots, links };
 }
 
 /** 貼った・落とした文章を木にする。name はファイル名(わかれば。形の見分けに使う) */
 export function parseOutline(text: string, name = ""): OutlineNode[] {
+  return parseOutlineGraph(text, name).roots;
+}
+/** 木と、木のほかの線(番号で指した所)。名前はファイル名(わかれば) */
+export function parseOutlineGraph(text: string, name = ""): { roots: OutlineNode[]; links: OutlineLink[] } {
+  const tree = (roots: OutlineNode[]) => ({ roots, links: [] as OutlineLink[] });
   const t = text.trim();
-  if (/\.opml$/i.test(name) || /<opml[\s>]/i.test(t)) return xmlTree(t, "outline", (tag) => attr(tag, "text") ?? attr(tag, "title") ?? "");
-  if (/\.mm$/i.test(name) || /^<map[\s>]/i.test(t)) return xmlTree(t, "node", (tag) => attr(tag, "TEXT") ?? "");
-  if (/^\[\s*\{/.test(t) && t.includes("rootTopic")) return parseXmindJson(t);
-  if (/<xmap-content[\s>]/i.test(t)) return parseXmindXml(t);
+  if (/\.opml$/i.test(name) || /<opml[\s>]/i.test(t)) return tree(xmlTree(t, "outline", (tag) => attr(tag, "text") ?? attr(tag, "title") ?? ""));
+  if (/\.mm$/i.test(name) || /^<map[\s>]/i.test(t)) return tree(xmlTree(t, "node", (tag) => attr(tag, "TEXT") ?? ""));
+  if (/^\[\s*\{/.test(t) && t.includes("rootTopic")) return tree(parseXmindJson(t));
+  if (/<xmap-content[\s>]/i.test(t)) return tree(parseXmindXml(t));
   return parseIndented(text);
 }
 
@@ -138,7 +223,9 @@ export interface Box {
  * マインドマップの並び。根を (cx, cy) の真ん中に置き、子は右(多いときは左右に分ける)へ段ごとに並べる。
  * size(i) は i 番目(深さ優先の順)の大きさ。返すのは同じ順の左上の位置。根がいくつもあれば縦に並べる。
  */
-export function layoutOutline(roots: OutlineNode[], size: (i: number) => Box, cx: number, cy: number, gapX = 56, gapY = 12): { x: number; y: number }[] {
+export function layoutOutline(roots: OutlineNode[], size: (i: number) => Box, cx: number, cy: number, gapX = 64, gapY = 12): { x: number; y: number }[] {
+  // 線に言葉があれば、その分だけ間を広げる(言葉で線が隠れないように)
+  const gapOf = (n: OutlineNode) => gapX + (n.label ? [...n.label].length * 15 + 40 : 0) + (n.arrow ? 10 : 0);
   const idx = new Map<OutlineNode, number>();
   let k = 0;
   const number = (n: OutlineNode) => {
@@ -155,13 +242,13 @@ export function layoutOutline(roots: OutlineNode[], size: (i: number) => Box, cx
     hOf.set(n, v);
     return v;
   };
-  // side = 1 なら右へ、-1 なら左へ。edge = 親の側の縁の x
+  // side = 1 なら右へ、-1 なら左へ。edge = 親の縁の x(子は そこから gapOf だけ離す)
   const place = (n: OutlineNode, side: 1 | -1, edge: number, top: number) => {
     const b = size(idx.get(n)!);
     const hh = hOf.get(n)!;
-    const x = side === 1 ? edge : edge - b.w;
+    const x = side === 1 ? edge + gapOf(n) : edge - gapOf(n) - b.w;
     out[idx.get(n)!] = { x: Math.round(x), y: Math.round(top + hh / 2 - b.h / 2) };
-    placeKids(n.children, side, side === 1 ? x + b.w + gapX : x - gapX, top + hh / 2);
+    placeKids(n.children, side, side === 1 ? x + b.w : x, top + hh / 2);
   };
   const placeKids = (kids: OutlineNode[], side: 1 | -1, edge: number, mid: number) => {
     const total = kids.reduce((s, c) => s + hOf.get(c)!, 0) + gapY * Math.max(0, kids.length - 1);
@@ -195,8 +282,8 @@ export function layoutOutline(roots: OutlineNode[], size: (i: number) => Box, cx
     const mid = y0 + tall / 2;
     const rx = Math.round(cx - b.w / 2);
     out[idx.get(r)!] = { x: rx, y: Math.round(mid - b.h / 2) };
-    placeKids(right, 1, rx + b.w + gapX, mid);
-    placeKids(left, -1, rx - gapX, mid);
+    placeKids(right, 1, rx + b.w, mid);
+    placeKids(left, -1, rx, mid);
     y0 += tall + 48;
   }
   return out;

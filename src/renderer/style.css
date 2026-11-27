@@ -1165,3 +1165,12 @@ body.tab-dragging .tab { cursor: grabbing; }
 /* 書き出しで画面を写している間は、画面の上に重なる物を見せない(2026-11-27) */
 body.capturing #toast, body.capturing .return-btn, body.capturing .scope-ctl, body.capturing .find-box, body.capturing .rubber, body.capturing .ctxmenu { visibility: hidden !important; }
 body.capturing .canvas, body.capturing .canvas * { cursor: none !important; }
+/* 選んだ文の線・選んだ線を目立たせる(2026-11-27。ほかは薄くしない) */
+.edge-hot { pointer-events: none; }
+.edge-hot .h-vis { fill: none; stroke: var(--accent); stroke-width: 2.6; stroke-linecap: round; }
+.edge-hot .h-fill { fill: var(--accent); stroke: none; }
+.edge-hot .h-stroke { fill: none; stroke: var(--accent); stroke-width: 2; }
+.edge.hl .vis { stroke: var(--accent); stroke-width: 2.6; }
+.edge.hl .end-fill { fill: var(--accent); }
+.edge.hl .end-stroke { stroke: var(--accent); }
+.node.hl-near > .label, .node.hl-near .note-head .label, .node.hl-near .g-head .label { text-decoration: underline 2px var(--accent); text-underline-offset: 4px; text-decoration-skip-ink: none; }

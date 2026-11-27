@@ -260,3 +260,59 @@ test("修正15(2): コピーした字下げの文章を Ctrl+Q でマインド�
   await expect(page.locator("textarea.draft")).toHaveCount(0);
   await expect.poll(() => app.evaluate(() => (globalThis as { __bresutoOpened?: string[] }).__bresutoOpened ?? [])).toContain("https://example.com/");
 });
+
+test("修正15(3): 線はまっすぐ・選ぶと線が太く色付きでつながる文字に下線・Alt+D で線と重なる文字だけどかす・番号で網を貼る", async () => {
+  // 親と子をつなぎ、その線の上に別の文字を置く
+  await page.evaluate(() => {
+    const a = (window as any).__app;
+    const v = a.vault, g = a.canvas.group;
+    const p = v.create({ type: "text", title: "左の親", group: g, x: 200, y: 300 });
+    const c = v.create({ type: "text", title: "右の子", group: g, x: 700, y: 300 });
+    v.create({ type: "text", title: "じゃま", group: g, x: 430, y: 296 });
+    v.create({ type: "text", title: "離れた物", group: g, x: 430, y: 600 });
+    v.addLink(p.id, c.id);
+    a.canvas.renderNow();
+  });
+  // まっすぐ(折れ線ではない)
+  const d = await page.locator(".edge-lines .edge .vis").first().getAttribute("d");
+  expect(d).toBeTruthy();
+  expect(d!.match(/[LQA]/g)!.length).toBe(1);
+  // 選ぶと強調
+  await page.locator(".node", { hasText: "左の親" }).click({ modifiers: ["Control"] });
+  await expect(page.locator(".edge.hl")).toHaveCount(1);
+  await expect(page.locator(".edge-hot .h-vis")).toHaveCount(1); // 手前に描く写し
+  await expect(page.locator(".node.hl-near", { hasText: "右の子" })).toHaveCount(1);
+  await expect(page.locator(".node.hl-near", { hasText: "離れた物" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".edge.hl")).toHaveCount(0);
+  // Alt+D: じゃまだけが動く
+  const before = await page.evaluate(() => {
+    const a = (window as any).__app;
+    const pos = (t: string) => a.vault.itemPos(a.canvas.group, [...a.vault.nodes.values()].find((n: any) => n.title === t).id);
+    return { j: pos("じゃま"), f: pos("離れた物"), p: pos("左の親") };
+  });
+  await page.keyboard.press("Alt+d");
+  await settle();
+  const after = await page.evaluate(() => {
+    const a = (window as any).__app;
+    const pos = (t: string) => a.vault.itemPos(a.canvas.group, [...a.vault.nodes.values()].find((n: any) => n.title === t).id);
+    return { j: pos("じゃま"), f: pos("離れた物"), p: pos("左の親") };
+  });
+  expect(after.j).not.toEqual(before.j);
+  expect(after.f).toEqual(before.f);
+  expect(after.p).toEqual(before.p);
+  expect(Math.hypot(after.j.x - before.j.x, after.j.y - before.j.y)).toBeLessThan(80); // 少しだけ
+  await page.keyboard.press("Control+z");
+  await expect.poll(() => page.evaluate(() => {
+    const a = (window as any).__app;
+    return a.vault.itemPos(a.canvas.group, [...a.vault.nodes.values()].find((n: any) => n.title === "じゃま").id);
+  })).toEqual(before.j);
+  // 番号で網: (1) を 2 か所から
+  await page.evaluate(() => navigator.clipboard.writeText("(1) 気候変動\n  海面上昇\n農業\n  (1)\n農業 →(打撃) 収入"));
+  await page.mouse.move(400, 150);
+  await page.keyboard.press("Control+q");
+  await expect(page.locator(".node", { hasText: "気候変動" })).toHaveCount(1);
+  await expect(page.locator(".node", { hasText: /^農業$/ })).toHaveCount(2); // 別々に書いた「農業」は別の物
+  await expect(page.locator(".elabel", { hasText: "打撃" })).toHaveCount(1);
+  await shot("15-network");
+});
