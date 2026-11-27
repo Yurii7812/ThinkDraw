@@ -15,8 +15,8 @@
 |---|---|---|
 | Linux | `BRESUTO-版.AppImage` | 実行できるようにして(`chmod +x`)ダブルクリック。新しい版が出ると自動で落とし、知らせてくれる |
 | Linux(Debian・Ubuntu) | `bresuto_版_amd64.deb` | `sudo apt install ./bresuto_版_amd64.deb` |
-| Windows | `BRESUTO Setup 版.exe` | ダブルクリック。署名が無いので「Windows によって PC が保護されました」が出たら「詳細情報 → 実行」。自動更新あり |
-| Mac | `BRESUTO-版.dmg` | 開いてアプリケーションへ。署名が無いので、最初だけ右クリック →「開く」。自動更新は無い(新しい版を手で入れ替える) |
+| Windows | `BRESUTO-Setup-版.exe` | ダブルクリック。署名が無いので「Windows によって PC が保護されました」が出たら「詳細情報 → 実行」。自動更新あり |
+| Mac(Apple シリコン M1 以降) | `BRESUTO-版-arm64.dmg` | 開いてアプリケーションへ。署名が無いので、最初だけ右クリック →「開く」。自動更新は無い(新しい版を手で入れ替える) |
 
 紙PKM(スキャンした紙のノートの取り込み)は、ImageMagick(`magick`)と poppler(`pdftoppm`)と OCR の道具を使う。Windows・Mac で使うときは、それらを別に入れる必要がある。
 
