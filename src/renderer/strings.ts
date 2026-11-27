@@ -138,7 +138,7 @@ export const T = {
   shareBadInvite: "招待の形が違います(https://〜#合言葉 の 1 行を、そのまま貼ってください)",
   shareFailed: (m: string) => `共有できませんでした: ${m}`,
   shareInviteTitle: "招待",
-  shareInviteHelp: "この 1 行を、入ってほしい人に送ってください(LINE など)。受け取った人は BRESUTO の右上「共有」→「共有ボードに入る」に貼ります。このボードだけに入れます。外からの招待は、使えるようになるまで 10〜30 秒かかります(入る側は自動でつなぎ直します)。",
+  shareInviteHelp: "この 1 行を、入ってほしい人に送ってください(LINE など)。受け取った人は、ブラウザで開くだけで入れます(アプリを入れなくてよい。スマホでも)。BRESUTO のアプリなら、右上「共有」→「共有ボードに入る」に貼ります。このボードだけに入れます。外からの招待は、使えるようになるまで 10〜30 秒かかります(入る側は自動でつなぎ直します)。",
   shareInviteOut: "家の外からも入れる招待",
   shareInviteLan: "同じ Wi-Fi の中だけの招待",
   shareNoTunnel: (e: string) => `外からの招待は作れませんでした(${e})。cloudflared を入れると作れます: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/`,

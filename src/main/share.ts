@@ -4,7 +4,7 @@
 // - 最新の状態をここで持ち、あとから入った人にも渡す。終えると、みんなに「終わり」を送る(それぞれ自分のホームに保存する)
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { networkInterfaces } from "node:os";
 import * as path from "node:path";
@@ -42,7 +42,11 @@ export class ShareServer {
   private code = "";
   info: ShareInfo | null = null;
 
-  constructor(private binDir: string) {}
+  constructor(
+    private binDir: string,
+    /** ブラウザから入るページ(dist/web) */
+    private webDir: string,
+  ) {}
 
   get running(): boolean {
     return !!this.http;
@@ -52,9 +56,22 @@ export class ShareServer {
     if (this.info) return this.info;
     this.state = initial ?? emptyBoard(title);
     this.code = newCode();
-    const http = createServer((req, res) => {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(`<!doctype html><meta charset="utf-8"><title>BRESUTO 共有ボード</title><p style="font-family:sans-serif;padding:2em">BRESUTO の共有ボードです。BRESUTO のアプリの右上「共有」→「共有ボードに入る」に、この URL(# から後ろも)を貼ってください。</p>`);
+    // 招待の URL をブラウザで開くと、共有ボードのページ(アプリを入れなくても入れる。2026-11-28 利用者)
+    const FILES: Record<string, [string, string]> = { "/": ["index.html", "text/html; charset=utf-8"], "/web.js": ["web.js", "text/javascript; charset=utf-8"], "/style.css": ["style.css", "text/css; charset=utf-8"] };
+    const http = createServer(async (req, res) => {
+      const f = FILES[(req.url ?? "/").split("?")[0]];
+      if (!f) {
+        res.writeHead(404);
+        return void res.end();
+      }
+      try {
+        const body = await fs.readFile(path.join(this.webDir, f[0]));
+        res.writeHead(200, { "content-type": f[1], "cache-control": "no-cache" });
+        res.end(body);
+      } catch {
+        res.writeHead(500);
+        res.end();
+      }
     });
     const wss = new WebSocketServer({ server: http, path: "/ws", maxPayload: 8 * 1024 * 1024 });
     wss.on("connection", (ws) => this.onConnection(ws));

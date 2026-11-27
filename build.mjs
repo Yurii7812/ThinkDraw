@@ -8,7 +8,12 @@ await Promise.all([
   build({ ...common, entryPoints: ["src/main/main.ts"], outfile: "dist/main/main.js", platform: "node", format: "cjs", external: ["electron", "electron-updater", "bufferutil", "utf-8-validate"] }),
   build({ ...common, entryPoints: ["src/main/preload.ts"], outfile: "dist/main/preload.js", platform: "node", format: "cjs", external: ["electron"] }),
   build({ ...common, entryPoints: ["src/renderer/app.ts"], outfile: "dist/renderer/app.js", platform: "browser", format: "iife" }),
+  // 共有ボードにブラウザから入るページ(2026-11-28)。開いた人の PC の中継が出す
+  build({ ...common, sourcemap: false, minify: true, entryPoints: ["src/web/main.ts"], outfile: "dist/web/web.js", platform: "browser", format: "iife" }),
 ]);
+mkdirSync("dist/web", { recursive: true });
+cpSync("src/renderer/style.css", "dist/web/style.css");
+cpSync("src/web/index.html", "dist/web/index.html");
 cpSync("src/renderer/index.html", "dist/renderer/index.html");
 cpSync("src/renderer/style.css", "dist/renderer/style.css");
 console.log("build ok");

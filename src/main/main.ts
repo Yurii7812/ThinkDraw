@@ -358,5 +358,5 @@ app.on("window-all-closed", () => {
 });
 let shareServer: ShareServer | null = null;
 function share(): ShareServer {
-  return (shareServer ??= new ShareServer(path.join(app.getPath("userData"), "bin")));
+  return (shareServer ??= new ShareServer(path.join(app.getPath("userData"), "bin"), path.join(__dirname, "../web")));
 }

@@ -39,6 +39,8 @@ export class SharedClient {
     readonly me: Me,
     /** 開いた人(このPCで中継している) */
     readonly host: boolean,
+    /** アプリかブラウザか */
+    readonly via: "app" | "web" = "app",
   ) {
     this.vault.load([]);
   }
@@ -65,7 +67,7 @@ export class SharedClient {
       const ws = new WebSocket(this.url);
       this.ws = ws;
       const timer = setTimeout(() => !welcomed && (ws.close(), ng(new Error("つながりませんでした"))), 15000);
-      ws.onopen = () => ws.send(JSON.stringify({ t: "hello", code: this.code, person: { ...this.me, via: "app" } }));
+      ws.onopen = () => ws.send(JSON.stringify({ t: "hello", code: this.code, person: { ...this.me, via: this.via } }));
       ws.onerror = () => !welcomed && (clearTimeout(timer), ng(new Error("つながりませんでした")));
       ws.onclose = () => {
         if (!welcomed) return;

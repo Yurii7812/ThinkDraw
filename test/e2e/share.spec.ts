@@ -153,3 +153,49 @@ test("共有ボード: 始める・入る・同時に書く・他人の文字は
     await g.done();
   }
 });
+
+test("共有ボード: 招待の URL をブラウザで開くだけで入れる(名前と色を聞く・同時に書く・持ち帰る)", async () => {
+  await page.evaluate(() => {
+    (window as any).__app.config.me = { pid: "hostpid001", name: "わたし", color: "#0090ff" };
+  });
+  await page.locator(".tbtn.share-btn").click();
+  await page.locator(".ctxmenu .item", { hasText: "新しい共有ボードを始める" }).click();
+  await page.locator(".modal.ask .ask-input").fill("ブラウザ会");
+  await page.locator(".modal.ask .ask-input").press("Enter");
+  await page.locator(".modal.share-modal .btn.primary").click();
+  const info = await page.evaluate(() => (window as any).bresuto.shareInfo());
+  const url = info.local.replace("ws://", "http://").replace("/ws", "") + "/#" + info.code;
+  // 「ブラウザ」: アプリの中に、ふつうの窓を開いて URL を読む(アプリの窓口は無い)
+  const [web] = await Promise.all([
+    app.waitForEvent("window"),
+    app.evaluate(({ BrowserWindow }, u) => {
+      const w = new BrowserWindow({ width: 1100, height: 760, show: false, webPreferences: { contextIsolation: true, sandbox: true } });
+      void w.loadURL(u);
+    }, url),
+  ]);
+  await web.waitForSelector(".web-join");
+  await web.locator(".web-join .ask-input").fill("友だち");
+  await web.locator(".web-join .web-color").nth(3).click();
+  await web.locator(".web-join .btn.primary").click();
+  await expect(web.locator(".shared-title")).toContainText("ブラウザ会");
+  await expect(page.locator(".shared-person", { hasText: "友だち" })).toHaveCount(1);
+  // ブラウザで書く → アプリに届く
+  await web.locator(".shared-canvas").click({ position: { x: 300, y: 200 } });
+  await web.keyboard.type("ブラウザの案");
+  await web.keyboard.press("Escape");
+  await expect(page.locator(".shared-canvas .node", { hasText: "ブラウザの案" })).toHaveCount(1);
+  // アプリで書く → ブラウザに届く
+  const box = (await page.locator(".shared-canvas").boundingBox())!;
+  await page.mouse.click(box.x + 200, box.y + 350);
+  await page.keyboard.type("アプリの案");
+  await page.keyboard.press("Escape");
+  await expect(web.locator(".shared-canvas .node", { hasText: "アプリの案" })).toHaveCount(1);
+  await web.screenshot({ path: shots ? path.join(shots, "51-web.png") : path.join(process.env.TMPDIR || tmpdir(), "51-web.png") });
+  // 終える → ブラウザには「持ち帰る」
+  await page.locator(".tbtn.share-btn").click();
+  await page.locator(".ctxmenu .item", { hasText: "共有を終える" }).click();
+  await expect(web.locator(".modal", { hasText: "共有が終わりました" })).toBeVisible({ timeout: 10000 });
+  await expect(page.locator(".shared-pane")).toHaveCount(0, { timeout: 10000 });
+  await settle();
+  expect(Object.values(mdFiles()).some((s) => s.includes("title: ブラウザの案"))).toBe(true);
+});
