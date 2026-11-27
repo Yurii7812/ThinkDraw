@@ -30,6 +30,14 @@ if (process.env.BRESUTO_TEST) {
   app.commandLine.appendSwitch("disable-background-timer-throttling");
 }
 
+/** 画面の試験では、ブラウザ・ほかのアプリを本当に開かず、開こうとした物を覚えるだけ(利用者の画面に出さない) */
+function testOpened(what: string): boolean {
+  if (!process.env.BRESUTO_TEST) return false;
+  const g = globalThis as { __bresutoOpened?: string[] };
+  (g.__bresutoOpened ??= []).push(what);
+  return true;
+}
+
 protocol.registerSchemesAsPrivileged([{ scheme: "vault", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 interface Config {
@@ -198,6 +206,7 @@ function registerIpc(): void {
   });
   ipcMain.handle("asset:open", async (_e, rel: string) => {
     const file = needIO().assetPath(rel);
+    if (file && existsSync(file) && testOpened(rel)) return "";
     if (file && existsSync(file)) return shell.openPath(file);
     return "見つかりません";
   });
@@ -242,7 +251,12 @@ function registerIpc(): void {
     return { dir, n: await needPaper().exportTo(dir) };
   });
   ipcMain.handle("url:title", (_e, url: string) => urlTitle(url));
+  ipcMain.handle("win:capture", async (_e, r: { x: number; y: number; width: number; height: number }) => {
+    const img = await win!.webContents.capturePage({ x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) });
+    return new Uint8Array(img.toPNG());
+  });
   ipcMain.handle("shell:open", (_e, url: string) => {
+    if (testOpened(url)) return;
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);
   });
 }

@@ -1,5 +1,7 @@
 // 無限キャンバス(SPEC 4.2)。1 つのグループの中身(所属 + 引用)とペンの線を描き、操作をデータの操作に翻訳する。
-import { gap, placeAround, segHitsRect, type Rect } from "../core/placement";
+import { freeOffset, gap, placeAround, segHitsRect, type Rect } from "../core/placement";
+import { flattenOutline, layoutOutline, parseOutline, type OutlineNode } from "../core/outline";
+import { readZipEntry } from "./unzip";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
 import { NEW_LINK_KINDS, noteKind, ROOT_ID, type Link, type LinkKind, type Stroke, type TDNode } from "../core/types";
@@ -250,6 +252,74 @@ export class Canvas {
     return [...this.rects.values(), ...this.v.strokesOf(this.group).map(strokeBox), ...outer];
   }
 
+  /**
+   * 書き出し用に、画面に見えているとおりの絵を作る(2026-11-27 利用者「画面で見えている感じと全く同じに」)。
+   * 画面を少しずつ動かして窓を写し、つなぎ合わせる。scale = 1 の大きさあたりの画素(画質)。
+   * only を渡すと、その物と、その物どうしの線・ペンの線だけを見せて写す
+   */
+  async capture(scale: number, only?: { ids: string[]; strokes: string[] }): Promise<HTMLCanvasElement> {
+    const ids = only ? new Set(only.ids) : null;
+    const sids = only ? new Set(only.strokes) : null;
+    let boxes = this.allBoxes();
+    if (ids) boxes = [...only!.ids.map((i) => this.rects.get(i)).filter((r): r is Rect => !!r), ...this.v.strokesOf(this.group).filter((s) => sids!.has(s.id)).map(strokeBox)];
+    // 線の文字もはみ出さないように
+    for (const el of this.world.querySelectorAll<SVGGElement>(".elabel")) {
+      if (ids && !(ids.has(el.getAttribute("data-from") ?? "") && ids.has(el.getAttribute("data-to") ?? ""))) continue;
+      const b = el.getBBox?.();
+      const m = /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(el.getAttribute("transform") ?? "");
+      if (b && m) boxes.push({ x: +m[1] + b.x, y: +m[2] + b.y, w: b.width, h: b.height });
+    }
+    if (!boxes.length) boxes = [{ x: 0, y: 0, w: 100, h: 100 }];
+    const pad = 40;
+    const x0 = Math.min(...boxes.map((b) => b.x)) - pad, y0 = Math.min(...boxes.map((b) => b.y)) - pad;
+    const W = Math.max(...boxes.map((b) => b.x + b.w)) + pad - x0, H = Math.max(...boxes.map((b) => b.y + b.h)) + pad - y0;
+    const dpr = window.devicePixelRatio || 1;
+    scale = Math.max(0.25, Math.min(scale, 16000 / Math.max(W, H)));
+    const z = scale / dpr;
+    const saved = { ...this.view };
+    const hidden: (HTMLElement | SVGElement)[] = [];
+    const hide = (el: HTMLElement | SVGElement) => {
+      el.style.visibility = "hidden";
+      hidden.push(el);
+    };
+    // 選んでいる印は写さない(選び自体は変えない。写している間に次の書き出しを押しても、選んだ物のままに)
+    const marked = [...this.el.querySelectorAll<Element>(".selected")];
+    for (const el of marked) el.classList.remove("selected");
+    document.body.classList.add("capturing");
+    this.world.classList.remove("anim-in", "anim-out");
+    if (ids) {
+      for (const el of this.world.querySelectorAll<HTMLElement>(".node[data-id]")) if (!ids.has(el.dataset.id!)) hide(el);
+      for (const el of this.world.querySelectorAll<SVGElement>(".edge[data-from], .elabel[data-from]")) if (!(ids.has(el.getAttribute("data-from")!) && ids.has(el.getAttribute("data-to")!))) hide(el);
+      for (const el of this.world.querySelectorAll<SVGElement>("g[data-sid]")) if (!sids!.has(el.getAttribute("data-sid")!)) hide(el);
+    }
+    const out = document.createElement("canvas");
+    out.width = Math.max(1, Math.round(W * scale));
+    out.height = Math.max(1, Math.round(H * scale));
+    const ctx = out.getContext("2d")!;
+    try {
+      const r = this.el.getBoundingClientRect();
+      const tw = Math.floor(r.width), th = Math.floor(r.height);
+      const frame = () => new Promise<void>((ok) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(ok, 30))));
+      for (let ty = 0; ty < H * z; ty += th) {
+        for (let tx = 0; tx < W * z; tx += tw) {
+          this.view = { x: -x0 * z - tx, y: -y0 * z - ty, z };
+          this.world.style.transform = `translate(${this.view.x}px, ${this.view.y}px) scale(${z})`;
+          this.el.style.setProperty("--inv-z", String(Math.min(5, Math.max(1, 1 / z))));
+          await frame();
+          const png = await api().capture({ x: r.left, y: r.top, width: tw, height: th });
+          const bmp = await createImageBitmap(new Blob([png.slice()], { type: "image/png" }));
+          ctx.drawImage(bmp, Math.round(tx * dpr), Math.round(ty * dpr));
+          bmp.close();
+        }
+      }
+    } finally {
+      for (const el of hidden) el.style.visibility = "";
+      document.body.classList.remove("capturing");
+      for (const el of marked) el.classList.add("selected");
+      this.setView(saved);
+    }
+    return out;
+  }
   fitAll(initial = false): void {
     const r = this.el.getBoundingClientRect();
     const boxes = this.allBoxes();
@@ -965,6 +1035,13 @@ export class Canvas {
       this.commitDraft("esc");
       this.el.focus();
       void this.quotePaste(at);
+    } else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "v" && this.draft && !this.draft.ta.value.trim() && !this.draft.id) {
+      // 何もない所を押して出た書く欄で Ctrl+Shift+V: その場所にマインドマップとして貼る(2026-11-27)
+      e.preventDefault();
+      const at = { x: this.draft.x + 40, y: this.draft.y };
+      this.commitDraft("esc");
+      this.el.focus();
+      void this.pasteOutline(at).then((ok) => ok || toast(T.outlineNothing));
     } else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "l") {
       // 書いている文字から Ctrl+L: 決めてから、その文字とつなぐ物を探す(2026-11-24 利用者)
       e.preventDefault();
@@ -1274,7 +1351,28 @@ export class Canvas {
       if (!e.dataTransfer?.files.length) return;
       e.preventDefault();
       const p = this.toWorld(e.clientX, e.clientY);
-      void this.attachFilesAt(e.dataTransfer.files, p.x, p.y);
+      const files = [...e.dataTransfer.files];
+      void (async () => {
+        // OPML・FreeMind・XMind はマインドマップとして取り込む(2026-11-27)。ほかは添付
+        const rest: File[] = [];
+        for (const f of files) if (!/\.(opml|mm|xmind)$/i.test(f.name) || !(await this.importOutlineFile(f, p))) rest.push(f);
+        if (rest.length) await this.attachFilesAt(rest, p.x, p.y);
+      })();
+    });
+    // 書いている文字が画面の外へ伸びると、ブラウザが .canvas そのものを横へスクロールしてしまい、
+    // そのあと範囲選択・線を引く位置がずっとずれていた(2026-11-27 利用者)。スクロールは画面の移動に置き換える
+    el.addEventListener("scroll", () => {
+      const dx = el.scrollLeft, dy = el.scrollTop;
+      if (!dx && !dy) return;
+      el.scrollLeft = 0;
+      el.scrollTop = 0;
+      this.view.x -= dx;
+      this.view.y -= dy;
+      this.applyView();
+    });
+    // マインドマップを貼る場所(最後にマウスがあった所)
+    el.addEventListener("pointermove", (e) => {
+      this.lastPt = this.toWorld(e.clientX, e.clientY);
     });
   }
 
@@ -1768,6 +1866,12 @@ export class Canvas {
       this.setSelection([id]);
       return this.openCite(id);
     }
+    // URL だけの文字は、1 回クリックでブラウザで開く(書き直すのは右クリック → 名前を変える / R。2026-11-27 利用者)
+    if (node.type === "text" && !node.file && !node.paper && !node.cite && /^https?:\/\/\S+$/.test(node.title.trim())) {
+      this.setSelection([id]);
+      void api().openExternal(node.title.trim());
+      return;
+    }
     if (node.type === "text" && !node.file && !node.paper) {
       this.setSelection([id]);
       return this.open(id, target);
@@ -2077,7 +2181,7 @@ export class Canvas {
   }
 
   // ---------- キー ----------
-  /** このボードの中で、線でつながっている物を全部(directed = 矢印は向きの先だけ) */
+  /** このボードの中で、線でつながっている物を全部(directed = 線を引いた向きの先だけ。両矢印は両方へ) */
   connectedFrom(start: string[], directed: boolean): string[] {
     const here = new Set(this.rects.keys());
     const adj = new Map<string, Set<string>>();
@@ -2086,7 +2190,7 @@ export class Canvas {
       for (const l of this.v.get(id)?.links ?? []) {
         if (!here.has(l.to)) continue;
         add(id, l.to);
-        if (!directed || l.kind !== "arrow") add(l.to, id);
+        if (!directed || l.kind === "double") add(l.to, id);
       }
     }
     const seen = new Set(start.filter((i) => here.has(i)));
@@ -2162,9 +2266,14 @@ export class Canvas {
       return true;
     }
     // Alt+A: 選んだ物と線でつながっている物を、先の先までたどって全部選ぶ(向きは見ない)。
-    // Ctrl+Alt+A: 矢印の向きの先だけをたどる(向きの無い線は両方へ)。2026-11-27 利用者
-    if (e.altKey && k === "a" && ids.length) {
-      this.setSelection(this.connectedFrom(ids, e.ctrlKey));
+    // Shift+Alt+A: 線を引いた向き(親 → 子。Tab で書いた向き)の先だけをたどる。2026-11-27 利用者(Ctrl+Alt+A だと全部選ばれたので Shift に)
+    if (e.altKey && !e.ctrlKey && k === "a" && ids.length) {
+      this.setSelection(this.connectedFrom(ids, e.shiftKey));
+      return true;
+    }
+    // Ctrl+Shift+V: コピーした文章を、マインドマップとして貼る(2026-11-27)
+    if (e.ctrlKey && e.shiftKey && k === "v") {
+      void this.pasteOutline().then((ok) => ok || toast(T.outlineNothing));
       return true;
     }
     if (e.ctrlKey && k === "a") {
@@ -2319,7 +2428,64 @@ export class Canvas {
       this.pasteRefs(at);
       return;
     }
+    // ほかのアプリでコピーした文章: 字下げ・箇条書き・見出しの形を、ノードと線のマインドマップにする(2026-11-27 利用者)
+    if (await this.pasteOutline(at)) return;
     toast(T.quoteNothing);
+  }
+
+  // ---------- 文章からマインドマップ(2026-11-27 利用者。質問票 br-1127b) ----------
+  private lastPt: { x: number; y: number } | null = null;
+  /** クリップボードの文章をマインドマップにして置く。置けたら true */
+  async pasteOutline(at?: { x: number; y: number }): Promise<boolean> {
+    if (this.readOnly) return false;
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      text = "";
+    }
+    const roots = parseOutline(text);
+    if (!roots.length) return false;
+    this.placeOutline(roots, at ?? this.lastPt ?? this.visibleCenter());
+    return true;
+  }
+  /** OPML・FreeMind・XMind のファイルを落とした: マインドマップにして置く。読めなければ null(ふつうの添付にする) */
+  async importOutlineFile(f: File, at: { x: number; y: number }): Promise<boolean> {
+    let text: string | null = null;
+    if (/\.xmind$/i.test(f.name)) {
+      const data = new Uint8Array(await f.arrayBuffer());
+      text = (await readZipEntry(data, (n) => n === "content.json")) ?? (await readZipEntry(data, (n) => n === "content.xml"));
+    } else if (/\.(opml|mm)$/i.test(f.name)) text = await f.text();
+    if (!text) return false;
+    const roots = parseOutline(text, f.name);
+    if (!roots.length) return false;
+    this.placeOutline(roots, at);
+    return true;
+  }
+  placeOutline(roots: OutlineNode[], at: { x: number; y: number }): void {
+    const flat = flattenOutline(roots);
+    if (flat.length > 2000) return void toast(T.outlineTooMany(flat.length));
+    const ids: string[] = [];
+    this.v.tx(() => {
+      for (const f of flat) {
+        const n = this.v.create({ type: "text", title: f.node.title, group: this.group, x: Math.round(at.x), y: Math.round(at.y) });
+        ids.push(n.id);
+        if (f.parent >= 0) this.v.addLink(ids[f.parent], n.id);
+      }
+      this.renderNow();
+      const size = (i: number) => {
+        const r = this.rects.get(ids[i]);
+        return { w: r?.w ?? 80, h: r?.h ?? 24 };
+      };
+      const pos = layoutOutline(roots, size, at.x, at.y);
+      const mine = new Set(ids);
+      const obstacles = [...this.rects].filter(([id]) => !mine.has(id)).map(([, r]) => r);
+      const off = freeOffset(pos.map((p, i) => ({ x: p.x, y: p.y, ...size(i) })), obstacles);
+      this.v.move(this.group, pos.map((p, i) => ({ id: ids[i], x: p.x + off.dx, y: p.y + off.dy })));
+    });
+    this.renderNow();
+    this.setSelection(ids);
+    toast(T.outlinePlaced(ids.length));
   }
   private placeCite(clip: PassageClip, at: { x: number; y: number }): void {
     if (!this.v.exists(clip.note)) return toast(T.quoteNothing);
@@ -2759,6 +2925,7 @@ export class Canvas {
           this.openNote(n.id);
         },
       },
+      { label: T.pasteOutline, hint: "Ctrl+Shift+V", action: () => void this.pasteOutline({ x: px, y: py }).then((ok) => ok || toast(T.outlineNothing)) },
       { label: T.attachHead, heading: true },
       ...this.attachItems(px, py),
       {

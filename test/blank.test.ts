@@ -28,3 +28,11 @@ describe("空行を残す(2026-11-27)", () => {
     expect(round("a\n\n\n\nb\n")).not.toContain("");
   });
 });
+
+describe("画像の幅(2026-11-27)", () => {
+  it("![名前|300](画像) は、そのまま書き戻る", () => {
+    const md = "![写真|300](assets/a.png)\n";
+    expect(serializeMarkdown(parseMarkdown(md))).toBe(md);
+    expect(parseMarkdown(md).firstChild!.firstChild!.attrs.alt).toBe("写真|300");
+  });
+});

@@ -1118,7 +1118,8 @@ body.tab-dragging .tab { cursor: grabbing; }
 .popup.expanded .pop-title.inline-title { display: block; width: 100%; font-size: 2em; font-weight: 700; line-height: 1.25; letter-spacing: -0.01em; margin: 0 0 0.6em; padding: 0; color: var(--fg); }
 .popup.expanded .pop-title.inline-title::placeholder { color: var(--muted); opacity: 0.6; }
 .popup.expanded .ProseMirror { font-size: 16px; line-height: 1.75; color: var(--fg); min-height: 50vh; }
-.popup.expanded .ProseMirror p { margin: 0 0 0.75em; }
+/* Enter 1 回 = 1 行(段落のあいだを空けない。空けたいときは空行。2026-11-27 利用者「改行が二重」) */
+.popup.expanded .ProseMirror p { margin: 0; }
 .popup.expanded .ProseMirror h1 { font-size: 1.75em; font-weight: 700; margin: 1.2em 0 0.5em; }
 .popup.expanded .ProseMirror h2 { font-size: 1.45em; font-weight: 700; margin: 1.1em 0 0.45em; }
 .popup.expanded .ProseMirror h3 { font-size: 1.22em; font-weight: 650; margin: 1em 0 0.4em; }
@@ -1156,3 +1157,11 @@ body.tab-dragging .tab { cursor: grabbing; }
 .bl-l { min-width: 0; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .bl-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ProseMirror .flash { background: color-mix(in srgb, var(--quote, #3f9f5f) 32%, transparent); }
+/* 本文の画像の大きさを変える(2026-11-27) */
+.ProseMirror .img-wrap { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+.ProseMirror .img-wrap img { max-width: 100%; height: auto; }
+.ProseMirror .img-grip { position: absolute; right: -4px; bottom: -4px; width: 14px; height: 14px; border-radius: 3px; background: var(--accent); border: 2px solid var(--panel); cursor: nwse-resize; opacity: 0; transition: opacity 0.12s; }
+.ProseMirror .img-wrap:hover .img-grip, .ProseMirror .ProseMirror-selectednode .img-grip, .ProseMirror .img-wrap.ProseMirror-selectednode .img-grip { opacity: 1; }
+/* 書き出しで画面を写している間は、画面の上に重なる物を見せない(2026-11-27) */
+body.capturing #toast, body.capturing .return-btn, body.capturing .scope-ctl, body.capturing .find-box, body.capturing .rubber, body.capturing .ctxmenu { visibility: hidden !important; }
+body.capturing .canvas, body.capturing .canvas * { cursor: none !important; }

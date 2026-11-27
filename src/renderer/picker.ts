@@ -21,6 +21,29 @@ function snippet(body: string, q: string): string {
   return s;
 }
 
+// 最近の検索(2026-11-27 利用者「Ctrl+F で最近の検索が出るように」): 開いた物と、そのときの言葉。この PC の中だけに覚える
+const RECENT_KEY = "bresuto.recentSearch";
+interface Recent {
+  q: string;
+  id: string;
+}
+function loadRecent(): Recent[] {
+  try {
+    const a = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+    return Array.isArray(a) ? a.filter((r) => r && typeof r.id === "string").slice(0, 20) : [];
+  } catch {
+    return [];
+  }
+}
+function saveRecent(r: Recent): void {
+  try {
+    const list = [r, ...loadRecent().filter((x) => x.id !== r.id)].slice(0, 20);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  } catch {
+    /* 覚えられなくても検索はできる */
+  }
+}
+
 export function openPicker(v: Vault, o: Opts): Promise<PickResult> {
   return new Promise((resolve) => {
     const input = h("input", { type: "text", class: "picker-input", placeholder: T.searchHint, spellcheck: "false" });
@@ -32,6 +55,7 @@ export function openPicker(v: Vault, o: Opts): Promise<PickResult> {
     let sel = 0;
 
     const done = (r: PickResult) => {
+      if (o.mode === "search" && r && "id" in r) saveRecent({ q: input.value.trim(), id: r.id });
       back.remove();
       resolve(r);
     };
@@ -88,6 +112,9 @@ export function openPicker(v: Vault, o: Opts): Promise<PickResult> {
         section(T.secGroups, () => r.groups.forEach((id) => addRow(id)));
         section(T.secContents, () => r.contents.forEach((c) => addRow(c.id, c.hits)));
         if (o.mode !== "group") section(T.secNodes, () => r.nodes.forEach((id) => addRow(id)));
+      } else if (o.mode === "search") {
+        // 何も打っていないとき: 最近の検索(開いた物。新しい順)
+        section(T.secRecent, () => loadRecent().filter((r) => v.exists(r.id)).slice(0, 12).forEach((r) => addRow(r.id)));
       } else if (o.mode === "group")
         [...v.nodes.values()]
           .filter((n) => n.type === "group")

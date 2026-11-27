@@ -141,7 +141,7 @@ test("ノートは大画面で開く・Ctrl+L で検索してリンク・バッ�
   await page.keyboard.type(" を見る");
   await shot("04-popup");
   await page.keyboard.press("Escape");
-  await settle();
+  await expect.poll(() => Object.values(mdFiles()).some((s) => s.includes("title: メモ\n") && s.includes("を見る"))).toBe(true); // 自動保存を待つ
   const note = Object.values(mdFiles()).find((s) => s.includes("title: メモ\n"))!;
   expect(note).toContain("type: note");
   expect(note).toContain(`前置き [相手](${idOf("相手")}.md) を見る`);
@@ -1834,9 +1834,8 @@ test("2026-11-25 修正10: 画像は JPG でも出せる・画質を決められ
   const jpg = readFileSync(path.join(exportDir, "ホーム.jpg"));
   expect(jpg[0]).toBe(0xff);
   expect(jpg[1]).toBe(0xd8);
-  // 添付した画像が、出力(HTML の SVG)の中に絵として入っている
-  expect(readFileSync(path.join(exportDir, "ホーム.html"), "utf8")).toContain("<image ");
-  expect(readFileSync(path.join(exportDir, "ホーム.html"), "utf8")).toContain("data:image/png;base64,");
+  // 出力は画面を写した絵(2026-11-27 から。添付した画像も見えているとおりに入る)
+  expect(readFileSync(path.join(exportDir, "ホーム.html"), "utf8")).toContain('<img src="data:image/png;base64,');
 });
 
 test("2026-11-25: タロット解説書(PDF)を、デッキのメニューから保存できる(正逆・正位置だけ。読む用 A6 と、印刷用は巻ごと)", async () => {
@@ -2035,7 +2034,7 @@ test("2026-11-25: 画像や HTML に書き出すと、タロットの絵柄も�
   await page.getByText("画像(.png)").first().click();
   await expect.poll(() => readdirSync(exportDir).sort()).toEqual(["ホーム-選択.html", "ホーム-選択.png"]);
   const html = readFileSync(path.join(exportDir, "ホーム-選択.html"), "utf8");
-  expect(html).toMatch(/<image [^>]*href="data:image\/jpeg;base64,/);
+  expect(html).toContain('<img src="data:image/png;base64,'); // 画面を写した絵(2026-11-27 から)
   // 絵が入った PNG は、文字だけのときよりずっと大きい
   expect(readFileSync(path.join(exportDir, "ホーム-選択.png")).length).toBeGreaterThan(30_000);
   if (shots) writeFileSync(path.join(shots, "44-export-tarot.png"), readFileSync(path.join(exportDir, "ホーム-選択.png")));

@@ -131,7 +131,7 @@ test("修正15: Ctrl+T は右端に開く・タブの上でホイール", async 
   await expect(page.locator(".tabbar .tab").nth(0)).toHaveClass(/active/);
 });
 
-test("修正15: Alt+A でつながりを全部選ぶ・Ctrl+Alt+A は矢印の向きだけ", async () => {
+test("修正15: Alt+A でつながりを全部選ぶ・Shift+Alt+A は線を引いた向きの先だけ", async () => {
   await page.mouse.click(300, 300);
   await page.keyboard.type("親");
   await page.keyboard.press("Tab");
@@ -145,6 +145,12 @@ test("修正15: Alt+A でつながりを全部選ぶ・Ctrl+Alt+A は矢印の�
   await page.keyboard.press("Alt+a");
   await expect(page.locator(".node.selected")).toHaveCount(3);
   await expect(page.locator(".node.selected", { hasText: "離れ" })).toHaveCount(0);
+  // Shift+Alt+A: 子から先(孫)だけ
+  await page.keyboard.press("Escape");
+  await page.locator(".node", { hasText: "子" }).first().click({ modifiers: ["Control"] });
+  await page.keyboard.press("Shift+Alt+A");
+  await expect(page.locator(".node.selected")).toHaveCount(2);
+  await expect(page.locator(".node.selected", { hasText: "親" })).toHaveCount(0);
 });
 
 test("修正15: 文を選んで Ctrl+Q でリンク・ノートのバックリンク(引用された所を押すと光る、Esc で消える)", async () => {
@@ -203,4 +209,54 @@ test("修正15: ボードのバックリンク: ほかのボードのノート�
   await expect(page.locator(".edges .outer-edge.k-body")).toHaveCount(1);
   await expect(page.locator(".scope-ctl")).toHaveCount(0);
   await shot("15-board-backlinks");
+});
+
+test("修正15(2): 書き出しは画面を写した絵(画面と同じ)。選んだ物だけも", async () => {
+  await write(300, 200, "書き出す文字");
+  await write(500, 400, "もう一つ");
+  await page.locator(".tbtn.export").click();
+  await page.getByText("画像(.png)").click();
+  await expect.poll(() => readdirSync(exportDir)).toEqual(["ホーム.png"]);
+  const png = readFileSync(path.join(exportDir, "ホーム.png"));
+  expect(png.subarray(1, 4).toString()).toBe("PNG");
+  const w = png.readUInt32BE(16), hh = png.readUInt32BE(20);
+  expect(w).toBeGreaterThan(400); // 2 倍の画質で、文字 2 つと余白が入る大きさ
+  expect(hh).toBeGreaterThan(300);
+  if (shots) writeFileSync(path.join(shots, "15-export.png"), png);
+  // 写したあとは、画面は元のまま
+  await expect(page.locator(".node", { hasText: "書き出す文字" })).toBeVisible();
+});
+
+test("修正15(2): 文字を書いて画面の外へ伸びても、そのあと範囲選択の位置がずれない", async () => {
+  await page.mouse.click(1150, 300);
+  await page.keyboard.type("とても長い文字をここに書いて画面の右の外まで伸ばしてみるとどうなるかを確かめるための文章です");
+  await page.keyboard.press("Escape");
+  const sl = await page.locator(".canvas").first().evaluate((e) => e.scrollLeft);
+  expect(sl).toBe(0);
+  // 何もない所で範囲選択: 箱がマウスの所に出る
+  await page.mouse.move(200, 500);
+  await page.mouse.down();
+  await page.mouse.move(400, 650, { steps: 5 });
+  const box = await page.locator(".rubber").boundingBox();
+  await page.mouse.up();
+  expect(Math.abs(box!.x - 200)).toBeLessThan(4);
+});
+
+test("修正15(2): コピーした字下げの文章を Ctrl+Q でマインドマップに・URL の文字は 1 回クリックで開く(書き直さない)", async () => {
+  await page.evaluate(() => navigator.clipboard.writeText("a\n aa\n   aaa\n b\n\tc"));
+  await page.mouse.move(400, 300);
+  await page.locator(".canvas").first().click({ position: { x: 400, y: 300 } });
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+q");
+  await expect(page.locator(".node.t-text")).toHaveCount(5);
+  await expect(page.locator(".edges .edge")).toHaveCount(4);
+  await settle();
+  const a = Object.values(mdFiles()).find((s) => /title: a\n/.test(s))!;
+  expect(a).toMatch(/links:/);
+  await shot("15-outline");
+  // URL の文字
+  await write(300, 650, "https://example.com/");
+  await page.locator(".node", { hasText: "https://example.com/" }).click();
+  await expect(page.locator("textarea.draft")).toHaveCount(0);
+  await expect.poll(() => app.evaluate(() => (globalThis as { __bresutoOpened?: string[] }).__bresutoOpened ?? [])).toContain("https://example.com/");
 });

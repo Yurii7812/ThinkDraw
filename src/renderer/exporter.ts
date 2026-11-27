@@ -164,28 +164,6 @@ export interface ImageOpts {
 }
 export const DEFAULT_IMAGE: ImageOpts = { scale: 2, quality: 0.9 };
 
-async function toImage(svg: string, w: number, h: number, kind: "png" | "jpg", o: ImageOpts): Promise<Uint8Array> {
-  const img = new Image();
-  const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
-  try {
-    await new Promise<void>((ok, ng) => { img.onload = () => ok(); img.onerror = () => ng(new Error("画像にできませんでした")); img.src = url; });
-    const scale = Math.max(0.25, Math.min(o.scale, 8000 / Math.max(w, h)));
-    const c = document.createElement("canvas");
-    c.width = Math.round(w * scale); c.height = Math.round(h * scale);
-    const ctx = c.getContext("2d")!;
-    if (kind === "jpg") {
-      ctx.fillStyle = "#ffffff"; // JPEG は透明を持てない
-      ctx.fillRect(0, 0, c.width, c.height);
-    }
-    ctx.scale(scale, scale);
-    ctx.drawImage(img, 0, 0, w, h);
-    const blob: Blob = await new Promise((ok, ng) => c.toBlob((b) => (b ? ok(b) : ng(new Error("画像にできませんでした"))), kind === "jpg" ? "image/jpeg" : "image/png", kind === "jpg" ? Math.min(1, Math.max(0.1, o.quality)) : undefined));
-    return new Uint8Array(await blob.arrayBuffer());
-  } finally {
-    img.src = "";
-  }
-}
-
 export type ExportKind = "md" | "png" | "jpg" | "html" | "copy";
 
 /** sel を渡すと、選んでいる物(とペンの線)だけを書き出す */
@@ -203,13 +181,17 @@ export async function exportGroup(v: Vault, group: string, canvas: Canvas, kind:
     let path: string | null;
     if (kind === "md") path = await api().exportSave(name + ".md", "Markdown", ["md"], md());
     else {
-      const { svg, w, h } = buildSvg(v, group, canvas, sel, await loadImages(v, group, sel));
-      if (kind === "png") path = await api().exportSave(name + ".png", "画像", ["png"], await toImage(svg, w, h, "png", img));
-      else if (kind === "jpg") path = await api().exportSave(name + ".jpg", "画像", ["jpg"], await toImage(svg, w, h, "jpg", img));
+      // 画面に見えているとおりに写す(2026-11-27 利用者。前は別に描き直していて見た目が違った)
+      const shot = await canvas.capture(img.scale, sel);
+      const blobOf = (type: string, q?: number) => new Promise<Blob>((ok, ng) => shot.toBlob((b) => (b ? ok(b) : ng(new Error("画像にできませんでした"))), type, q));
+      const bytes = async (b: Blob) => new Uint8Array(await b.arrayBuffer());
+      if (kind === "png") path = await api().exportSave(name + ".png", "画像", ["png"], await bytes(await blobOf("image/png")));
+      else if (kind === "jpg") path = await api().exportSave(name + ".jpg", "画像", ["jpg"], await bytes(await blobOf("image/jpeg", Math.min(1, Math.max(0.1, img.quality)))));
       else {
+        const dataUrl = shot.toDataURL("image/png");
         const html = `<!doctype html>\n<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(name)}</title>
-<style>body{margin:0;background:#888}.wrap{overflow:auto}details{padding:12px 16px;background:#fff;color:#222;font-family:sans-serif}pre{white-space:pre-wrap}</style></head><body>
-<div class="wrap">${svg}</div>
+<style>body{margin:0;background:#888}.wrap{overflow:auto}.wrap img{display:block;width:${Math.round(shot.width / Math.max(0.25, img.scale))}px;max-width:none}details{padding:12px 16px;background:#fff;color:#222;font-family:sans-serif}pre{white-space:pre-wrap}</style></head><body>
+<div class="wrap"><img src="${dataUrl}" alt="${esc(name)}"></div>
 <details><summary>文章で読む(Markdown)</summary><pre>${esc(md())}</pre></details>
 </body></html>\n`;
         path = await api().exportSave(name + ".html", "HTML", ["html"], html);

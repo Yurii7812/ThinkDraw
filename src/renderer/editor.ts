@@ -329,9 +329,33 @@ export class BodyPopup {
           });
           return { dom: li, contentDOM: content };
         },
-        image: (node) => {
-          const img = h("img", { src: resolveSrc(node.attrs.src), alt: node.attrs.alt ?? "", title: node.attrs.title ?? undefined });
-          return { dom: img };
+        // 画像: 右下の角をドラッグで大きさを変える。幅は Obsidian と同じく ![名前|幅](画像) で残す(2026-11-27 利用者)
+        image: (node, view, getPos) => {
+          const m = /^(.*)\|(\d+)$/.exec(node.attrs.alt ?? "");
+          const name = m ? m[1] : (node.attrs.alt ?? "");
+          const img = h("img", { src: resolveSrc(node.attrs.src), alt: name, title: node.attrs.title ?? undefined, draggable: "false" });
+          if (m) img.style.width = m[2] + "px";
+          const grip = h("span", { class: "img-grip", title: T.imgResize, contenteditable: "false" });
+          const dom = h("span", { class: "img-wrap", contenteditable: "false" }, img, grip);
+          grip.addEventListener("pointerdown", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const sx = e.clientX, w0 = img.getBoundingClientRect().width;
+            const max = (view.dom as HTMLElement).clientWidth;
+            grip.setPointerCapture(e.pointerId);
+            const move = (ev: PointerEvent) => (img.style.width = Math.round(Math.max(40, Math.min(max, w0 + ev.clientX - sx))) + "px");
+            const up = () => {
+              grip.removeEventListener("pointermove", move);
+              grip.removeEventListener("pointerup", up);
+              const pos = getPos();
+              if (pos === undefined) return;
+              const w = Math.round(img.getBoundingClientRect().width);
+              view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, alt: `${name}|${w}` }));
+            };
+            grip.addEventListener("pointermove", move);
+            grip.addEventListener("pointerup", up);
+          });
+          return { dom, ignoreMutation: () => true, stopEvent: (ev: Event) => ev.target === grip };
         },
       },
       dispatchTransaction: (tr) => {
@@ -604,7 +628,13 @@ export class BodyPopup {
     const label = nodeId ? `→ ${nodeId === ROOT_ID ? T.home : v.get(nodeId)?.title || T.untitled}` : `↗ ${href}`;
     // 添付したファイルは、吹き出しを出さずにすぐ開く(2026-11-27 利用者)
     if (/^assets\//.test(href)) {
-      void api().openAsset(href);
+      let rel = href;
+      try {
+        rel = decodeURI(href); // 名前に日本語・空白があると、リンクには %xx で入っている
+      } catch {
+        rel = href;
+      }
+      void api().openAsset(rel).then((r) => r && toast(T.fileOpenFailed(r)));
       return;
     }
     const b = h("button", { class: "linkbubble", text: label });

@@ -1134,9 +1134,7 @@ class App {
   private openRecord(e: RecordEntry): void {
     this.closeRecords();
     if (e.type === "note") {
-      this.openGroup(e.day);
-      this.canvas.renderNow();
-      this.canvas.setSelection([e.id]);
+      // 日記は新しいタブで開く。今のボードはそのまま(その日のボードへは移らない。2026-11-27 利用者)
       this.openBody(e.id);
     } else if (e.type === "day" && e.id !== e.day && this.vault.exists(e.id)) {
       // しるしの一覧から: その文字のあるグループを開いて、その文字を見せる
@@ -1154,9 +1152,7 @@ class App {
     this.vault.tx(() => {
       note = this.ensureRecordNote(day, ymd, kind);
     });
-    this.openGroup(day);
-    this.canvas.renderNow();
-    this.canvas.setSelection([note]);
+    // 日記は新しいタブで開く。今のボードはそのまま(2026-11-27 利用者)
     this.openBody(note);
   }
   /** 日のグループ(2026-11-23・2026-11-23-題)の空きの右クリック: 種類ごとに、その日の記録を新しく作る。新しい種類でも作れる */
