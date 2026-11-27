@@ -85,6 +85,10 @@ export const MENU_ICONS: Record<string, string> = {
   frame: '<rect x="3" y="5" width="18" height="14" rx="3" stroke-dasharray="3 2"/>',
   tab: '<path d="M3 19V7h7l2 3h9v9z"/><path d="M14 14h4M16 12v4"/>',
   beside: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14"/>',
+  // 添付(ファイル・チェック・表)。抜けていて右クリックの絵が空になっていた(2026-11-27)
+  file: '<path d="M6 3h8l4 4v14H6zM14 3v4h4"/>',
+  check: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/>',
+  table: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M9 5v14M15 5v14"/>',
 };
 
 let openMenu: HTMLElement | null = null;

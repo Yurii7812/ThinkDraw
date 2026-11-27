@@ -43,9 +43,54 @@ function taskify(node: PMNode): PMNode {
   return schema.nodes.list_item.create({ checked: m[1] !== " " }, rest);
 }
 
+// ---------- 空行を残す(2026-11-27 利用者「日記で行と行のあいだの空行が消える」) ----------
+// 段落のあいだの空行は、書いたとおりの数だけ残す。Markdown では「1 つ余分な空行 = 空の段落 1 つ」とする
+// (ファイルは見たままの空行なので、ほかのアプリで開いても同じに見える)。いちばん外側の段落だけ。
+const EMPTY = "\uE000";
+/** 余分な空行を、読むあいだだけの目印の段落にする(コードの中はそのまま) */
+function markBlankLines(md: string): string {
+  const lines = md.split("\n");
+  const out: string[] = [];
+  let fence: string | null = null;
+  let blank = 0;
+  let started = false;
+  for (const l of lines) {
+    const f = /^\s{0,3}(`{3,}|~{3,})/.exec(l);
+    if (fence) {
+      out.push(l);
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (!l.trim()) {
+      blank++;
+      continue;
+    }
+    // 前が空行だけなら: 始めの空行は全部、途中は 1 つより多い分を、空の段落に
+    const extra = started ? blank - 1 : blank;
+    if (blank) out.push("");
+    for (let k = 0; k < extra; k++) out.push(EMPTY, "");
+    blank = 0;
+    started = true;
+    out.push(l);
+    if (f) fence = f[1];
+  }
+  return out.join("\n");
+}
+function unmarkBlankLines(doc: PMNode): PMNode {
+  let hit = false;
+  const kids: PMNode[] = [];
+  doc.forEach((c) => {
+    if (c.type === schema.nodes.paragraph && c.textContent === EMPTY) {
+      hit = true;
+      kids.push(schema.nodes.paragraph.create());
+    } else kids.push(c);
+  });
+  return hit ? doc.copy(Fragment.from(kids)) : doc;
+}
+
 export function parseMarkdown(md: string): PMNode {
-  const doc = parser.parse(md);
-  return doc ? taskify(doc) : schema.node("doc", null, [schema.node("paragraph")]);
+  const doc = parser.parse(markBlankLines(md));
+  return doc ? unmarkBlankLines(taskify(doc)) : schema.node("doc", null, [schema.node("paragraph")]);
 }
 
 /** 表の 1 つのセルの中身を書く(| と改行は表を壊すので逃がす) */
@@ -86,8 +131,22 @@ const serializer = new MarkdownSerializer(
 );
 
 export function serializeMarkdown(doc: PMNode): string {
-  const s = serializer.serialize(doc);
-  return s ? s.replace(/\n+$/, "") + "\n" : "";
+  // いちばん外側の空の段落は、目印にして書き、あとで空行 1 つに戻す
+  let hit = false;
+  const kids: PMNode[] = [];
+  doc.forEach((c) => {
+    if (c.type === schema.nodes.paragraph && c.content.size === 0) {
+      hit = true;
+      kids.push(schema.nodes.paragraph.create(null, schema.text(EMPTY)));
+    } else kids.push(c);
+  });
+  let s = serializer.serialize(hit ? doc.copy(Fragment.from(kids)) : doc);
+  if (hit) {
+    s = s.replace(new RegExp(`^(${EMPTY}\n\n)+`), (m) => "\n".repeat(m.length / 3));
+    s = s.replace(new RegExp(`\n\n${EMPTY}(?=\n|$)`, "g"), "\n");
+    s = s.replace(new RegExp(`^${EMPTY}$`), "");
+  }
+  return s.replace(/\n+$/, "") ? s.replace(/\n+$/, "") + "\n" : "";
 }
 
 // ---------- 組み立て・操作 ----------
@@ -258,11 +317,6 @@ export const cellBelow: Command = (state, dispatch) => {
 
 // ---------- キャンバスに見せる(チェックリスト・表の中身) ----------
 
-/** 本文が表・チェックリストで始まるか(そういうノートは、中身をキャンバスにそのまま見せる。2026-11-25 利用者) */
-export function isCheckOrTable(body: string): boolean {
-  const first = body.split("\n").find((l) => l.trim());
-  return !!first && (/^\s*\|/.test(first) || /^\s*[-*+] \[[ xX]\]/.test(first));
-}
 
 const domSer = DOMSerializer.fromSchema(schema);
 /** 本文をキャンバス用の DOM にする(チェックの箱は押せる。onToggle(何番目の項目か)) */

@@ -8,19 +8,19 @@ import { liftListItem, sinkListItem, splitListItem, wrapInList } from "prosemirr
 import { EditorState, Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { hrefToNodeId, nodeHref } from "../core/links";
-import { ROOT_ID } from "../core/types";
+import { noteKind, ROOT_ID, type NoteKind } from "../core/types";
 import type { Vault } from "../core/vault";
 import { cardName } from "../decks";
 import { openPicker } from "./picker";
 import { T } from "./strings";
-import { anchorIn, findAnchor, backspaceEmpty, pasteIntoChecklist, pasteIntoTable, addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
+import { makeChecklist, makeTable, anchorIn, findAnchor, backspaceEmpty, pasteIntoChecklist, pasteIntoTable, addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
 import { api, h, showMenu, svg, toast } from "./ui";
 import { currentClip, setClip, type PassageClip } from "./clip";
 import { refClipboard } from "./canvas";
 import { hrefAnchor } from "../core/links";
 import { Fragment, Slice } from "prosemirror-model";
 
-/** 引用の元へ飛んだとき、その所を少しのあいだ光らせる(飾り。2026-11-26 修正14) */
+/** 引用の元へ飛んだとき・バックリンクを押したとき、その所を光らせる(Esc で消す。2026-11-27) */
 const flashKey = new PluginKey<DecorationSet>("flash");
 const flashPlugin = new Plugin<DecorationSet>({
   key: flashKey,
@@ -36,6 +36,33 @@ const flashPlugin = new Plugin<DecorationSet>({
   props: { decorations: (st) => flashKey.getState(st) },
 });
 
+/** チェックリスト・表のノートは、最後の項目・表が消えない(消すとふつうのノートになってしまうため。2026-11-27 利用者) */
+function keepKindPlugin(kind: NoteKind): Plugin {
+  return new Plugin({
+    appendTransaction: (trs, _old, st) => {
+      if (!trs.some((t) => t.docChanged)) return null;
+      let has = false;
+      st.doc.descendants((n) => {
+        if (has) return false;
+        if (kind === "table" ? n.type === schema.nodes.table : n.type === schema.nodes.list_item && n.attrs.checked != null) has = true;
+        return !has;
+      });
+      if (has) return null;
+      if (kind === "table") return st.tr.insert(0, makeTable(2, 2));
+      // チェックの項目が無くなった(Backspace で外れた): いまの段落をチェックの項目に戻す
+      const $f = st.selection.$from;
+      if ($f.depth === 1 && $f.parent.type === schema.nodes.paragraph) {
+        const at = $f.before(1);
+        const para = $f.parent;
+        const item = schema.nodes.bullet_list.create(null, [schema.nodes.list_item.create({ checked: false }, [para])]);
+        const tr = st.tr.replaceWith(at, at + para.nodeSize, item);
+        return tr.setSelection(TextSelection.create(tr.doc, at + 3 + ($f.pos - at - 1)));
+      }
+      return st.tr.insert(0, makeChecklist());
+    },
+  });
+}
+
 export interface EditorHost {
   vault: Vault;
   goToGroup(id: string, focusNode?: string): void;
@@ -44,6 +71,8 @@ export interface EditorHost {
   /** ほかのノートの文章を引用するとき、そのノートに目印を付ける(2026-11-26 修正14) */
   anchorPassage?(c: PassageClip): string | null;
   openSearch(): void;
+  /** Ctrl+←: ノートからボードへ戻る(タブは閉じない) */
+  backFromNote?(): void;
 }
 
 export { parseMarkdown, serializeMarkdown };
@@ -178,7 +207,12 @@ export class BodyPopup {
           e.preventDefault();
           this.view.focus();
         }
-        if (e.key === "Escape") this.close();
+        // Esc では閉じない(2026-11-27 利用者。戻るのは Ctrl+←)
+        if (e.key === "Escape") e.preventDefault();
+        if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === "ArrowLeft") {
+          e.preventDefault();
+          this.host.backFromNote?.();
+        }
       });
       this.titleInput = ti;
       head.append(ti);
@@ -201,6 +235,16 @@ export class BodyPopup {
     if (!inline) head.append(tools);
 
     const editorEl = h("div", { class: "pop-body" });
+    // 大画面のノートは Obsidian のように、題を本文の列の一番上に大きく(上の帯は道具だけ。2026-11-27 利用者「見づらい」)
+    if (expanded && !inline && this.titleInput) {
+      head.prepend(h("span", { class: "pop-crumb", text: this.titleInput.value || "" }));
+      this.titleInput.classList.add("inline-title");
+      this.titleInput.addEventListener("input", () => {
+        const c = head.querySelector(".pop-crumb");
+        if (c) c.textContent = this.titleInput!.value;
+      });
+      editorEl.append(this.titleInput);
+    }
     this.footer = h("div", { class: "pop-foot" });
     this.el = h("div", { class: "popup" + (expanded ? " expanded" : "") + (inline ? " inline" : ""), role: "dialog" }, inline ? null : head, editorEl, inline ? null : this.footer);
     if (inline) {
@@ -260,6 +304,7 @@ export class BodyPopup {
         keymap(baseKeymap),
         urlCardPlugin(),
         placeholderPlugin(T.bodyPlaceholder),
+        ...(noteKind(n) ? [keepKindPlugin(noteKind(n)!)] : []),
       ],
     });
     this.view = new EditorView(editorEl, {
@@ -291,7 +336,10 @@ export class BodyPopup {
       },
       dispatchTransaction: (tr) => {
         this.view.updateState(this.view.state.apply(tr));
-        if (tr.docChanged) this.scheduleSave();
+        if (tr.docChanged) {
+          this.scheduleSave();
+          this.backlinksSoon();
+        }
       },
       handlePaste: (v, e) => {
         // 表・チェックリストの中に貼る: 表は区切り(タブ・CSV・空白)でセルへ、チェックリストは 1 行 1 項目(2026-11-26 修正13)
@@ -311,13 +359,21 @@ export class BodyPopup {
           return false;
         },
         keydown: (_v, e) => {
+          // Esc ではノートを閉じない(2026-11-27 利用者)。光らせた所があれば消すだけ。表・チェックをその場で書いているときは書くのをやめる
           if (e.key === "Escape") {
             e.preventDefault();
-            this.close();
+            if (flashKey.getState(this.view.state)?.find().length) this.view.dispatch(this.view.state.tr.setMeta(flashKey, null));
+            else if (this.inline) this.close();
+            return true;
+          }
+          // Ctrl+← でボードへ戻る(ノートのタブは残す。2026-11-27 利用者)。選ぶ Ctrl+Shift+← はふつう
+          if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === "ArrowLeft" && !this.inline && this.host.backFromNote) {
+            e.preventDefault();
+            this.host.backFromNote();
             return true;
           }
           // 分割・タブの操作はアプリへ(ノートもタブ。2026-11-26 修正14)
-          if (e.ctrlKey && (e.key === "\\" || e.key === "Tab" || e.key === "PageUp" || e.key === "PageDown" || (!e.shiftKey && (e.key === "w" || e.key === "t")))) return false;
+          if (e.ctrlKey && (e.key === "\\" || e.key === "Tab" || e.key === "PageUp" || e.key === "PageDown" || (!e.shiftKey && (e.key === "w" || e.key === "t" || e.key === "j" || e.key === "d")))) return false; // Ctrl+J 記録一覧・Ctrl+D 今日も、書いている間に使える(Esc で閉じなくなったので。2026-11-27)
           e.stopPropagation();
           return false;
         },
@@ -431,6 +487,7 @@ export class BodyPopup {
   }
 
   private onVaultChange(ids: Set<string>): void {
+    this.backlinksSoon();
     const n = this.host.vault.get(this.id);
     if (!n) {
       this.close(false);
@@ -545,6 +602,11 @@ export class BodyPopup {
     const nodeId = hrefToNodeId(href);
     const v = this.host.vault;
     const label = nodeId ? `→ ${nodeId === ROOT_ID ? T.home : v.get(nodeId)?.title || T.untitled}` : `↗ ${href}`;
+    // 添付したファイルは、吹き出しを出さずにすぐ開く(2026-11-27 利用者)
+    if (/^assets\//.test(href)) {
+      void api().openAsset(href);
+      return;
+    }
     const b = h("button", { class: "linkbubble", text: label });
     b.addEventListener("mousedown", (e) => {
       e.preventDefault();
@@ -594,6 +656,24 @@ export class BodyPopup {
   private async quotePaste(): Promise<void> {
     const clip = await currentClip();
     const view = this.view;
+    // 文を選んで Ctrl+Q: 選んだ文を、コピーした所(ほかのノートの文章・ボードの物)へのリンクにする(2026-11-27 利用者)
+    if (!view.state.selection.empty && clip) {
+      let href: string | null = null;
+      if (clip.kind === "passage") {
+        if (!this.host.vault.get(clip.note)) return void toast(T.quoteNothing);
+        const anchor = clip.note === this.id ? this.anchorRange(clip) : (this.host.anchorPassage?.(clip) ?? null);
+        href = `${clip.note}.md` + (anchor ? "#" + anchor : "");
+      } else if (clip.kind === "nodes" && refClipboard.size) {
+        const id = refClipboard.ids.find((i) => this.host.vault.exists(i));
+        if (id) href = nodeHref(id);
+      }
+      if (!href) return void toast(T.quoteNothing);
+      const { from, to } = view.state.selection;
+      const tr = view.state.tr.addMark(from, to, schema.marks.link.create({ href }));
+      view.dispatch(tr.setSelection(TextSelection.create(tr.doc, to)).removeStoredMark(schema.marks.link));
+      view.focus();
+      return;
+    }
     if (clip?.kind === "passage" && clip.note === this.id) {
       view.dispatch(view.state.tr.insertText(clip.text).scrollIntoView());
       return;
@@ -650,11 +730,166 @@ export class BodyPopup {
   scrollToAnchor(anchor: string): void {
     const f = findAnchor(this.view.state.doc, anchor);
     if (!f) return;
-    this.view.dispatch(this.view.state.tr.setSelection(TextSelection.create(this.view.state.doc, f.from, f.to)).setMeta(flashKey, f).scrollIntoView());
+    this.view.dispatch(this.view.state.tr.setSelection(TextSelection.create(this.view.state.doc, f.from)).setMeta(flashKey, f).scrollIntoView());
     this.view.focus();
-    setTimeout(() => {
-      if (!this.view.isDestroyed) this.view.dispatch(this.view.state.tr.setMeta(flashKey, null));
-    }, 1600);
+  }
+  /** 本文の from〜to を光らせて見せる(Esc で消える。2026-11-27 バックリンク) */
+  highlightRange(from: number, to: number): void {
+    const size = this.view.state.doc.content.size;
+    from = Math.max(0, Math.min(from, size));
+    to = Math.max(from, Math.min(to, size));
+    this.view.dispatch(this.view.state.tr.setMeta(flashKey, { from, to }).scrollIntoView());
+    const dom = this.view.domAtPos(from).node as HTMLElement;
+    (dom.nodeType === 1 ? dom : dom.parentElement)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
+  // ---------- バックリンク(2026-11-27 利用者): 右上のボタンで、ノートの周りに出す ----------
+  // 引用されている所(本文の目印)ごとに小さなノードを横に並べ、そこからその所を引用している物へ線。
+  // ノート全体へのもの(本文のリンク・文章の引用・所属先・引用しているボード)は、題の横から。
+  // 引用されている所を押すと、本文のその所が光る(Esc で消える)。引用している物を押すと、そこへ
+  private bl: HTMLElement | null = null;
+  private blTimer = 0;
+  get backlinksOn(): boolean {
+    return !!this.bl;
+  }
+  toggleBacklinks(): boolean {
+    if (this.bl) {
+      this.bl.remove();
+      this.bl = null;
+      this.el.classList.remove("bl-on");
+      return false;
+    }
+    this.el.classList.add("bl-on");
+    this.renderBacklinks();
+    return true;
+  }
+  private backlinksSoon(): void {
+    if (!this.bl) return;
+    clearTimeout(this.blTimer);
+    this.blTimer = window.setTimeout(() => this.bl && !this.view.isDestroyed && this.renderBacklinks(), 120);
+  }
+  private renderBacklinks(): void {
+    const v = this.host.vault;
+    const body = this.el.querySelector<HTMLElement>(".pop-body")!;
+    this.bl?.remove();
+    const layer = h("div", { class: "bl-layer" });
+    const lines = svg("svg", { class: "bl-lines" });
+    layer.append(lines);
+    body.append(layer);
+    this.bl = layer;
+    const nameOf = (id: string) => (id === ROOT_ID ? T.home : v.get(id)?.title || (v.get(id)?.type === "group" ? T.untitledGroup : T.untitled));
+    const whereOf = (id: string) => {
+      const g = v.parentsOf(id)[0];
+      return g ? nameOf(g) : "";
+    };
+    // 引用されている所
+    const marks = new Map<string, { from: number; to: number }>();
+    this.view.state.doc.descendants((n, pos) => {
+      if (!n.isText) return;
+      for (const m of n.marks) {
+        const a = m.type === schema.marks.link && /^#(q-[a-z0-9]{8})$/.exec(m.attrs.href ?? "");
+        if (!a) continue;
+        const r = marks.get(a[1]);
+        if (r) r.to = pos + n.nodeSize;
+        else marks.set(a[1], { from: pos, to: pos + n.nodeSize });
+      }
+    });
+    const all = [...v.nodes.values()];
+    const citersOf = (anchor: string) =>
+      all.filter((n) => (n.type === "text" && n.cite === `${this.id}#${anchor}`) || (n.type === "note" && n.id !== this.id && n.body.includes(`(${this.id}.md#${anchor})`)));
+    // ノート全体へ
+    type Item = { id: string; kind: "member" | "quoted" | "linked" | "cited" };
+    const whole: Item[] = [
+      ...v.parentsOf(this.id).map((id) => ({ id, kind: "member" as const })),
+      ...v.quotedBy(this.id).map((id) => ({ id, kind: "quoted" as const })),
+      ...v
+        .backlinksOf(this.id)
+        .filter((x) => v.get(x)?.type !== "group" && new RegExp(`\\((?:\\./)?${this.id}\\.md\\)`).test(v.get(x)?.body ?? ""))
+        .map((id) => ({ id, kind: "linked" as const })),
+      ...all.filter((n) => n.type === "text" && n.cite === this.id).map((n) => ({ id: n.id, kind: "cited" as const })),
+    ];
+    const kindLabel = { member: T.blMember, quoted: T.blQuotedBy, linked: T.blLinkedBy, cited: T.blCitedBy };
+    const br = body.getBoundingClientRect();
+    const at = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.left - br.left + body.scrollLeft, y: r.top - br.top + body.scrollTop, w: r.width, h: r.height };
+    };
+    const pm = at(this.view.dom);
+    const col1 = pm.x + pm.w + 36, col2 = col1 + 236;
+    const line = (x1: number, y1: number, x2: number, y2: number, cls = "") => lines.append(svg("path", { class: "bl-line " + cls, d: `M${x1},${y1} L${x2},${y2}` }));
+    const card = (it: { id: string; kind?: string }, x: number, y: number) => {
+      const n = v.get(it.id);
+      const isCite = n?.type === "text" && !!n.cite;
+      const label = n?.type === "group" || it.id === ROOT_ID ? nameOf(it.id) : isCite ? n!.title || T.untitled : nameOf(it.id);
+      const sub = n?.type === "group" || it.id === ROOT_ID ? (it.kind ? kindLabel[it.kind as Item["kind"]] : "") : [whereOf(it.id), it.kind ? kindLabel[it.kind as Item["kind"]] : ""].filter(Boolean).join(" · ");
+      const ico = it.id === ROOT_ID || n?.type === "group" ? "folder" : n?.type === "note" ? "note" : "text";
+      const el = h("button", { class: `bl-node t-${it.id === ROOT_ID ? "group" : n?.type}${isCite ? " cite" : ""}`, title: label }, h("div", { class: "bl-t" }, h("span", { class: `ico ico-${ico}` }), h("span", { class: "bl-l", text: label })), sub ? h("div", { class: "bl-sub", text: sub }) : null);
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+      el.addEventListener("click", () => {
+        if (it.id === ROOT_ID || n?.type === "group") return this.host.goToGroup(it.id, it.kind === "member" || it.kind === "quoted" ? this.id : undefined);
+        this.host.goToNode(it.id, n?.type === "note");
+      });
+      layer.append(el);
+      return el;
+    };
+    let y2 = 0; // 右の列の、次に置ける高さ
+    // ノート全体へのもの: 題の横から
+    const tEl = this.titleInput ?? this.view.dom;
+    const tr = at(tEl);
+    if (whole.length) {
+      const head = h("div", { class: "bl-head", text: T.blWhole });
+      head.style.left = col1 + "px";
+      head.style.top = tr.y + "px";
+      layer.append(head);
+      y2 = tr.y;
+      for (const it of whole) {
+        const el = card(it, col2, y2);
+        const r = at(el);
+        line(col1 + 120, tr.y + 10, col2, r.y + r.h / 2);
+        y2 = r.y + r.h + 8;
+      }
+      line(Math.min(pm.x + pm.w, tr.x + tr.w), tr.y + tr.h / 2, col1, tr.y + 10, "soft");
+    }
+    // 引用されている所ごと
+    let y1 = Math.max(0, y2 ? tr.y + 30 : 0);
+    let any = whole.length > 0;
+    for (const [anchor, r] of [...marks].sort((a, b) => a[1].from - b[1].from)) {
+      const citers = citersOf(anchor);
+      if (!citers.length) continue;
+      any = true;
+      const c = this.view.coordsAtPos(r.from);
+      const py = c.top - br.top + body.scrollTop;
+      const text = this.view.state.doc.textBetween(r.from, r.to, " ").replace(/\s+/g, " ").trim();
+      const pc = h("button", { class: "bl-node bl-passage", title: T.blPassage }, h("div", { class: "bl-l", text: [...text].length > 40 ? [...text].slice(0, 40).join("") + "…" : text }));
+      const y = Math.max(py - 4, y1, y2 ? 0 : 0);
+      pc.style.left = col1 + "px";
+      pc.style.top = y + "px";
+      pc.addEventListener("click", () => {
+        const f = findAnchor(this.view.state.doc, anchor);
+        if (f) this.highlightRange(f.from, f.to);
+      });
+      layer.append(pc);
+      const pr = at(pc);
+      line(pm.x + pm.w + 4, py + (c.bottom - c.top) / 2, col1, pr.y + pr.h / 2, "pass");
+      let cy = Math.max(y, y2);
+      for (const n of citers) {
+        const el = card({ id: n.id, kind: n.type === "note" ? "linked" : "cited" }, col2, cy);
+        const er = at(el);
+        line(col1 + pr.w, pr.y + pr.h / 2, col2, er.y + er.h / 2);
+        cy = er.y + er.h + 8;
+      }
+      y2 = cy;
+      y1 = Math.max(pr.y + pr.h + 8, cy);
+    }
+    if (!any) {
+      const none = h("div", { class: "bl-head", text: T.backlinksNone });
+      none.style.left = col1 + "px";
+      none.style.top = tr.y + "px";
+      layer.append(none);
+    }
+    lines.setAttribute("width", String(col2 + 240));
+    lines.setAttribute("height", String(Math.max(body.scrollHeight, y2 + 40)));
   }
 
   private hideBubble(): void {
@@ -663,6 +898,7 @@ export class BodyPopup {
   }
 
   close(save = true): void {
+    clearTimeout(this.blTimer);
     if (save) this.save();
     this.unsub();
     this.view.destroy();

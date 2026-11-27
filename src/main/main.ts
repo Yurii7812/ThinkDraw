@@ -251,7 +251,7 @@ function createWindow(): void {
   win = new BrowserWindow({
     width: 1280,
     height: 820,
-    title: "bresuto",
+    title: "BRESUTO",
     icon: path.join(__dirname, "../../assets/icon.png"),
     backgroundColor: "#1e1e1e",
     show: false,

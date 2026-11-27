@@ -10,6 +10,21 @@ export const LINK_KINDS: LinkKind[] = ["line", "arrow", "double", "dashed", "thi
 /** 新しく選べる種類(統合仕様 4.1。太線・対立は選択肢から外した) */
 export const NEW_LINK_KINDS: LinkKind[] = ["line", "arrow", "double", "dashed", "part"];
 
+export type NoteKind = "check" | "table";
+/** 本文が表・チェックリストで始まるか(kind を持たない古いファイルを読むときの見分け) */
+export function detectNoteKind(body: string): NoteKind | null {
+  const first = body.split("\n").find((l) => l.trim());
+  if (!first) return null;
+  if (/^\s*\|/.test(first)) return "table";
+  if (/^\s*[-*+] \[[ xX]\]/.test(first)) return "check";
+  return null;
+}
+/** チェックリスト・表のノートなら、その種類 */
+export function noteKind(n: { type: string; kind?: NoteKind; body: string } | undefined | null): NoteKind | null {
+  if (!n || n.type !== "note") return null;
+  return n.kind ?? detectNoteKind(n.body);
+}
+
 export interface Member {
   id: string;
   x: number;
@@ -77,6 +92,8 @@ export interface TDNode {
   markers?: string[];
   /** type: text のみ。ノートの文章の引用(「ノートID#q-目印」。2026-11-26 修正14) */
   cite?: string;
+  /** type: note のみ。チェックリスト・表(ノートとは別のもの。開かず、キャンバスの上でそのまま書く。2026-11-27 利用者) */
+  kind?: NoteKind;
   body: string;
   /** 知らない frontmatter のキー(外部のエディタで足されたもの)。書き戻すときに残す */
   extra: Record<string, unknown>;

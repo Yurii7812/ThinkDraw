@@ -2,7 +2,7 @@
 import { gap, placeAround, segHitsRect, type Rect } from "../core/placement";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
-import { NEW_LINK_KINDS, ROOT_ID, type Link, type LinkKind, type Stroke, type TDNode } from "../core/types";
+import { NEW_LINK_KINDS, noteKind, ROOT_ID, type Link, type LinkKind, type Stroke, type TDNode } from "../core/types";
 import { edgeEnds, findHops, kindPreview, partEnd, pointAlong, polyPath, routeAround, type Pt, type Seg } from "./edgeshape";
 import { cardDef, cardName, spreadDef } from "../decks";
 import { openCardSearch } from "./tarot";
@@ -11,9 +11,10 @@ import { cardFace, faceHeight } from "./cardface";
 import { openPicker } from "./picker";
 import { PT, T } from "./strings";
 import { paperStore } from "./paperstore";
-import { isCheckOrTable, makeChecklist, makeTable, renderBodyDom, schema as mdSchema, serializeMarkdown, toggleTask } from "./mdschema";
+import { makeChecklist, makeTable, renderBodyDom, schema as mdSchema, serializeMarkdown, toggleTask } from "./mdschema";
 import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
-import { pickIslands, placeIslands } from "../core/islands";
+import { pickIslands, placeIslands, type IslandPick } from "../core/islands";
+import { bodyLinkTargets } from "../core/links";
 import { selectionToMarkdown } from "../core/export";
 import { autoGroupTitle } from "../core/grouptitle";
 import { anchorText, citeOf, parseCite } from "../core/cite";
@@ -374,6 +375,8 @@ export class Canvas {
   // ---------- 島(全体・まわり。2026-11-23 利用者と決めた A2) ----------
   // 今のグループの島はいつものキャンバスそのまま。ほかのグループも、開いたときと同じ位置・見た目・線のまま島として並べる。
   // 島をまたぐ線は、まっすぐ(曲線は使わない)。所属は、親の島の中のグループのノードから、その島の縁への点線。
+  /** 外に広げる物: surround = まわり(全体の画面)、backlinks = このボードの物へのバックリンクだけ(2026-11-27 利用者) */
+  outerMode: "surround" | "backlinks" = "surround";
   setSurround(on: boolean): void {
     this.surround = on;
     this.el.classList.toggle("surround", on);
@@ -393,7 +396,7 @@ export class Canvas {
   private renderScopeCtl(): void {
     this.scopeCtl?.remove();
     this.scopeCtl = null;
-    if (!this.surround) return;
+    if (!this.surround || this.outerMode === "backlinks") return;
     const opts: [string, number][] = [[T.scopeThis, 0], ["＋1", 1], ["＋2", 2], [T.scopeAll, Infinity]];
     const ctl = h("div", { class: "scope-ctl", role: "group", "aria-label": T.scopeLabel });
     for (const [label, n] of opts) {
@@ -425,12 +428,13 @@ export class Canvas {
     curName.style.left = cur.x + 14 + "px";
     curName.style.top = cur.y + 8 + "px";
     this.outerLayer.append(curName);
-    const picks = pickIslands(this.v, this.group, this.scope);
+    const only = this.outerMode === "backlinks" ? this.backlinkItems() : null;
+    const picks: IslandPick[] = only ? [{ group: this.group, dist: 0, from: null, rel: "side" }, ...[...only.keys()].map((g) => ({ group: g, dist: 1, from: this.group, rel: "side" as const }))] : pickIslands(this.v, this.group, this.scope);
     // ほかの島を作って、大きさを測る
     const built: { group: string; el: HTMLElement; nodes: { id: string; el: HTMLElement }[] }[] = [];
     const sizes = new Map<string, { w: number; h: number }>();
     for (const pk of picks.slice(1)) {
-      const items = this.v.itemsOf(pk.group).filter((i) => this.v.exists(i.id));
+      const items = this.v.itemsOf(pk.group).filter((i) => this.v.exists(i.id) && (!only || only.get(pk.group)!.has(i.id)));
       let mx = Infinity, my = Infinity;
       for (const i of items) (mx = Math.min(mx, i.x)), (my = Math.min(my, i.y));
       if (!isFinite(mx)) mx = my = 0;
@@ -517,11 +521,53 @@ export class Canvas {
         if (best) line(best[0], best[1], "outer-edge k-link", l);
       }
     }
+    if (this.outerMode === "backlinks") {
+      // 同じ物(ほかの所属先・引用)は点線、本文のリンクは細い線、文章の引用は緑の線。どれもこのボードの物へ
+      for (const isl of this.islands)
+        for (const nd of isl.nodes) {
+          const r = { x: isl.box.x + nd.el.offsetLeft, y: isl.box.y + nd.el.offsetTop, w: nd.el.offsetWidth, h: nd.el.offsetHeight };
+          const n = this.v.get(nd.id);
+          if (this.rects.has(nd.id)) line(r, this.rects.get(nd.id)!, "outer-edge k-same");
+          for (const t of n ? bodyLinkTargets(n.body) : []) if (this.rects.has(t) && t !== nd.id) line(r, this.rects.get(t)!, "outer-edge k-body");
+          const c = n?.cite ? parseCite(n.cite)?.note : undefined;
+          if (c && this.rects.has(c)) line(r, this.rects.get(c)!, "outer-edge k-cite");
+        }
+      return;
+    }
     // 所属: 島の中のグループのノード → そのグループの島の縁(点線)
     const islandBox = new Map<string, Rect>([[this.group, cur], ...this.islands.map((i) => [i.group, i.box] as [string, Rect])]);
     for (const [gid, box] of islandBox) {
       for (const a of inst.get(gid) ?? []) if (a.ig !== gid) line(a.r, box, "outer-edge k-member");
     }
+  }
+
+  /** このボードの物へのバックリンク: グループごとに、そこに見せる物(本文のリンク・引用・文章の引用・ほかの所属先)。
+   * このボードそのもののつながりは出さない(上の階層で見えるので。2026-11-27 利用者) */
+  backlinkItems(): Map<string, Set<string>> {
+    const v = this.v;
+    const here = new Set(this.rects.keys());
+    const out = new Map<string, Set<string>>();
+    const isGroup = (g: string) => g === ROOT_ID || v.get(g)?.type === "group";
+    const put = (g: string, id: string) => {
+      if (g === this.group || !isGroup(g) || !v.exists(g)) return;
+      (out.get(g) ?? out.set(g, new Set()).get(g)!).add(id);
+    };
+    const cites = new Map<string, string[]>();
+    for (const n of v.nodes.values()) {
+      const c = n.type === "text" && n.cite ? parseCite(n.cite)?.note : undefined;
+      if (c && here.has(c)) (cites.get(c) ?? cites.set(c, []).get(c)!).push(n.id);
+    }
+    for (const id of here) {
+      if (v.get(id)?.type === "alias") continue;
+      for (const p of v.parentsOf(id)) put(p, id); // ほかの所属先
+      for (const q of v.quotedBy(id)) put(q, id); // 引用しているボード
+      for (const x of v.backlinksOf(id)) {
+        if (here.has(x) || !bodyLinkTargets(v.get(x)?.body ?? "").includes(id)) continue; // 本文のリンクだけ(線は同じボードの中なので見えている)
+        for (const p of v.parentsOf(x)) put(p, x);
+      }
+      for (const c of cites.get(id) ?? []) if (!here.has(c)) for (const p of v.parentsOf(c)) put(p, c);
+    }
+    return out;
   }
 
   private outerAt(target: EventTarget | null): string | null {
@@ -554,7 +600,7 @@ export class Canvas {
       return JSON.stringify(["alias", n.target, t && t.type !== "alias" ? this.signature(t, true) : null]);
     }
     if (n.type === "note" && this.inline === n.id) return JSON.stringify(["inline", n.id]); // 書いている間は作り直さない
-    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, n.paper ? [n.paper, paperStore.fzOf(n.paper), paperStore.thumbOf(n.paper)] : null, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? (isCheckOrTable(n.body) ? n.body : null) : !!n.body.trim(), n.card, n.spread, n.size, n.cite ? this.citeText(n) : null]);
+    return JSON.stringify([n.type, n.title, n.color, n.fill, n.file, n.paper ? [n.paper, paperStore.fzOf(n.paper), paperStore.thumbOf(n.paper)] : null, ref, n.type === "group" ? this.groupPeek(n.id).subs : null, n.type === "note" ? (noteKind(n) ? n.body : null) : !!n.body.trim(), n.card, n.spread, n.size, n.cite ? this.citeText(n) : null]);
   }
 
   /** グループのノードに見せる中身: 上から 3 件の名前・残りの数・下のグループの数 */
@@ -626,7 +672,7 @@ export class Canvas {
       if (n.body.trim()) el.append(h("span", { class: "bodymark", title: T.hasBody, "data-act": "body" }, "¶"));
     } else if (n.type === "note") {
       // ノートはタイトルだけ。中身はクリックして開いたときにだけ見せる(2026-11-23 利用者)
-      const ct = isCheckOrTable(n.body);
+      const ct = !!noteKind(n);
       // 題の無いチェックリスト・表は、題の行を出さない(「無題」とも出さない。2026-11-25 修正11)
       if (!ct || n.title) el.append(h("div", { class: "note-head" }, h("span", { class: "ico ico-note" }), h("span", { class: "label", text: n.title || T.untitled })));
       // チェックリスト・表のノートは、中身が全部見えるように(2026-11-25 利用者)
@@ -1726,6 +1772,11 @@ export class Canvas {
       this.setSelection([id]);
       return this.open(id, target);
     }
+    // 添付したファイルは 1 回クリックで開く(2026-11-27 利用者。画像はキャンバスに見えているので、選ぶだけ)
+    if (node.type === "text" && node.file && !isImageFile(node.file)) {
+      this.setSelection([id]);
+      return this.open(id, target);
+    }
     // グループは 1 回クリックで中へ(2026-11-24 利用者)。選ぶだけなら Ctrl+クリックか範囲選択
     // ノートも 1 回クリックで開く(2026-11-26 修正13)
     if (!wasSelected && node.type !== "group" && node.type !== "note") {
@@ -1742,7 +1793,7 @@ export class Canvas {
     const n = this.v.get(id);
     if (!n) return;
     // 表・チェックリストは大画面のノートでは開かない(2026-11-26 修正13)。書けない画面では選ぶだけ
-    if (n.type === "note" && isCheckOrTable(n.body)) {
+    if (noteKind(n)) {
       if (this.host.editInline && !this.readOnly) this.startInline(id);
       else this.setSelection([id]);
       return;
@@ -2026,6 +2077,23 @@ export class Canvas {
   }
 
   // ---------- キー ----------
+  /** このボードの中で、線でつながっている物を全部(directed = 矢印は向きの先だけ) */
+  connectedFrom(start: string[], directed: boolean): string[] {
+    const here = new Set(this.rects.keys());
+    const adj = new Map<string, Set<string>>();
+    const add = (a: string, b: string) => (adj.get(a) ?? adj.set(a, new Set()).get(a)!).add(b);
+    for (const id of here) {
+      for (const l of this.v.get(id)?.links ?? []) {
+        if (!here.has(l.to)) continue;
+        add(id, l.to);
+        if (!directed || l.kind !== "arrow") add(l.to, id);
+      }
+    }
+    const seen = new Set(start.filter((i) => here.has(i)));
+    const q = [...seen];
+    while (q.length) for (const b of adj.get(q.shift()!) ?? []) if (!seen.has(b)) (seen.add(b), q.push(b));
+    return [...seen];
+  }
   handleKey(e: KeyboardEvent): boolean {
     if (this.draft) return false;
     if (this.readOnly) return e.ctrlKey && e.key === "0" ? (this.fitAll(), true) : false;
@@ -2091,6 +2159,12 @@ export class Canvas {
         this.deleteItems(ids, true);
         this.v.removeStrokes(this.group, [...this.strokeSel]);
       });
+      return true;
+    }
+    // Alt+A: 選んだ物と線でつながっている物を、先の先までたどって全部選ぶ(向きは見ない)。
+    // Ctrl+Alt+A: 矢印の向きの先だけをたどる(向きの無い線は両方へ)。2026-11-27 利用者
+    if (e.altKey && k === "a" && ids.length) {
+      this.setSelection(this.connectedFrom(ids, e.ctrlKey));
       return true;
     }
     if (e.ctrlKey && k === "a") {
@@ -2225,7 +2299,7 @@ export class Canvas {
           skipped++;
           continue;
         }
-        const n = this.v.create({ type: src.type, title: src.title, body: src.body, group: this.group, x, y, color: src.color, fill: src.fill, file: src.file, paper: src.paper, cite: src.cite, card: src.card, spread: src.spread, size: src.size });
+        const n = this.v.create({ type: src.type, title: src.title, body: src.body, group: this.group, x, y, color: src.color, fill: src.fill, file: src.file, paper: src.paper, cite: src.cite, kind: src.kind, card: src.card, spread: src.spread, size: src.size });
         made.set(r.id, n.id);
       }
       for (const [from, to] of made) for (const l of this.v.get(from)?.links ?? []) if (made.has(l.to)) this.v.addLink(to, made.get(l.to)!, l.kind);
@@ -2612,7 +2686,7 @@ export class Canvas {
   attachNodeAt(kind: "check" | "table", x: number, y: number, pasted?: string): void {
     const content = kind === "check" ? makeChecklist() : makeTable(2, 2); // 最初は 2 列(2026-11-25 修正11)
     const body = pasted ?? serializeMarkdown(mdSchema.nodes.doc.create(null, [content, mdSchema.nodes.paragraph.create()]));
-    const n = this.v.create({ type: "note", title: "", group: this.group, x: Math.round(x), y: Math.round(y) }); // 題は最初は無し(「表」などとも出さない)
+    const n = this.v.create({ type: "note", kind: kind === "check" ? "check" : "table", title: "", group: this.group, x: Math.round(x), y: Math.round(y) }); // 題は最初は無し(「表」などとも出さない)
     this.v.setBody(n.id, body);
     this.renderNow();
     // 中身が見える大きさなので、ほかのものにかぶるなら下へずらす

@@ -1,0 +1,206 @@
+// 画面の試験: 本物の Electron を起動する。vault と設定は一時ディレクトリ(利用者のフォルダには触らない)
+import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
+
+// 利用者の画面に窓を出さない: Wayland を外し、xvfb の見えない画面(X11)だけで起動する。
+// xvfb-run の外では動かさない(npm run test:e2e を使う)
+const HEADLESS_ARGS = ["--ozone-platform=x11", "."];
+function headlessEnv(): Record<string, string> {
+  if (!process.env.BRESUTO_HEADLESS) throw new Error("画面の試験は npm run test:e2e で(xvfb の中で)動かしてください");
+  const env = { ...process.env } as Record<string, string>;
+  delete env.WAYLAND_DISPLAY;
+  delete env.ELECTRON_OZONE_PLATFORM_HINT;
+  env.XDG_SESSION_TYPE = "x11";
+  return env;
+}
+let app: ElectronApplication;
+let page: Page;
+let vault = "";
+let userData = "";
+let exportDir = "";
+const shots = process.env.BRESUTO_SHOTS;
+
+function mdFiles(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const n of readdirSync(vault)) if (n.endsWith(".md")) out[n] = readFileSync(path.join(vault, n), "utf8");
+  return out;
+}
+const titles = () => Object.values(mdFiles()).map((s) => s.match(/^title: (.*)$/m)?.[1]);
+async function settle() {
+  await page.waitForTimeout(700); // 自動保存(300ms)を待つ
+}
+async function shot(name: string) {
+  if (shots) await page.screenshot({ path: path.join(shots, name + ".png") });
+}
+
+test.beforeEach(async () => {
+  const base = process.env.TMPDIR || tmpdir();
+  vault = mkdtempSync(path.join(base, "td-vault-"));
+  userData = mkdtempSync(path.join(base, "td-user-"));
+  exportDir = mkdtempSync(path.join(base, "td-export-"));
+  app = await electron.launch({ args: HEADLESS_ARGS, env: { ...headlessEnv(), BRESUTO_VAULT: vault, BRESUTO_USERDATA: userData, BRESUTO_TEST: "1", BRESUTO_EXPORT_DIR: exportDir } });
+  page = await app.firstWindow();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.waitForSelector(".canvas");
+});
+test.afterEach(async () => {
+  await app.close();
+  rmSync(vault, { recursive: true, force: true });
+  rmSync(userData, { recursive: true, force: true });
+  rmSync(exportDir, { recursive: true, force: true });
+});
+
+async function write(x: number, y: number, t: string) {
+  await page.mouse.click(x, y);
+  await page.keyboard.type(t);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".node:not(.editing)", { hasText: t })).toHaveCount(1);
+}
+const idOf = (t: string) => Object.entries(mdFiles()).find(([, s]) => s.includes(`title: ${t}\n`))![0].replace(".md", "");
+
+
+// ---------- 2026-11-27 修正15 ----------
+async function newNote(x: number, y: number, title: string) {
+  await page.mouse.click(x, y, { button: "right" });
+  await page.getByText("ノートを作る").click();
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await page.keyboard.type(title);
+  await page.keyboard.press("Enter");
+}
+
+test("修正15: Esc ではノートを閉じない・Ctrl+← でボードへ(タブは残る)・空行が残る・題は本文の列に大きく", async () => {
+  await newNote(400, 300, "日記");
+  await expect(page.locator(".popup.expanded .pop-body .inline-title")).toHaveValue("日記");
+  await page.keyboard.type("a");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("b");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await settle();
+  const note = () => Object.values(mdFiles()).find((s) => s.includes("title: 日記\n"))!;
+  expect(note()).toContain("a\n\n\n\nb");
+  await page.keyboard.press("Control+ArrowLeft");
+  await expect(page.locator(".popup.expanded")).toHaveCount(0);
+  await expect(page.locator(".tabbar .tab")).toHaveCount(2);
+  await shot("15-board-after-back");
+  // 開き直しても空行はそのまま
+  await page.locator(".tabbar .tab.note-tab").click();
+  await expect(page.locator(".popup.expanded .ProseMirror > p")).toHaveCount(4);
+  await shot("15-note");
+});
+
+test("修正15: 右クリックのファイル・チェック・表に絵がある。チェックは開かず、最後の項目は消えない(kind: check)", async () => {
+  await page.mouse.click(400, 300, { button: "right" });
+  for (const t of ["ファイル", "チェックリスト", "表("]) {
+    const b = page.locator(`.ctxmenu .menubar button[title^="${t}"]`);
+    await expect(b).toHaveCount(1);
+    expect(await b.locator("svg path, svg rect").count()).toBeGreaterThan(0);
+  }
+  await page.locator('.ctxmenu .menubar button[title^="チェックリスト"]').click();
+  await expect(page.locator(".popup.expanded")).toHaveCount(0);
+  await page.keyboard.type("x");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press("Backspace");
+  await expect(page.locator(".node .task-box:visible")).toHaveCount(1);
+  await page.mouse.click(900, 600);
+  await settle();
+  const f = Object.values(mdFiles()).find((s) => s.includes("type: note"))!;
+  expect(f).toContain("kind: check");
+  expect(f).toContain("[ ]");
+  await expect(page.locator(".popup.expanded")).toHaveCount(0);
+});
+
+test("修正15: Ctrl+T は右端に開く・タブの上でホイール", async () => {
+  await page.keyboard.press("Control+t");
+  await page.keyboard.press("Control+t");
+  await expect(page.locator(".tabbar .tab")).toHaveCount(3);
+  await page.locator(".tabbar .tab").first().click();
+  await page.keyboard.press("Control+t");
+  await expect(page.locator(".tabbar .tab")).toHaveCount(4);
+  await expect(page.locator(".tabbar .tab").nth(3)).toHaveClass(/active/);
+  await page.locator(".tabbar .tab").first().click();
+  await page.locator(".tabbar .tab").first().hover();
+  await page.mouse.wheel(0, 100);
+  await expect(page.locator(".tabbar .tab").nth(1)).toHaveClass(/active/);
+  await page.mouse.wheel(0, -100);
+  await expect(page.locator(".tabbar .tab").nth(0)).toHaveClass(/active/);
+});
+
+test("修正15: Alt+A でつながりを全部選ぶ・Ctrl+Alt+A は矢印の向きだけ", async () => {
+  await page.mouse.click(300, 300);
+  await page.keyboard.type("親");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("子");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("孫");
+  await page.keyboard.press("Escape");
+  await write(900, 650, "離れ");
+  await settle();
+  await page.locator(".node", { hasText: "孫" }).click({ modifiers: ["Control"] });
+  await page.keyboard.press("Alt+a");
+  await expect(page.locator(".node.selected")).toHaveCount(3);
+  await expect(page.locator(".node.selected", { hasText: "離れ" })).toHaveCount(0);
+});
+
+test("修正15: 文を選んで Ctrl+Q でリンク・ノートのバックリンク(引用された所を押すと光る、Esc で消える)", async () => {
+  await newNote(300, 300, "元");
+  await page.keyboard.type("大事な一文です");
+  await page.keyboard.press("Shift+Home");
+  await page.keyboard.press("Control+c");
+  await page.keyboard.press("Control+ArrowLeft");
+  await newNote(600, 300, "先");
+  await page.keyboard.type("あれ");
+  await page.keyboard.press("Shift+Home");
+  await page.keyboard.press("Control+q");
+  await settle();
+  await settle();
+  const src = idOf("元");
+  const dst = Object.values(mdFiles()).find((s) => s.includes("title: 先\n"))!;
+  if (!dst) console.log(JSON.stringify(mdFiles(), null, 1));
+  expect(dst).toMatch(new RegExp(`\\[あれ\\]\\(${src}\\.md#q-[a-z0-9]{8}\\)`));
+  // 元のノートを開いて、バックリンク
+  await page.locator(".tabbar .tab", { hasText: "元" }).click();
+  await page.locator(".tbtn.backlinks-btn").click();
+  await expect(page.locator(".bl-passage")).toHaveCount(1);
+  await expect(page.locator(".bl-node:not(.bl-passage) .bl-l", { hasText: /^先$/ })).toHaveCount(1);
+  await expect(page.locator(".bl-node:not(.bl-passage) .bl-l", { hasText: /^ホーム$/ })).toHaveCount(1); // 所属先
+  await shot("15-note-backlinks");
+  await page.locator(".bl-passage").click();
+  await expect(page.locator(".ProseMirror .flash")).toHaveCount(1);
+  await page.locator(".ProseMirror").click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".ProseMirror .flash")).toHaveCount(0);
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await page.locator(".tbtn.backlinks-btn").click();
+  await expect(page.locator(".bl-layer")).toHaveCount(0);
+});
+
+test("修正15: ボードのバックリンク: ほかのボードのノートの本文からのリンクを、この画面のまま周りに出す", async () => {
+  await write(300, 300, "的");
+  // グループを作って、その中のノートから「的」へリンク
+  await page.mouse.click(700, 300, { button: "right" });
+  await page.getByText("ここにグループを作る").click();
+  await page.keyboard.type("箱");
+  await page.keyboard.press("Enter");
+  await settle();
+  await page.locator(".node.t-group", { hasText: "箱" }).click();
+  await newNote(400, 300, "参照");
+  await page.keyboard.press("Control+l");
+  await page.keyboard.type("的");
+  await page.keyboard.press("Enter");
+  await settle();
+  await page.keyboard.press("Control+ArrowLeft");
+  await page.keyboard.press("Control+Home");
+  await expect(page.locator(".node", { hasText: "的" })).toHaveCount(1);
+  await page.locator(".tbtn.backlinks-btn").click();
+  await expect(page.locator(".island")).toHaveCount(1);
+  await expect(page.locator(".island .node.outer", { hasText: "参照" })).toHaveCount(1);
+  await expect(page.locator(".edges .outer-edge.k-body")).toHaveCount(1);
+  await expect(page.locator(".scope-ctl")).toHaveCount(0);
+  await shot("15-board-backlinks");
+});

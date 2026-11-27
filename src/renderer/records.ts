@@ -3,10 +3,10 @@
 //   日付グループには @ マーカー(@読書・@夢 など。時系列記録だけのしるし)を付けられる。
 //   画面はアプリの中身の所全体: 左に月のカレンダーとマーカーの絞り込み、右に選んだ日の題・マーカー・ボードの縮小・記録ノート。
 import type { Vault } from "../core/vault";
-import { ROOT_ID } from "../core/types";
+import { noteKind, ROOT_ID } from "../core/types";
 import { T } from "./strings";
 import { askText, h, toast } from "./ui";
-import { isCheckOrTable, openTasks, toggleTask } from "./mdschema";
+import { openTasks, toggleTask } from "./mdschema";
 
 export { cleanKind, DEFAULT_KINDS, KINDS_FILE, parseKinds, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
 import { cleanKind, parseDayGroup, parseRecordTitle, withDescendants, type RecordKind } from "../core/records";
@@ -69,7 +69,7 @@ export function collectRecords(v: Vault): RecordEntry[] {
     for (const it of v.itemsOf(d.id).filter((i) => !i.ref && v.exists(i.id)).sort((a, b) => a.y - b.y || a.x - b.x)) {
       const c = v.get(it.id)!;
       if (c.type !== "note" && c.type !== "group") continue;
-      if (c.type === "note" && isCheckOrTable(c.body) && !parseRecordTitle(c.title)) continue; // 表・チェックリストは記録にしない(2026-11-26 修正13。種類つきで作った記録ノートは残す)
+      if (noteKind(c) && !parseRecordTitle(c.title)) continue; // 表・チェックリストは記録にしない(2026-11-26 修正13。種類つきで作った記録ノートは残す)
       const p = parseRecordTitle(c.title);
       out.push({ date: d.date, day: d.id, id: c.id, kind: p?.kind ?? (c.title || T.untitled), sub: p?.sub ?? "", type: c.type, preview: "" });
     }

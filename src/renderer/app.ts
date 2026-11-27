@@ -1,8 +1,8 @@
 // 画面全体: 上部バー・キャンバス・右の欄(詳細|グラフ)・ペン・履歴・状態の保存・自動保存
-import { NEW_LINK_KINDS, ROOT_ID } from "../core/types";
+import { NEW_LINK_KINDS, noteKind, ROOT_ID } from "../core/types";
 import { kindPreview } from "./edgeshape";
 import { Vault } from "../core/vault";
-import { anchorIn, isCheckOrTable, parseMarkdown, serializeMarkdown } from "./mdschema";
+import { anchorIn, parseMarkdown, serializeMarkdown } from "./mdschema";
 import type { PassageClip } from "./clip";
 import { isImageFile, Canvas, groupPrefs, PRESET_COLORS, refClipboard, type PenState, type View } from "./canvas";
 import { BodyPopup } from "./editor";
@@ -239,7 +239,7 @@ class App {
     this.fwdStack = [...this.tabs[this.activeTab].fwd];
     const g = this.tabs[this.activeTab].group;
     this.canvas.show(g, this.state.views[g] ?? null);
-    if (this.state.surround) this.toggleSurround(true);
+    // 「まわり」は 2026-11-27 にバックリンクへ置き換え(押したときだけ出す。覚えない)
     // 右のタブ(2026-11-26 修正14)。前の版の「横のグループ」も右のタブにする
     const rt = restore(this.state.rtabs);
     const pg = this.state.peekGroup;
@@ -312,7 +312,7 @@ class App {
         btn("paper-btn", PT.btnTip, () => this.togglePaper(), PT.title, "paper"),
         attachBtn,
         this.btnPen,
-        btn("surround-btn", T.surroundTip, () => this.toggleSurround(), T.surroundBtn, "surround"),
+        btn("backlinks-btn", T.backlinksTip, () => this.toggleBacklinks(), T.backlinksBtn, "surround"),
         btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn, "whole"),
         btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn, "export"),
         h("div", { class: "split" }, this.btnDraw),
@@ -493,7 +493,16 @@ class App {
   }
 
   // ---------- 移動 ----------
+  /** 右上の「バックリンク」の押した印を、いま見ている画面に合わせる */
+  private syncBacklinksBtn(): void {
+    const side = this.activeSide();
+    const pop = side === "left" ? this.popup : this.popupR;
+    const cv = side === "right" && this.peek ? this.peek : this.canvas;
+    const on = pop && this.popupTab[side] ? pop.backlinksOn : cv.surround && cv.outerMode === "backlinks";
+    document.querySelector(".tbtn.backlinks-btn")?.classList.toggle("on", !!on);
+  }
   private updateBar(): void {
+    queueMicrotask(() => this.syncBacklinksBtn());
     const g = this.vault.get(this.canvas.group);
     this.titleEl.textContent = this.canvas.group === ROOT_ID ? T.home : g?.title || T.untitledGroup;
     this.btnBack.disabled = !this.backStack.length;
@@ -610,12 +619,13 @@ class App {
     this.activate(side, i);
   }
   /** 新しいタブでグループを開く。activate = false なら後ろで開く(中ボタン) */
-  newTab(group: string = this.canvas.group, activate = true, focusNode?: string): void {
+  newTab(group: string = this.canvas.group, activate = true, focusNode?: string, atEnd = false): void {
     if (this.vault.get(group)?.type !== "group") return;
     this.syncTab();
-    this.tabs.splice(this.activeTab + 1, 0, { group, back: [], fwd: [] });
+    const at = atEnd ? this.tabs.length : this.activeTab + 1;
+    this.tabs.splice(at, 0, { group, back: [], fwd: [] });
     if (activate) {
-      this.loadTab(this.activeTab + 1);
+      this.loadTab(at);
       if (focusNode) {
         this.canvas.centerOn(focusNode);
         this.canvas.setSelection([focusNode]);
@@ -747,7 +757,7 @@ class App {
           if (right) this.popupR = null;
           else this.popup = null;
           this.popupTab[side] = false;
-          // Esc・× でノートを閉じた: そのタブを閉じて、開いた元へ
+          // × でノートを閉じた: そのタブを閉じて、開いた元へ(Esc では閉じない。2026-11-27)
           const tabs = this.tabsOf(side);
           const i = tabs.findIndex((t) => t.note === id);
           if (i >= 0) this.closeTab(i, side);
@@ -755,6 +765,7 @@ class App {
         },
         openSearch: () => this.search(),
         anchorPassage: (c) => this.anchorPassage(c),
+        backFromNote: () => this.leaveNoteTab(side),
       },
       id,
       right ? this.peekWrap! : this.leftPane,
@@ -773,14 +784,19 @@ class App {
     p?.close();
   }
   /** 左でノートのタブを見ているときにグループへ移る: ボードのタブ(前のもの)へ切り替える。無ければ作る */
-  private leaveNoteTab(): void {
-    const t = this.tabs[this.activeTab];
+  private leaveNoteTab(side: Side = "left"): void {
+    const tabs = this.tabsOf(side);
+    const at = this.activeOf(side);
+    const t = tabs[at];
     if (!t?.note) return;
-    for (let k = this.activeTab - 1; k >= 0; k--) if (!this.tabs[k].note) return this.activate("left", k);
-    for (let k = this.activeTab + 1; k < this.tabs.length; k++) if (!this.tabs[k].note) return this.activate("left", k);
+    // ノートのタブは残したまま、ボードのタブ(開いた元に近いもの)へ(2026-11-27 Ctrl+←)
+    for (let k = at - 1; k >= 0; k--) if (!tabs[k].note) return this.activate(side, k);
+    for (let k = at + 1; k < tabs.length; k++) if (!tabs[k].note) return this.activate(side, k);
     this.syncTab();
-    this.tabs.splice(this.activeTab, 0, { group: t.group, back: [], fwd: [] });
-    this.loadTab(this.activeTab);
+    tabs.splice(at, 0, { group: t.group, back: [], fwd: [] });
+    if (side === "left") this.loadTab(at);
+    else this.loadRTab(at);
+    this.setActivePane(side);
   }
 
   // ---------- タブの列(左右それぞれ)とドラッグ ----------
@@ -831,7 +847,7 @@ class App {
     });
     const plus = h("button", { class: "tab-new", title: T.tabNew + " (Ctrl+T)", "aria-label": T.tabNew, text: "＋" });
     plus.addEventListener("click", () => {
-      if (side === "left") return this.newTab();
+      if (side === "left") return this.newTab(undefined, true, undefined, true);
       this.syncTab();
       this.rtabs.splice(this.ractive + 1, 0, { group: this.peek?.group ?? ROOT_ID, back: [], fwd: [] });
       this.activate("right", this.ractive + 1);
@@ -840,6 +856,20 @@ class App {
   }
   /** タブの列にドラッグを受ける(並べ替え・反対側から移す) */
   private bindStrip(strip: HTMLElement, side: Side): void {
+    // タブの上でホイール: 下(奥)へ回すと右のタブ、上へ回すと左のタブ(2026-11-27 利用者)
+    strip.addEventListener(
+      "wheel",
+      (e) => {
+        const n = this.tabsOf(side).length;
+        if (n < 2) return;
+        const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+        if (!d) return;
+        e.preventDefault();
+        const i = this.activeOf(side) + (d > 0 ? 1 : -1);
+        if (i >= 0 && i < n) this.switchTab(i, side);
+      },
+      { passive: false },
+    );
     const indexAt = (cx: number) => {
       const ts = [...strip.querySelectorAll<HTMLElement>(".tab")];
       const k = ts.findIndex((t) => cx < t.getBoundingClientRect().left + t.getBoundingClientRect().width / 2);
@@ -1448,7 +1478,7 @@ class App {
     if (!this.vault.exists(id)) return;
     // 表・チェックリストは大画面で開かない。そのボードへ行って、その場で書く(2026-11-26 修正13)
     const tn = this.vault.get(id)!;
-    if (tn.type === "note" && isCheckOrTable(tn.body)) {
+    if (noteKind(tn)) {
       if (opts.pane === "right" && this.peek && this.vault.itemPos(this.peek.group, id)) {
         this.peek.renderNow();
         this.peek.openNote(id);
@@ -1734,6 +1764,23 @@ class App {
     this.state.islandScope = isFinite(n) ? n : null;
     this.saveState();
   }
+  /** 右上の「バックリンク」: ノートのタブならそのノートの周りに、ボードならこの画面のまま周りに出す(2026-11-27 利用者) */
+  toggleBacklinks(): void {
+    const side = this.activeSide();
+    const pop = side === "left" ? this.popup : this.popupR;
+    if (pop && this.popupTab[side]) {
+      const on = pop.toggleBacklinks();
+      document.querySelector(".tbtn.backlinks-btn")?.classList.toggle("on", on);
+      return;
+    }
+    const cv = side === "right" && this.peek ? this.peek : this.canvas;
+    const on = !(cv.surround && cv.outerMode === "backlinks");
+    cv.outerMode = "backlinks";
+    cv.setSurround(on);
+    document.querySelector(".tbtn.backlinks-btn")?.classList.toggle("on", on);
+    if (on && !cv.backlinkItems().size) toast(T.backlinksNone);
+    if (on) cv.fitAll();
+  }
   toggleSurround(on = !this.canvas.surround): void {
     this.canvas.scope = this.savedScope();
     this.canvas.setSurround(on);
@@ -1815,6 +1862,7 @@ class App {
 
   /** 左右どちらを今使っているか(見出しに色を付けるだけ) */
   private setActivePane(p: "left" | "right"): void {
+    queueMicrotask(() => this.syncBacklinksBtn());
     this.main.dataset.active = p;
   }
   /** 左の画面の幅の割合(0.2〜0.8) */
@@ -2212,7 +2260,7 @@ class App {
       // タブ: Ctrl+T 新しいタブ(今のグループ)・Ctrl+W 閉じる・Ctrl+Tab / Ctrl+PageDown 次・Ctrl+Shift+Tab / Ctrl+PageUp 前
       if (e.ctrlKey && !e.shiftKey && k === "t") {
         e.preventDefault();
-        this.newTab();
+        this.newTab(undefined, true, undefined, true); // 右端に開く(2026-11-27 利用者)
         return;
       }
       // Ctrl+W・Ctrl+Tab は、今使っている側のタブに(2026-11-26 修正14)
@@ -2245,7 +2293,9 @@ class App {
       // 移動の履歴: Ctrl+← 戻る・Ctrl+→ 進む(統合仕様 1)。書いている最中はふつうのカーソル移動
       if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight") && !inField && !this.paperOpen && !this.records) {
         e.preventDefault();
-        if (e.key === "ArrowLeft") this.back();
+        const sd = this.activeSide();
+        if (e.key === "ArrowLeft" && this.tabsOf(sd)[this.activeOf(sd)]?.note) this.leaveNoteTab(sd); // ノートのタブからはボードへ(タブは残す)
+        else if (e.key === "ArrowLeft") this.back();
         else this.forward();
         return;
       }
@@ -2296,14 +2346,12 @@ class App {
         return;
       }
       if (inField) return;
+      // Esc ではノート・日記を閉じない(2026-11-27 利用者。閉じるのは Ctrl+W・×、戻るのは Ctrl+←)
       if (e.key === "Escape" && (this.popup || this.popupR)) {
-        // ノートのタブなら、そのタブを閉じて開いた元へ(BodyPopup の close から)
         const side: Side = this.popupR && (this.main.dataset.active === "right" || !this.popup) ? "right" : "left";
-        (side === "left" ? this.popup : this.popupR)?.close();
-        if (side === "right" && !this.popupTab.right) this.popupR = null;
-        if (side === "left" && !this.popupTab.left) this.popup = null;
-        return;
+        if (this.popupTab[side]) return;
       }
+
       if (e.key === "Escape" && this.canvas.pen.on) {
         this.togglePen(false);
         return;

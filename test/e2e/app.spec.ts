@@ -597,7 +597,7 @@ test("2026-11-24 統合仕様 10〜15: 日付グループの題・Ctrl+D は題�
     await page.locator(".modal.ask .ask-input").fill("夢");
     await page.locator(".modal.ask .ask-input").press("Enter");
     await expect(page.locator(".popup.expanded")).toBeVisible();
-    await page.keyboard.press("Escape");
+    await page.keyboard.press("Control+ArrowLeft"); // Esc では閉じない(2026-11-27)
   }
   await settle();
   expect(titles().filter((t) => t === `${ymd}-夢`).length).toBe(2);
@@ -614,7 +614,7 @@ test("2026-11-24 統合仕様 10〜15: 日付グループの題・Ctrl+D は題�
   await page.locator(".rec-item", { hasText: "夢" }).first().click();
   await expect(page.locator(".records")).toHaveCount(0);
   await expect(page.locator(".popup.expanded")).toBeVisible();
-  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+ArrowLeft");
   // ボードを開く・Esc で閉じる
   await page.keyboard.press("Control+j");
   await page.locator(".rec-open-day").click();
@@ -715,7 +715,8 @@ test("島(まわり・全体): 今のグループはそのまま、ほかのグ�
   await page.locator(".node.t-group", { hasText: "宗教" }).dblclick();
   await expect(page.locator(".group-title")).toHaveText("宗教");
   // この画面のまま「まわり」: ホームの島が出る(中の物と、その中の線もそのまま)
-  await page.locator(".tbtn.surround-btn").click();
+  // 「まわり」のボタンは 2026-11-27 にバックリンクへ置き換えた。島の仕組みは全体の画面で使うので、ここでは直接出して確かめる
+  await page.evaluate(() => (window as any).__app.toggleSurround(true));
   const home = page.locator(".canvas:not(.whole-canvas) .island", { hasText: "ホーム" });
   await expect(home).toHaveCount(1);
   await expect(home.locator(".node.outer", { hasText: "外の考え" })).toHaveCount(1);
@@ -1687,7 +1688,7 @@ test("2026-11-25 修正9: ノートの題は折り返さない・ノートの右
   await expect(page.locator(".popup .ProseMirror li.task")).toHaveCount(1);
   await page.locator(".popup .b-check").click(); // もう一度でふつうの項目に
   await expect(page.locator(".popup .ProseMirror li.task")).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+w"); // Esc では閉じない(2026-11-27)
   await expect(page.locator(".popup")).toHaveCount(0);
   const h1 = await page.locator(".node.t-note .note-head").evaluate((e) => e.getBoundingClientRect().height);
   expect(h1).toBeLessThan(30);
@@ -2110,6 +2111,8 @@ test("2026-11-26 修正13: ノートは 1 回クリックで開く・表は大�
   await page.locator(".node.t-note", { hasText: "ひとつめのノート" }).click();
   await expect(page.locator(".popup.expanded")).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(page.locator(".popup.expanded")).toBeVisible(); // Esc では閉じない(2026-11-27)
+  await page.keyboard.press("Control+w");
   await expect(page.locator(".popup")).toHaveCount(0);
   // 表: 1 回クリックでその場で書く(大画面は出ない)
   await page.locator(".tbtn.attach-btn").click();
@@ -2196,7 +2199,7 @@ test("2026-11-26 修正14: Ctrl+V は複製・Ctrl+Q は引用。ノートの文
   await page.keyboard.press("End");
   await page.keyboard.press("Shift+Home");
   await page.keyboard.press("Control+c");
-  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+ArrowLeft"); // Esc では閉じない(2026-11-27)。ボードへ戻る
   await expect(page.locator(".popup")).toHaveCount(0);
   // 何もない所を押して Ctrl+Q: その場所に引用の文字
   await page.mouse.click(400, 450);
@@ -2223,7 +2226,11 @@ test("2026-11-26 修正14: Ctrl+V は複製・Ctrl+Q は引用。ノートの文
   // ノートの中の引用された所を押すと、引用しているボードの文字が出る
   await page.locator('.popup.expanded a[href^="#q-"]').click();
   await expect(page.locator(".linkbubble.cited .cited-row")).toHaveCount(1);
+  // Esc は光った所を消すだけ(ノートは閉じない。2026-11-27)。Ctrl+← でボードへ
   await page.keyboard.press("Escape");
+  await expect(page.locator(".popup.expanded .flash")).toHaveCount(0);
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  await page.keyboard.press("Control+ArrowLeft");
   // ボードの文字をノートに Ctrl+Q: リンクとして入る
   await page.locator(".node.t-text:not(.cite)", { hasText: "複製元" }).first().click({ modifiers: ["Control"] });
   await page.keyboard.press("Control+c");
@@ -2271,7 +2278,7 @@ test("2026-11-26 修正14: 分割すると、ノートは押した側の画面�
   await page.keyboard.press("Enter");
   await page.keyboard.press("Control+q");
   await expect(page.locator(".pane.peek .popup .ProseMirror blockquote", { hasText: "元の大事な一文" })).toHaveCount(1);
-  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+ArrowLeft"); // Esc では閉じない(2026-11-27)。右のボードへ戻る
   await settle();
   const b2 = await page.evaluate((id) => (window as unknown as { __app: A }).__app.vault.get(id).body, a2);
   expect(b2).toMatch(new RegExp(`> 元の大事な一文[\\s\\S]*\\(${a1}\\.md#q-[a-z0-9]{8}\\)`));

@@ -4,7 +4,7 @@
 import { parseNode, serializeNode } from "./frontmatter";
 import { ID_RE, newId, nowIso, randomId } from "./ids";
 import { Index } from "./indexer";
-import { cloneNode, ROOT_ID, ROOT_TITLE, type CardRef, type Link, type Member, type LinkKind, type NodeType, type SpreadRef, type Stroke, type TDNode } from "./types";
+import { cloneNode, ROOT_ID, ROOT_TITLE, type CardRef, type Link, type Member, type LinkKind, type NodeType, type NoteKind, type SpreadRef, type Stroke, type TDNode } from "./types";
 
 export interface VaultIO {
   /** 一時ファイルに書いてからリネームする。.trash/ に同じ名前があれば消す(復元) */
@@ -42,6 +42,8 @@ export interface CreateOptions {
   paper?: string;
   /** type: text のみ。ノートの文章の引用 */
   cite?: string;
+  /** type: note のみ。チェックリスト・表 */
+  kind?: NoteKind;
   fill?: number;
   card?: CardRef;
   spread?: SpreadRef;
@@ -325,6 +327,7 @@ export class Vault {
       if (o.file) n.file = o.file;
       if (o.paper) n.paper = o.paper;
       if (o.cite && o.type === "text") n.cite = o.cite;
+      if (o.kind && o.type === "note") n.kind = o.kind;
       if (o.fill) n.fill = o.fill;
       if (o.spread) n.spread = { ...o.spread };
       if (o.type === "frame") n.size = { ...(o.size ?? { w: 240, h: 160 }) };

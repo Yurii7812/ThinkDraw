@@ -3,9 +3,9 @@
 // 書くのは自前(SPEC の例と同じ、1 行 1 項目の見やすい形にそろえるため)。
 
 import YAML from "yaml";
-import { LINK_KINDS, type Link, type LinkKind, type Member, type NodeType, type Stroke, type TDNode } from "./types";
+import { detectNoteKind, LINK_KINDS, type NoteKind, type Link, type LinkKind, type Member, type NodeType, type Stroke, type TDNode } from "./types";
 
-const KNOWN = new Set(["id", "title", "type", "color", "fill", "file", "paper", "created", "updated", "members", "refs", "strokes", "links", "card", "spread", "size", "target", "markers", "cite"]);
+const KNOWN = new Set(["id", "title", "type", "color", "fill", "file", "paper", "created", "updated", "members", "refs", "strokes", "links", "card", "spread", "size", "target", "markers", "cite", "kind"]);
 const TYPES: NodeType[] = ["text", "note", "group", "card", "frame", "alias"];
 
 export class ParseError extends Error {}
@@ -104,6 +104,7 @@ export function parseNode(src: string, fallbackId: string): TDNode {
     ...(/^assets\/[^\n]+$/.test(str(data.file)) ? { file: str(data.file) } : {}),
     ...(/^p[0-9a-f]{12}$/.test(str(data.paper)) ? { paper: str(data.paper) } : {}),
     ...(type === "text" && /^[a-z0-9]{10}(#q-[a-z0-9]{8})?$/.test(str(data.cite)) ? { cite: str(data.cite) } : {}),
+    ...(type === "note" && (data.kind === "check" || data.kind === "table") ? { kind: data.kind as NoteKind } : type === "note" && detectNoteKind(body) ? { kind: detectNoteKind(body)! } : {}),
     ...(type === "frame" ? { size: frameSize(data.size) } : {}),
     ...(type === "alias" && str(data.target) ? { target: str(data.target) } : {}),
     ...(type === "group" && Array.isArray(data.markers) && data.markers.length ? { markers: [...new Set((data.markers as unknown[]).map((m) => str(m).trim()).filter(Boolean))] } : {}),
@@ -173,6 +174,7 @@ export function serializeNode(n: TDNode): string {
   if (n.file) L.push(`file: ${scalar(n.file)}`);
   if (n.paper) L.push(`paper: ${scalar(n.paper)}`);
   if (n.type === "text" && n.cite) L.push(`cite: ${scalar(n.cite)}`);
+  if (n.type === "note" && n.kind) L.push(`kind: ${n.kind}`);
   if (n.type === "frame" && n.size) L.push(`size: { w: ${Math.round(n.size.w)}, h: ${Math.round(n.size.h)} }`);
   if (n.type === "alias" && n.target) L.push(`target: ${scalar(n.target)}`);
   if (n.type === "group" && n.markers?.length) L.push(`markers: [${n.markers.map((m) => flowScalar(m)).join(", ")}]`);
