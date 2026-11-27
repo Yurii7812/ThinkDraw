@@ -231,8 +231,8 @@ test("修正15(2): 文字を書いて画面の外へ伸びても、そのあと�
   await page.mouse.click(1150, 300);
   await page.keyboard.type("とても長い文字をここに書いて画面の右の外まで伸ばしてみるとどうなるかを確かめるための文章です");
   await page.keyboard.press("Escape");
-  const sl = await page.locator(".canvas").first().evaluate((e) => e.scrollLeft);
-  expect(sl).toBe(0);
+  // スクロールしても、すぐ画面の移動に置き換わる(scroll のできごとは少し遅れて来る)
+  await expect.poll(() => page.locator(".canvas").first().evaluate((e) => e.scrollLeft)).toBe(0);
   // 何もない所で範囲選択: 箱がマウスの所に出る
   await page.mouse.move(200, 500);
   await page.mouse.down();
@@ -315,4 +315,33 @@ test("修正15(3): 線はまっすぐ・選ぶと線が太く色付きでつな�
   await expect(page.locator(".node", { hasText: /^農業$/ })).toHaveCount(2); // 別々に書いた「農業」は別の物
   await expect(page.locator(".elabel", { hasText: "打撃" })).toHaveCount(1);
   await shot("15-network");
+});
+
+test("修正15(4): JSON Canvas・網の箇条書き・OPML に書き出せる。.canvas を落とすと同じ形で置ける", async () => {
+  await page.evaluate(() => navigator.clipboard.writeText("親\n  子1\n  (理由)子2 (1)\n別\n  (1)"));
+  await page.mouse.move(400, 300);
+  await page.keyboard.press("Control+q");
+  await expect(page.locator(".node.t-text")).toHaveCount(4);
+  await page.keyboard.press("Escape");
+  for (const label of ["JSON Canvas(.canvas)", "網の箇条書き(.md)", "OPML(.opml)"]) {
+    await page.locator(".tbtn.export").click();
+    await page.locator(".ctxmenu .item", { hasText: label }).first().click();
+  }
+  await expect.poll(() => readdirSync(exportDir).sort()).toEqual(["ホーム.canvas", "ホーム.md", "ホーム.opml"]);
+  const outline = readFileSync(path.join(exportDir, "ホーム.md"), "utf8");
+  expect(outline).toContain("(理由)子2 (1)");
+  expect(outline).toMatch(/別\n {2}\(1\)/);
+  const cv = JSON.parse(readFileSync(path.join(exportDir, "ホーム.canvas"), "utf8"));
+  expect(cv.nodes).toHaveLength(4);
+  expect(cv.edges).toHaveLength(3);
+  // .canvas を落とす: 4 つ増える
+  const text = readFileSync(path.join(exportDir, "ホーム.canvas"), "utf8");
+  await page.evaluate((t) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([t], "共有.canvas", { type: "application/json" }));
+    const el = document.querySelector(".canvas")!;
+    el.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, clientX: 300, clientY: 600, bubbles: true, cancelable: true }));
+  }, text);
+  await expect(page.locator(".node.t-text")).toHaveCount(8);
+  await expect(page.locator(".elabel", { hasText: "理由" })).toHaveCount(2);
 });

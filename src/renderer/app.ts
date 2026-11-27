@@ -1992,7 +1992,13 @@ class App {
       { label: T.exportJpg, action: go("jpg", s) },
       { label: T.exportHtml, action: go("html", s) },
       { separator: true, label: "" },
+      // ほかのアプリと共有しやすい形(2026-11-28)
+      { label: T.exportCanvas, desc: T.exportCanvasDesc, action: go("canvas", s) },
+      { label: T.exportOutline, desc: T.exportOutlineDesc, action: go("outline", s) },
+      { label: T.exportOpml, desc: T.exportOpmlDesc, action: go("opml", s) },
+      { separator: true, label: "" },
       { label: T.exportCopy, action: go("copy", s) },
+      { label: T.exportCopyOutline, action: go("copyOutline", s) },
       { separator: true, label: "" },
       { label: T.exportQuality, action: () => this.imageSettings() },
     ];
@@ -2400,6 +2406,19 @@ addEventListener(
   },
   true,
 );
+
+// Mac では Cmd を Ctrl と同じに扱う(ショートカットは Ctrl で書いてあるので。2026-11-28 Windows・Mac 対応)。
+// 本文の中(ProseMirror の Mod-)は、もともと Mac では Cmd
+if (/Mac/i.test(navigator.platform)) {
+  for (const type of ["keydown", "keyup"] as const)
+    addEventListener(
+      type,
+      (e) => {
+        if (e.metaKey && !e.ctrlKey) Object.defineProperty(e, "ctrlKey", { get: () => true });
+      },
+      true,
+    );
+}
 
 const app = new App();
 (window as unknown as { __app: App }).__app = app; // 画面の試験から中を覗くため

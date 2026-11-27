@@ -2,6 +2,7 @@
 import { freeOffset, gap, placeAround, segHitsRect, type Rect } from "../core/placement";
 import { flattenOutline, layoutOutline, parseOutlineGraph, type OutlineLink, type OutlineNode } from "../core/outline";
 import { alignItems, resolveOverlaps, spreadFrom, type ArrItem } from "../core/arrange";
+import { fromJsonCanvas } from "../core/share";
 import { readZipEntry } from "./unzip";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
@@ -1388,7 +1389,7 @@ export class Canvas {
       void (async () => {
         // OPML・FreeMind・XMind はマインドマップとして取り込む(2026-11-27)。ほかは添付
         const rest: File[] = [];
-        for (const f of files) if (!/\.(opml|mm|xmind)$/i.test(f.name) || !(await this.importOutlineFile(f, p))) rest.push(f);
+        for (const f of files) if (!/\.(opml|mm|xmind|canvas)$/i.test(f.name) || !(await this.importOutlineFile(f, p))) rest.push(f);
         if (rest.length) await this.attachFilesAt(rest, p.x, p.y);
       })();
     });
@@ -2539,6 +2540,7 @@ export class Canvas {
   /** OPML・FreeMind・XMind のファイルを落とした: マインドマップにして置く。読めなければ null(ふつうの添付にする) */
   async importOutlineFile(f: File, at: { x: number; y: number }): Promise<boolean> {
     let text: string | null = null;
+    if (/\.canvas$/i.test(f.name)) return this.importJsonCanvas(await f.text(), at);
     if (/\.xmind$/i.test(f.name)) {
       const data = new Uint8Array(await f.arrayBuffer());
       text = (await readZipEntry(data, (n) => n === "content.json")) ?? (await readZipEntry(data, (n) => n === "content.xml"));
@@ -2547,6 +2549,36 @@ export class Canvas {
     const { roots, links } = parseOutlineGraph(text, f.name);
     if (!roots.length) return false;
     this.placeOutline(roots, at, links);
+    return true;
+  }
+  /** JSON Canvas(Obsidian のキャンバス)を、その場所に置く。位置・線・線の言葉・囲い(枠)のまま */
+  importJsonCanvas(src: string, at: { x: number; y: number }): boolean {
+    let c: ReturnType<typeof fromJsonCanvas>;
+    try {
+      c = fromJsonCanvas(src);
+    } catch {
+      return false;
+    }
+    if (!c.nodes.length) return false;
+    const idOf = new Map<string, string>();
+    const made: string[] = [];
+    this.v.tx(() => {
+      for (const n of c.nodes) {
+        const x = Math.round(at.x + n.x), y = Math.round(at.y + n.y);
+        const id = n.kind === "frame" ? this.v.create({ type: "frame", title: n.title, group: this.group, x, y, size: { w: Math.round(n.w), h: Math.round(n.h) }, color: n.color }).id : this.v.create({ type: "text", title: n.title || T.untitled, group: this.group, x, y, color: n.color }).id;
+        idOf.set(n.key, id);
+        made.push(id);
+      }
+      for (const e of c.edges) {
+        const a = idOf.get(e.from), b = idOf.get(e.to);
+        if (!a || !b || a === b) continue;
+        this.v.addLink(a, b, e.kind);
+        if (e.label) this.v.setLinkLabel(a, b, e.label);
+      }
+    });
+    this.renderNow();
+    this.setSelection(made);
+    toast(T.outlinePlaced(made.length));
     return true;
   }
   placeOutline(roots: OutlineNode[], at: { x: number; y: number }, extra: OutlineLink[] = []): void {

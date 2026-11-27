@@ -316,5 +316,34 @@ app.whenReady().then(() => {
   });
   registerIpc();
   createWindow();
+  void checkUpdates();
 });
+
+// ---------- 自動更新(2026-11-28 利用者「知らせて、押すと入れ替える」) ----------
+// 配布したアプリ(AppImage・Windows の .exe)だけ。GitHub Releases に新しい版があれば裏で落とし、終わったら知らせる。
+// 作業フォルダから動かしているとき(bresuto コマンド・試験)は何もしない。Mac は署名が無いので自動では入れ替えられない
+async function checkUpdates(): Promise<void> {
+  if (!app.isPackaged || process.env.BRESUTO_TEST || process.platform === "darwin") return;
+  try {
+    const { autoUpdater } = await import("electron-updater");
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on("update-downloaded", async (info) => {
+      if (!win) return;
+      const r = await dialog.showMessageBox(win, {
+        type: "info",
+        buttons: ["今すぐ入れ替える(再起動)", "あとで(閉じたときに入れ替える)"],
+        defaultId: 0,
+        cancelId: 1,
+        title: "BRESUTO",
+        message: `新しい版 ${info.version} を用意しました`,
+        detail: "入れ替えると、BRESUTO が一度閉じて開き直します。書いていたものは保存されています。",
+      });
+      if (r.response === 0) autoUpdater.quitAndInstall();
+    });
+    await autoUpdater.checkForUpdates();
+  } catch {
+    /* つながらない・Releases が無いときは何もしない */
+  }
+}
 app.on("window-all-closed", () => app.quit());

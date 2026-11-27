@@ -1,5 +1,6 @@
 // 書き出し(画像・HTML): いまの画面と同じ並びを、SVG にして PNG や HTML にする
 import { groupToMarkdown, labelOf } from "../core/export";
+import { toJsonCanvas, toOpml, toOutlineText } from "../core/share";
 import { edgeEnds, partEnd } from "./edgeshape";
 import { ROOT_ID } from "../core/types";
 import type { Vault } from "../core/vault";
@@ -164,7 +165,7 @@ export interface ImageOpts {
 }
 export const DEFAULT_IMAGE: ImageOpts = { scale: 2, quality: 0.9 };
 
-export type ExportKind = "md" | "png" | "jpg" | "html" | "copy";
+export type ExportKind = "md" | "png" | "jpg" | "html" | "copy" | "canvas" | "outline" | "opml" | "copyOutline";
 
 /** sel を渡すと、選んでいる物(とペンの線)だけを書き出す */
 export async function exportGroup(v: Vault, group: string, canvas: Canvas, kind: ExportKind, sel?: ExportSel, img: ImageOpts = DEFAULT_IMAGE): Promise<void> {
@@ -179,7 +180,17 @@ export async function exportGroup(v: Vault, group: string, canvas: Canvas, kind:
       return;
     }
     let path: string | null;
-    if (kind === "md") path = await api().exportSave(name + ".md", "Markdown", ["md"], md());
+    const only = sel ? new Set(sel.ids) : undefined;
+    const rect = (id: string) => canvas.rectOf(id);
+    if (kind === "copyOutline") {
+      await navigator.clipboard.writeText(toOutlineText(v, group, rect, only));
+      toast("網の箇条書きをコピーしました(bresuto に Ctrl+Q で貼ると同じ図に戻ります)");
+      return;
+    }
+    if (kind === "canvas") path = await api().exportSave(name + ".canvas", "JSON Canvas", ["canvas"], toJsonCanvas(v, group, rect, only));
+    else if (kind === "outline") path = await api().exportSave(name + ".md", "箇条書き", ["md"], toOutlineText(v, group, rect, only));
+    else if (kind === "opml") path = await api().exportSave(name + ".opml", "OPML", ["opml"], toOpml(v, group, rect, base, only));
+    else if (kind === "md") path = await api().exportSave(name + ".md", "Markdown", ["md"], md());
     else {
       // 画面に見えているとおりに写す(2026-11-27 利用者。前は別に描き直していて見た目が違った)
       const shot = await canvas.capture(img.scale, sel);

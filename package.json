@@ -1,7 +1,7 @@
 {
   "name": "bresuto",
   "productName": "bresuto",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "bresuto(ブレスト。旧 ThinkDraw): ページが一つだけの無限キャンバスで考えを書き散らし、束ねて整理するアプリ",
   "main": "dist/main/main.js",
   "desktopName": "bresuto.desktop",
@@ -12,10 +12,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "node build.mjs && xvfb-run -a env BRESUTO_HEADLESS=1 nice playwright test",
-    "booklet": "sh booklet/make.sh"
+    "booklet": "sh booklet/make.sh",
+    "dist": "node build.mjs && nice electron-builder --publish never"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.3",
+    "electron-updater": "^6.8.11",
     "prosemirror-commands": "^1.7.2",
     "prosemirror-history": "^1.5.2",
     "prosemirror-inputrules": "^1.7.0",
@@ -32,8 +34,75 @@
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^26.6.6",
     "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
     "vitest": "^5.1.1"
+  },
+  "author": {
+    "name": "Yurii7812",
+    "email": "Yurii7812@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/Yurii7812/bresuto",
+  "build": {
+    "appId": "io.github.yurii7812.bresuto",
+    "productName": "BRESUTO",
+    "executableName": "bresuto",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "package.json",
+      "!dist/**/*.map"
+    ],
+    "asarUnpack": [],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "icon": "assets/icon.png",
+      "executableName": "bresuto",
+      "synopsis": "無限キャンバスのブレスト・ノート",
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "bresuto",
+          "Name": "BRESUTO"
+        }
+      }
+    },
+    "deb": {
+      "maintainer": "Yurii7812 <Yurii7812@users.noreply.github.com>"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "shortcutName": "BRESUTO"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "assets/icon.png",
+      "identity": null
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Yurii7812",
+        "repo": "bresuto",
+        "releaseType": "release"
+      }
+    ]
   }
 }

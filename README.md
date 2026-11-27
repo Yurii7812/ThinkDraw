@@ -4,10 +4,23 @@
 
 「ページが一つだけ」の無限キャンバスに考えを書き散らし、散らかったら束ねてグループにする、デスクトップのノートアプリ。仕様は [SPEC.md](SPEC.md)。
 
-- Electron + TypeScript。対象は Linux。
+- Electron + TypeScript。Linux で作っている。Windows・Mac 用のファイルも作る(2026-11-28 から。自分用で署名なし)。
 - 開いたフォルダに、1 ノード = 1 つの `.md`(frontmatter 付きの Markdown)で保存する。
 
-## 動かす
+## 入れる(配布ファイル)
+
+[Releases](https://github.com/Yurii7812/bresuto/releases) から、使う OS のファイルを落とす。
+
+| OS | ファイル | 入れ方 |
+|---|---|---|
+| Linux | `BRESUTO-版.AppImage` | 実行できるようにして(`chmod +x`)ダブルクリック。新しい版が出ると自動で落とし、知らせてくれる |
+| Linux(Debian・Ubuntu) | `bresuto_版_amd64.deb` | `sudo apt install ./bresuto_版_amd64.deb` |
+| Windows | `BRESUTO Setup 版.exe` | ダブルクリック。署名が無いので「Windows によって PC が保護されました」が出たら「詳細情報 → 実行」。自動更新あり |
+| Mac | `BRESUTO-版.dmg` | 開いてアプリケーションへ。署名が無いので、最初だけ右クリック →「開く」。自動更新は無い(新しい版を手で入れ替える) |
+
+新しい版を出すには、`package.json` の version を上げてタグを push する(`git tag v0.2.0 && git push origin v0.2.0`)。GitHub Actions が 3 つの OS のファイルを作って Releases に置く。手元で作るなら `npm run dist`(`release/` にできる)。
+
+## 動かす(作業フォルダから)
 
 ```sh
 npm install
