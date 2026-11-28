@@ -283,6 +283,10 @@ test("修正15(3): 線はまっすぐ・選ぶと線が太く色付きでつな�
   await expect(page.locator(".edge-hot .h-vis")).toHaveCount(1); // 手前に描く写し
   await expect(page.locator(".node.hl-near", { hasText: "右の子" })).toHaveCount(1);
   await expect(page.locator(".node.hl-near", { hasText: "離れた物" })).toHaveCount(0);
+  // 見え方(2026-11-28 利用者が選んだ): 子は点線の枠、線は青いだけで太さはそのまま
+  expect(await page.locator(".node.hl-near", { hasText: "右の子" }).evaluate((e) => getComputedStyle(e).outlineStyle)).toBe("dashed");
+  expect(await page.locator(".edge-hot .h-vis").evaluate((e) => getComputedStyle(e).strokeWidth)).toBe("1.5px");
+  await shot("15-emphasis");
   await page.keyboard.press("Escape");
   await expect(page.locator(".edge.hl")).toHaveCount(0);
   // Alt+D: じゃまだけが動く

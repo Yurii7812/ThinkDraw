@@ -980,7 +980,10 @@ export class Canvas {
         const c = svg("g", { class: "hot-line" });
         for (const [sel, cls, prop] of [[".vis", "h-vis", "stroke"], [".end-fill", "h-fill", "fill"], [".end-stroke", "h-stroke", "stroke"]] as const) {
           const src = g.querySelector(sel);
-          if (src) c.append(svg("path", { d: src.getAttribute("d") ?? "", class: cls, "data-p": prop }));
+          if (!src) continue;
+          const cs = getComputedStyle(src);
+          // 太さ・点線の形は元の線のまま(青くするだけ。2026-11-28)
+          c.append(svg("path", { d: src.getAttribute("d") ?? "", class: cls, "data-p": prop, ...(cls === "h-vis" ? { style: `stroke-width:${cs.strokeWidth};stroke-dasharray:${cs.strokeDasharray}` } : {}) }));
         }
         hotG.append(c);
       }

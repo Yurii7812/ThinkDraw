@@ -1167,13 +1167,15 @@ body.capturing #toast, body.capturing .return-btn, body.capturing .scope-ctl, bo
 body.capturing .canvas, body.capturing .canvas * { cursor: none !important; }
 /* 選んだ文の線・選んだ線を目立たせる(2026-11-27。ほかは薄くしない) */
 .edge-hot { pointer-events: none; }
-.edge-hot .h-vis { fill: none; stroke: var(--accent); stroke-width: 2.6; stroke-linecap: round; }
+/* 線は青くするだけ(太さはそのまま。2026-11-28 利用者が見本の 3 を選んだ) */
+.edge-hot .h-vis { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; }
 .edge-hot .h-fill { fill: var(--accent); stroke: none; }
 .edge-hot .h-stroke { fill: none; stroke: var(--accent); stroke-width: 2; }
-.edge.hl .vis { stroke: var(--accent); stroke-width: 2.6; }
+.edge.hl .vis { stroke: var(--accent); }
 .edge.hl .end-fill { fill: var(--accent); }
 .edge.hl .end-stroke { stroke: var(--accent); }
-.node.hl-near > .label, .node.hl-near .note-head .label, .node.hl-near .g-head .label { text-decoration: underline 2px var(--accent); text-underline-offset: 4px; text-decoration-skip-ink: none; }
+/* つながっている文字は、うすい青の点線の枠(2026-11-28 利用者が見本の F を選んだ。前は青い下線) */
+.node.hl-near { outline: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; border-radius: 6px; }
 
 /* ---------- 共有ボード(2026-11-28) ---------- */
 .shared-pane .pane-head { display: flex; gap: 6px; }
