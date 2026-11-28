@@ -173,3 +173,126 @@ export function alignItems(items: ArrItem[], axis: "v" | "h", spacing = axis ===
   }
   return out;
 }
+
+/**
+ * 選択範囲の密度を整える。元の向きと近所を基準にし、離れすぎた物は寄せ、詰まった物だけをずらす。
+ * 同じノードには同じ角度を使うので、同じ並びに繰り返し実行しても配置が乱れない。
+ */
+export function organizeItems(items: ArrItem[], obstacles: Rect[], links: ArrLink[]): Map<string, { x: number; y: number }> {
+  const moves = new Map<string, { x: number; y: number }>();
+  if (items.length < 2) return moves;
+  const nearEnough = 124;
+  const clearance = 18;
+  const ordered = [...items];
+  const midpoint = {
+    x: (Math.min(...items.map(({ r }) => r.x)) + Math.max(...items.map(({ r }) => r.x + r.w))) / 2,
+    y: (Math.min(...items.map(({ r }) => r.y)) + Math.max(...items.map(({ r }) => r.y + r.h))) / 2,
+  };
+  const density = new Map<string, number>();
+  for (const [i, a] of items.entries()) {
+    for (let j = i + 1; j < items.length; j++) {
+      const b = items[j];
+      if (gap(a.r, b.r) > nearEnough) continue;
+      density.set(a.id, (density.get(a.id) ?? 0) + 1);
+      density.set(b.id, (density.get(b.id) ?? 0) + 1);
+    }
+  }
+  const distanceTo = (r: Rect, point: { x: number; y: number }) => {
+    const c = center(r);
+    return Math.hypot(c.x - point.x, c.y - point.y);
+  };
+  ordered.sort((a, b) => (density.get(b.id) ?? 0) - (density.get(a.id) ?? 0)
+    || distanceTo(a.r, midpoint) - distanceTo(b.r, midpoint) || a.id.localeCompare(b.id));
+  const origin = center(ordered[0].r);
+  const distance = (r: Rect) => distanceTo(r, origin);
+  ordered.sort((a, b) => distance(a.r) - distance(b.r));
+  const selected = new Set(items.map(({ id }) => id));
+  const neighbors = new Map<string, Set<string>>();
+  for (const { from, to } of links) {
+    if (!selected.has(from) || !selected.has(to)) continue;
+    (neighbors.get(from) ?? neighbors.set(from, new Set()).get(from)!).add(to);
+    (neighbors.get(to) ?? neighbors.set(to, new Set()).get(to)!).add(from);
+  }
+  const settled: { id: string; old: Rect; placed: Rect }[] = [];
+  const taken = [...obstacles];
+  const between = (a: Rect, b: Rect) => distanceTo(a, center(b));
+  let crowded = false;
+  for (const { id, r } of ordered) {
+    let desired = r;
+    let reference: (typeof settled)[number] | undefined;
+    let score = Infinity;
+    let alreadyNear = false;
+    for (const other of settled) {
+      if (gap(r, other.placed) <= nearEnough) alreadyNear = true;
+      const weight = neighbors.get(id)?.has(other.id) ? 0.75 : 1;
+      const cost = (gap(r, other.old) + between(r, other.old) * 0.12) * weight;
+      if (cost < score) {
+        reference = other;
+        score = cost;
+      }
+    }
+    const phase = [...id].reduce((hash, char) => Math.imul(hash ^ char.charCodeAt(0), 16777619), 2166136261) >>> 0;
+    const angle = (phase / 0x100000000) * Math.PI * 2;
+    if (reference && !alreadyNear) {
+      const origin = center(reference.placed);
+      const from = center(reference.old), end = center(r);
+      const dx = end.x - from.x, dy = end.y - from.y;
+      const length = Math.hypot(dx, dy);
+      if (length > 0) {
+        const offset = Math.sin(angle) * 11;
+        const at = (d: number): Rect => ({
+          ...r,
+          x: Math.round(origin.x + (d * dx - offset * dy) / length - r.w / 2),
+          y: Math.round(origin.y + (d * dy + offset * dx) / length - r.h / 2),
+        });
+        const wanted = 76 + (phase % 29);
+        let lo = 0, hi = Math.max(length, Math.hypot(r.w + reference.placed.w, r.h + reference.placed.h) + wanted);
+        for (let i = 0; i < 12; i++) {
+          const mid = (lo + hi) / 2;
+          if (gap(at(mid), reference.placed) < wanted) lo = mid;
+          else hi = mid;
+        }
+        desired = at(hi);
+      }
+    }
+    // 残りのノードは後で置く。候補を探す間は、動かさない周囲と配置済みの物だけを障害物にする。
+    const searchLimit = 200;
+    const near = taken.filter((other) => gap(desired, other) <= searchLimit + clearance);
+    const clear = (pos: Rect) => near.every((other) => gap(pos, other) >= clearance);
+    let placed = r;
+    if (clear(desired)) placed = desired;
+    else {
+      for (let radius = 12; radius <= searchLimit; radius += 12) {
+        let closest: Rect | undefined;
+        let cost = Infinity;
+        for (let i = 0; i < 18; i++) {
+          const a = angle + (i * Math.PI * 2) / 18;
+          const candidate = { ...r, x: Math.round(desired.x + Math.cos(a) * radius), y: Math.round(desired.y + Math.sin(a) * radius) };
+          if (!clear(candidate)) continue;
+          const next = between(candidate, r) * 0.45 + distance(candidate) * 0.15;
+          if (next < cost) {
+            closest = candidate;
+            cost = next;
+          }
+        }
+        if (closest) {
+          placed = closest;
+          break;
+        }
+      }
+    }
+    if (placed === r && taken.some((other) => overlapArea(r, other) > 0)) crowded = true;
+    settled.push({ id, old: r, placed });
+    taken.push(placed);
+    if (placed.x !== r.x || placed.y !== r.y) moves.set(id, { x: placed.x, y: placed.y });
+  }
+  if (crowded) {
+    for (const [i, a] of settled.entries()) {
+      for (let j = i + 1; j < settled.length; j++) {
+        const b = settled[j];
+        if (overlapArea(a.placed, b.placed) > overlapArea(a.old, b.old)) return new Map();
+      }
+    }
+  }
+  return moves;
+}

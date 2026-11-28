@@ -646,7 +646,7 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .ProseMirror li.task { list-style: none; display: flex; gap: 8px; align-items: flex-start; margin-left: -1.3em; }
 .ProseMirror li.task .task-box { margin-top: 0.55em; flex: none; cursor: pointer; accent-color: var(--accent); }
 .ProseMirror li.task .task-body { flex: 1; min-width: 0; }
-.ProseMirror li.task.done .task-body { color: var(--muted); text-decoration: line-through; }
+.ProseMirror li.task.done > .task-body > p { color: var(--muted); text-decoration: line-through; }
 .ProseMirror table { border-collapse: collapse; margin: 0.4em 0 0.8em; width: 100%; table-layout: fixed; }
 .ProseMirror th, .ProseMirror td { border: 1px solid var(--line); padding: 4px 8px; vertical-align: top; min-width: 3em; }
 .ProseMirror th { background: var(--accent-soft); font-weight: 600; text-align: left; }
@@ -1046,7 +1046,7 @@ kbd { display: inline-block; min-width: 1.6em; text-align: center; font-family: 
 .cv-body li.task, .popup.inline .ProseMirror li.task { list-style: none; display: flex; gap: 6px; align-items: flex-start; margin: 0; padding: 1px 0; }
 .cv-body li.task .task-box, .popup.inline .ProseMirror li.task .task-box { margin: 5px 0 0; flex: none; cursor: pointer; accent-color: var(--accent); }
 .cv-body li.task .task-body, .popup.inline .ProseMirror li.task .task-body { flex: 1; min-width: 0; }
-.cv-body li.task.done .task-body, .popup.inline .ProseMirror li.task.done .task-body { color: var(--muted); text-decoration: line-through; }
+.cv-body li.task.done > .task-body > p, .popup.inline .ProseMirror li.task.done > .task-body > p { color: var(--muted); text-decoration: line-through; }
 .cv-body table, .popup.inline .ProseMirror table { border-collapse: collapse; margin: 0; width: auto; table-layout: auto; }
 .cv-body th, .cv-body td, .popup.inline .ProseMirror th, .popup.inline .ProseMirror td { border: 1px solid var(--line); padding: 3px 8px; min-width: 40px; vertical-align: top; text-align: left; }
 .cv-body th, .popup.inline .ProseMirror th { background: var(--accent-soft); font-weight: 600; }
@@ -1203,3 +1203,23 @@ body.capturing .canvas, body.capturing .canvas * { cursor: none !important; }
 .node .node-url { color: var(--accent); text-decoration: underline; cursor: pointer; }
 .shared-tab-title { background: none; border: 0; color: inherit; font: inherit; padding: 0; text-align: left; cursor: pointer; }
 .main > .shared-pane[hidden], .main.shared-active > :not(.shared-pane) { display: none; }
+
+.canvas-organize {
+  position: absolute; left: 14px; bottom: 14px; z-index: 15;
+  padding: 5px 13px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--fg); box-shadow: var(--shadow);
+  font: inherit; font-size: 13px; cursor: pointer;
+}
+.canvas-organize:hover { border-color: var(--accent); background: var(--accent-soft); }
+body.capturing .canvas-organize { visibility: hidden; }
+
+.backlink-layer, .backlink-lines { position: absolute; inset: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+.backlink-line { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 3; }
+.node.backlink-source {
+  pointer-events: auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px;
+  width: max-content; min-width: 80px; max-width: 280px; text-align: left; writing-mode: horizontal-tb;
+  color: var(--fg); background: var(--panel); border: 1px solid var(--accent);
+  border-radius: 7px; padding: 5px 9px; font: inherit; font-size: 13px; box-shadow: var(--shadow);
+}
+.backlink-source > * { white-space: normal; overflow-wrap: anywhere; }
+.backlink-source small { color: var(--muted); }

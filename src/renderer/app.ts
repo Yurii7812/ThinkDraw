@@ -160,6 +160,7 @@ class App {
   private btnFwd!: HTMLButtonElement;
   private btnDraw!: HTMLButtonElement;
   private btnPen!: HTMLButtonElement;
+  private backlinksMode = false;
   private penBar!: HTMLElement;
   private main!: HTMLElement;
 
@@ -315,6 +316,14 @@ class App {
       if (this.sharedActive) this.showSharedTab(false);
       (this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas).openAttachMenu(attachBtn);
     }, T.attachBtn, "attach");
+    const backlinks = btn("backlinks-btn", T.backlinksBtn, () => {
+      this.backlinksMode = !this.backlinksMode;
+      backlinks.classList.toggle("on", this.backlinksMode);
+      backlinks.setAttribute("aria-pressed", String(this.backlinksMode));
+      this.canvas.setBacklinksMode(this.backlinksMode);
+      this.peek?.setBacklinksMode(this.backlinksMode);
+    }, T.backlinksBtn, "surround");
+    backlinks.setAttribute("aria-pressed", "false");
     const bar = h(
       "header",
       { class: "topbar" },
@@ -328,8 +337,7 @@ class App {
         btn("paper-btn", PT.btnTip, () => this.togglePaper(), PT.title, "paper"),
         attachBtn,
         this.btnPen,
-        btn("backlinks-btn", T.backlinksTip, () => this.toggleBacklinks(), T.backlinksBtn, "surround"),
-        btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn, "whole"),
+        backlinks,
         btn("share-btn", T.shareTip, () => this.shareMenu(), T.shareBtn, "share"),
         btn("phone-btn", T.phoneTip, () => this.phoneMenu(), T.phoneBtn, "phone"),
         btn("export", T.exportTip, () => {
@@ -375,6 +383,7 @@ class App {
         anchorPassage: (c) => this.anchorPassage(c),
         openCite: (note, anchor) => this.openCite(note, anchor, "left"),
         goToNode: (id) => this.goToNode(id, false, true),
+        goToBacklink: (group, id, body) => this.goToBacklink("left", group, id, body),
         pickGroup: async (title) => {
           const r = await openPicker(this.vault, { title, mode: "group" });
           return r && "id" in r ? r.id : null;
@@ -517,14 +526,6 @@ class App {
   }
 
   // ---------- 移動 ----------
-  /** 右上の「バックリンク」の押した印を、いま見ている画面に合わせる */
-  private syncBacklinksBtn(): void {
-    const side = this.activeSide();
-    const pop = side === "left" ? this.popup : this.popupR;
-    const cv = side === "right" && this.peek ? this.peek : this.canvas;
-    const on = pop && this.popupTab[side] ? pop.backlinksOn : cv.surround && cv.outerMode === "backlinks";
-    document.querySelector(".tbtn.backlinks-btn")?.classList.toggle("on", !!on);
-  }
   private updateBar(): void {
     if (this.sharedActive && this.shared) {
       this.titleEl.textContent = this.shared.title || T.shareUntitled;
@@ -533,7 +534,6 @@ class App {
       this.btnBack.disabled = this.btnFwd.disabled = this.upBtn.disabled = true;
       return;
     }
-    queueMicrotask(() => this.syncBacklinksBtn());
     const g = this.vault.get(this.canvas.group);
     this.titleEl.textContent = this.canvas.group === ROOT_ID ? T.home : g?.title || T.untitledGroup;
     this.btnBack.disabled = !this.backStack.length;
@@ -1490,6 +1490,12 @@ class App {
     this.renderReturn();
   }
   /** そのノード(が含まれるグループ)へ移る。home = 引用ではなく、所属しているグループへ */
+  private goToBacklink(side: Side, group: string, id: string, body: boolean): void {
+    if (side === "right" && this.peek) this.openPeek(group, id);
+    else this.openGroup(group, id);
+    if (body) this.openBody(id, { pane: side });
+  }
+
   goToNode(id: string, openBody: boolean, home = false, anchor?: string, pane: "left" | "right" = "left"): void {
     if (!this.vault.exists(id)) return;
     // もう左右のどちらかのタブで開いているノートなら、そのタブを見せる(2026-11-26 修正14)
@@ -1720,6 +1726,7 @@ class App {
           openCite: (note, anchor) => this.openCite(note, anchor, "right"),
           editInline: (id, mount, done) => this.editInline(id, mount, done),
           goToNode: (id) => this.openBeside(id),
+          goToBacklink: (group, id, body) => this.goToBacklink("right", group, id, body),
           pickGroup: async (title) => {
             const r = await openPicker(this.vault, { title, mode: "group" });
             return r && "id" in r ? r.id : null;
@@ -1744,6 +1751,7 @@ class App {
       );
       this.peek.el.classList.add("peek-canvas");
       this.peekNew = true; // まだ何も見せていない(グループが同じでも一度は描く)
+      this.peek.setBacklinksMode(this.backlinksMode);
       this.peek.el.addEventListener("focusin", () => this.setActivePane("right"));
       this.peek.el.addEventListener("pointerdown", () => this.setActivePane("right"));
     }
@@ -1810,24 +1818,6 @@ class App {
   private saveScope(n: number): void {
     this.state.islandScope = isFinite(n) ? n : null;
     this.saveState();
-  }
-  /** 右上の「バックリンク」: ノートのタブならそのノートの周りに、ボードならこの画面のまま周りに出す(2026-11-27 利用者) */
-  toggleBacklinks(): void {
-    if (this.sharedActive) this.showSharedTab(false);
-    const side = this.activeSide();
-    const pop = side === "left" ? this.popup : this.popupR;
-    if (pop && this.popupTab[side]) {
-      const on = pop.toggleBacklinks();
-      document.querySelector(".tbtn.backlinks-btn")?.classList.toggle("on", on);
-      return;
-    }
-    const cv = side === "right" && this.peek ? this.peek : this.canvas;
-    const on = !(cv.surround && cv.outerMode === "backlinks");
-    cv.outerMode = "backlinks";
-    cv.setSurround(on);
-    document.querySelector(".tbtn.backlinks-btn")?.classList.toggle("on", on);
-    if (on && !cv.backlinkItems().size) toast(T.backlinksNone);
-    if (on) cv.fitAll();
   }
   toggleSurround(on = !this.canvas.surround): void {
     this.canvas.scope = this.savedScope();
@@ -2276,7 +2266,6 @@ class App {
 
   /** 左右どちらを今使っているか(見出しに色を付けるだけ) */
   private setActivePane(p: "left" | "right"): void {
-    queueMicrotask(() => this.syncBacklinksBtn());
     this.main.dataset.active = p;
   }
   /** 左の画面の幅の割合(0.2〜0.8) */
@@ -2801,6 +2790,11 @@ class App {
         return;
       }
       if (inField) return;
+      if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+        e.preventDefault();
+        this.back();
+        return;
+      }
       // Esc ではノート・日記を閉じない(2026-11-27 利用者。閉じるのは Ctrl+W・×、戻るのは Ctrl+←)
       if (e.key === "Escape" && (this.popup || this.popupR)) {
         const side: Side = this.popupR && (this.main.dataset.active === "right" || !this.popup) ? "right" : "left";

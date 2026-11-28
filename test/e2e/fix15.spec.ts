@@ -170,21 +170,21 @@ test("修正15: 文を選んで Ctrl+Q でリンク・ノートのバックリ�
   const dst = Object.values(mdFiles()).find((s) => s.includes("title: 先\n"))!;
   if (!dst) console.log(JSON.stringify(mdFiles(), null, 1));
   expect(dst).toMatch(new RegExp(`\\[あれ\\]\\(${src}\\.md#q-[a-z0-9]{8}\\)`));
-  // 元のノートを開いて、バックリンク
-  await page.locator(".tabbar .tab", { hasText: "元" }).click();
+  // 同じボードでも参照元カードを表示し、そのカードからノートを開ける。
+  await page.keyboard.press("Control+ArrowLeft");
   await page.locator(".tbtn.backlinks-btn").click();
-  await expect(page.locator(".bl-passage")).toHaveCount(1);
-  await expect(page.locator(".bl-node:not(.bl-passage) .bl-l", { hasText: /^先$/ })).toHaveCount(1);
-  await expect(page.locator(".bl-node:not(.bl-passage) .bl-l", { hasText: /^ホーム$/ })).toHaveCount(1); // 所属先
-  await shot("15-note-backlinks");
-  await page.locator(".bl-passage").click();
+  await expect(page.locator(".tbtn.backlinks-btn")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".backlink-line")).toHaveCount(1);
+  await expect(page.locator(".node.backlink-source strong")).toHaveText("先");
+  await page.locator(".node.backlink-source").click();
+  await expect(page.locator(".popup.expanded")).toBeVisible();
+  // 引用した文章へのリンクを押すと、従来どおり引用された箇所が光る。
+  await page.locator(".ProseMirror a").click();
+  await page.locator(".linkbubble").click();
   await expect(page.locator(".ProseMirror .flash")).toHaveCount(1);
   await page.locator(".ProseMirror").click();
   await page.keyboard.press("Escape");
   await expect(page.locator(".ProseMirror .flash")).toHaveCount(0);
-  await expect(page.locator(".popup.expanded")).toBeVisible();
-  await page.locator(".tbtn.backlinks-btn").click();
-  await expect(page.locator(".bl-layer")).toHaveCount(0);
 });
 
 test("修正15: ボードのバックリンク: ほかのボードのノートの本文からのリンクを、この画面のまま周りに出す", async () => {
@@ -204,12 +204,40 @@ test("修正15: ボードのバックリンク: ほかのボードのノート�
   await page.keyboard.press("Control+ArrowLeft");
   await page.keyboard.press("Control+Home");
   await expect(page.locator(".node", { hasText: "的" })).toHaveCount(1);
-  await page.locator(".tbtn.backlinks-btn").click();
-  await expect(page.locator(".island")).toHaveCount(1);
-  await expect(page.locator(".island .node.outer", { hasText: "参照" })).toHaveCount(1);
-  await expect(page.locator(".edges .outer-edge.k-body")).toHaveCount(1);
-  await expect(page.locator(".scope-ctl")).toHaveCount(0);
-  await shot("15-board-backlinks");
+  const button = page.locator(".tbtn.backlinks-btn");
+  const source = page.locator(".node.backlink-source");
+  await expect(page.locator(".node-backlinks")).toHaveCount(0);
+  await expect(page.locator(".tbtn.whole-btn")).toHaveCount(0);
+  await button.click();
+  const spot = await source.evaluate((e) => ({ x: (e as HTMLElement).offsetLeft, y: (e as HTMLElement).offsetTop }));
+  await button.click();
+  const blocker = await page.evaluate(({ x, y }) => {
+    const { vault, canvas } = (window as any).__app;
+    const n = vault.create({ type: "text", group: canvas.group, title: "隣の文", x, y });
+    canvas.renderNow();
+    return n.id;
+  }, spot);
+  const neighbor = page.locator(`.node[data-id="${blocker}"]`);
+  await button.click();
+  await expect(source.locator("strong")).toHaveText("参照");
+  await expect.poll(() => neighbor.evaluate((e) => (e as HTMLElement).style.translate)).not.toBe("");
+  expect(await page.evaluate((id) => {
+    const { vault, canvas } = (window as any).__app;
+    const p = vault.itemPos(canvas.group, id);
+    return { x: p.x, y: p.y };
+  }, blocker)).toEqual(spot);
+  await button.click();
+  await expect(page.locator(".node.backlink-source")).toHaveCount(0);
+  await expect.poll(() => neighbor.evaluate((e) => (e as HTMLElement).style.translate)).toBe("");
+  await button.click();
+  await page.locator(".node.t-group", { hasText: /^箱$/ }).click();
+  await expect(page.locator(".tbtn.backlinks-btn")).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Backspace");
+  await expect(page.locator(".tbtn.backlinks-btn")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".backlink-line")).toHaveCount(1);
+  await expect(page.locator(".island")).toHaveCount(0);
+  await page.locator(".node.backlink-source", { hasText: "参照" }).click();
+  await expect(page.locator(".popup.expanded .inline-title")).toHaveValue("参照");
 });
 
 test("修正15(2): 書き出しは画面を写した絵(画面と同じ)。選んだ物だけも", async () => {
@@ -418,4 +446,111 @@ test("修正17: 設定から英語を選ぶと再起動後の画面に反映す�
   await expect(page.locator(".share-btn")).toHaveAttribute("data-label", "Share");
   await page.keyboard.press("Control+/");
   await expect(page.locator(".modal.settings .modal-title").first()).toHaveText("Settings");
+});
+
+test("配置: 整理で選択範囲の重なりと大きすぎる空白を解消し、Ctrl+Z で一度に戻す", async () => {
+  const ids = await page.evaluate(() => {
+    const { canvas, vault } = (window as any).__app;
+    const create = (title: string, x: number, y: number) =>
+      vault.create({ type: "text", title, group: canvas.group, x, y }).id;
+    const parent = create("起点", 150, 200);
+    const overlap = create("重なった文", 152, 200);
+    const spaced = create("ほどよい距離", 150, 300);
+    const distant = create("離れた文", 700, 205);
+    const outside = create("範囲外", 505, 202);
+    vault.addLink(parent, overlap);
+    vault.addLink(parent, distant);
+    canvas.renderNow();
+    canvas.setSelection([parent, overlap, spaced, distant]);
+    canvas.el.focus();
+    return { parent, overlap, spaced, distant, outside };
+  });
+  const geometry = () => page.evaluate((ids) => {
+    const { canvas } = (window as any).__app;
+    return Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, canvas.rectOf(id)]));
+  }, ids);
+  const before = await geometry();
+  await page.getByRole("button", { name: "整理", exact: true }).click();
+  const after = await geometry();
+  const separate = (a: typeof after.parent, b: typeof after.parent) =>
+    a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
+  expect(separate(after.parent, after.overlap)).toBe(true);
+  expect(after.distant.x).toBeLessThan(before.distant.x - 200);
+  expect(after.spaced).toEqual(before.spaced);
+  expect(after.outside).toEqual(before.outside);
+  await page.getByRole("button", { name: "整理", exact: true }).click();
+  expect(await geometry()).toEqual(after);
+  await page.keyboard.press("Control+z");
+  await expect.poll(geometry).toEqual(before);
+});
+
+test("修正18: Backspace は選択を削除せず履歴へ戻り、Delete は削除する", async () => {
+  const data = await page.evaluate(() => {
+    const a = (window as any).__app;
+    const g = a.vault.create({ type: "group", group: a.canvas.group, title: "戻る前のグループ", x: 100, y: 100 });
+    const n = a.vault.create({ type: "text", group: g.id, title: "消さない文", x: 100, y: 100 });
+    a.openGroup(g.id);
+    a.canvas.setSelection([n.id]);
+    a.canvas.el.focus();
+    return { group: g.id, node: n.id };
+  });
+  await page.keyboard.press("Backspace");
+  await expect(page.locator(".node.t-group", { hasText: "戻る前のグループ" })).toBeVisible();
+  await page.evaluate(({ group, node }) => {
+    const a = (window as any).__app;
+    a.openGroup(group);
+    a.canvas.renderNow();
+    a.canvas.setSelection([node]);
+  }, data);
+  await expect(page.locator(".node.t-text", { hasText: "消さない文" })).toBeVisible();
+  await page.keyboard.press("Delete");
+  await expect(page.locator(".node.t-text", { hasText: "消さない文" })).toHaveCount(0);
+});
+
+test("修正18: チェック項目を Alt+矢印で移し、字下げ付きの文を貼れる", async () => {
+  await page.mouse.click(400, 300, { button: "right" });
+  await page.locator('.ctxmenu .menubar button[title^="チェックリスト"]').click();
+  const editor = page.locator(".popup.inline .ProseMirror");
+  await expect(editor).toBeVisible();
+  await page.evaluate(() => navigator.clipboard.writeText("親\n  子\n    孫\n次"));
+  await page.keyboard.press("Control+v");
+  await expect(editor.locator("li.task > .task-body > ul > li.task > .task-body > ul > li.task")).toContainText("孫");
+  await editor.getByText("次", { exact: true }).click();
+  await page.keyboard.press("Alt+ArrowRight");
+  await expect(editor.locator("li.task > .task-body > ul > li.task").filter({ hasText: /^次$/ })).toHaveCount(1);
+  await page.keyboard.press("Alt+ArrowLeft");
+  await expect(editor.locator(":scope > ul > li.task").filter({ hasText: /^次$/ })).toHaveCount(1);
+  await page.mouse.click(45, 190);
+  await expect(page.locator(".cv-body li.task > .task-body > ul > li.task > .task-body > ul > li.task")).toContainText("孫");
+});
+
+test("バックリンクは元ノードの周りに散らし、日本語のタイトルを横書きで出す", async () => {
+  await page.evaluate(() => {
+    const { vault, canvas } = (window as any).__app;
+    const target = vault.create({ type: "text", title: "考えたいこと", group: canvas.group, x: 550, y: 340 });
+    const group = vault.create({ type: "group", title: "以前の記録", group: canvas.group, x: 930, y: 540 });
+    for (const title of ["会議のまとめ", "関連する企画案", "本を読んだ記録", "あとで見る資料", "作業メモの続き", "はじめのアイデア"]) {
+      const node = vault.create({ type: "note", title, group: group.id, x: 0, y: 0 });
+      vault.setBody(node.id, `[考えたいこと](${target.id}.md)`);
+    }
+    canvas.setView({ x: 0, y: 0, z: 1 });
+    canvas.renderNow();
+  });
+  await page.locator(".tbtn.backlinks-btn").click();
+  await expect(page.locator(".backlink-source")).toHaveCount(6);
+  const boxes = await page.locator(".backlink-source").evaluateAll((cards) => cards.map((card) => {
+    const r = card.getBoundingClientRect();
+    const title = document.createRange();
+    title.selectNodeContents(card.querySelector("strong")!);
+    return { x: r.x, y: r.y, w: r.width, h: r.height, titleLines: title.getClientRects().length };
+  }));
+  const xs = boxes.map(({ x }) => x), ys = boxes.map(({ y }) => y);
+  expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(120);
+  expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(75);
+  for (const b of boxes) {
+    expect(b.w).toBeGreaterThanOrEqual(80);
+    expect(b.titleLines).toBe(1);
+    expect(b.h).toBeLessThan(70);
+  }
+  await shot("backlinks-natural-layout");
 });

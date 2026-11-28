@@ -481,7 +481,16 @@ export const pasteIntoTable = (text: string): Command => (state, dispatch) => {
 /** 箇条書き・番号・チェックの印を取る(空白はそのまま残す) */
 const stripMark = (l: string) => l.trim().replace(/^(?:[-*・●○□☐]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, "");
 
-/** チェックリストの項目の中で貼る: 改行ごとに 1 項目(空白で割らない)。1 行だけならふつうに貼る */
+export function inTaskItem(state: PMState): boolean {
+  const { $from } = state.selection;
+  for (let d = $from.depth; d > 0; d--) {
+    const n = $from.node(d);
+    if (n.type === schema.nodes.list_item) return n.attrs.checked != null;
+  }
+  return false;
+}
+
+/** 改行ごとにチェック項目を作り、字下げを子のリストにする。 */
 export const pasteIntoChecklist = (text: string): Command => (state, dispatch) => {
   const $f = state.selection.$from;
   let d = $f.depth;
@@ -490,14 +499,27 @@ export const pasteIntoChecklist = (text: string): Command => (state, dispatch) =
   const lines = lineSplit(text).filter((l) => l.trim());
   if (lines.length < 2) return false;
   if (dispatch) {
+    interface Item { indent: number; text: string; children: Item[] }
+    const roots: Item[] = [], stack: Item[] = [];
+    for (const line of lines) {
+      const indent = /^[ \t\u3000]*/.exec(line)![0].replace(/\t/g, "    ").length;
+      while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+      const next: Item = { indent, text: stripMark(line), children: [] };
+      (stack[stack.length - 1]?.children ?? roots).push(next);
+      stack.push(next);
+    }
+    const toNode = (i: Item): PMNode => {
+      const content = [schema.nodes.paragraph.create(null, i.text ? schema.text(i.text) : null)];
+      if (i.children.length) content.push(schema.nodes.bullet_list.create(null, i.children.map(toNode)));
+      return schema.nodes.list_item.create({ checked: false }, content);
+    };
+    const items = roots.map(toNode);
     const item = $f.node(d);
-    const items = lines.map((l) => schema.nodes.list_item.create({ checked: false }, [schema.nodes.paragraph.create(null, stripMark(l) ? schema.text(stripMark(l)) : null)]));
     const empty = item.textContent.trim() === "" && item.childCount === 1;
     const from = $f.before(d), to = $f.after(d);
     const tr = empty ? state.tr.replaceWith(from, to, items) : state.tr.insert(to, items);
-    const start = empty ? from : to;
-    const endPos = start + items.reduce((a, n) => a + n.nodeSize, 0) - 2; // 最後の項目の段落の終わり
-    dispatch(tr.setSelection(TextSelection.create(tr.doc, endPos)).scrollIntoView());
+    const end = (empty ? from : to) + items.reduce((a, n) => a + n.nodeSize, 0);
+    dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(end), -1)).scrollIntoView());
   }
   return true;
 };

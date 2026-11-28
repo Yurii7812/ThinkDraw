@@ -13,7 +13,7 @@ import type { Vault } from "../core/vault";
 import { cardName } from "../decks";
 import { openPicker } from "./picker";
 import { T } from "./strings";
-import { makeChecklist, makeTable, anchorIn, findAnchor, backspaceEmpty, pasteIntoChecklist, pasteIntoTable, addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
+import { makeChecklist, makeTable, anchorIn, findAnchor, backspaceEmpty, inTaskItem, pasteIntoChecklist, pasteIntoTable, addColRight, addRowBelow, cellAt, cellBelow, deleteCol, deleteRow, deleteTable, nextCell, parseMarkdown, prevCell, schema, serializeMarkdown } from "./mdschema";
 import { api, h, showMenu, svg, toast } from "./ui";
 import { currentClip, setClip, type PassageClip } from "./clip";
 import { refClipboard } from "./canvas";
@@ -294,8 +294,18 @@ export class BodyPopup {
             return (task ? splitListItem(schema.nodes.list_item, { checked: false }) : splitListItem(schema.nodes.list_item))(st, d, v);
           },
           "Mod-Enter": (st, d) => addColRight(st, d), // 表: 右に列を足す
-          Tab: (st, d, v) => nextCell(st, d, v) || sinkListItem(schema.nodes.list_item)(st, d, v),
-          "Shift-Tab": (st, d, v) => prevCell(st, d, v) || liftListItem(schema.nodes.list_item)(st, d, v),
+          "Alt-ArrowRight": (st, d, v) => {
+            if (!inTaskItem(st)) return false;
+            sinkListItem(schema.nodes.list_item)(st, d, v);
+            return true;
+          },
+          "Alt-ArrowLeft": (st, d, v) => {
+            if (!inTaskItem(st)) return false;
+            liftListItem(schema.nodes.list_item)(st, d, v);
+            return true;
+          },
+          Tab: (st, d, v) => nextCell(st, d, v) || (!inTaskItem(st) && sinkListItem(schema.nodes.list_item)(st, d, v)),
+          "Shift-Tab": (st, d, v) => prevCell(st, d, v) || (!inTaskItem(st) && liftListItem(schema.nodes.list_item)(st, d, v)),
           "Shift-Enter": (st, dispatch) => {
             dispatch?.(st.tr.replaceSelectionWith(schema.nodes.hard_break.create()).scrollIntoView());
             return true;

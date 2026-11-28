@@ -731,7 +731,8 @@ test("島(まわり・全体): 今のグループはそのまま、ほかのグ�
   await page.locator(".canvas:not(.whole-canvas) .scope-ctl .sc-opt", { hasText: "全部" }).click();
   await expect(page.locator(".canvas:not(.whole-canvas) .island")).toHaveCount(1);
   // 全体(分割の右側): 見るだけ。右の島の物を左へドラッグで引用
-  await page.locator(".tbtn.whole-btn").click();
+  await expect(page.locator(".tbtn.whole-btn")).toHaveCount(0);
+  await page.evaluate(() => (window as any).__app.toggleWhole());
   await expect(page.locator(".whole-canvas")).toBeVisible();
   const wouter = page.locator(".whole-canvas .node.outer", { hasText: "外の続き" });
   await expect(wouter).toHaveCount(1);

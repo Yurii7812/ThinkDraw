@@ -1,7 +1,7 @@
 // 無限キャンバス(SPEC 4.2)。1 つのグループの中身(所属 + 引用)とペンの線を描き、操作をデータの操作に翻訳する。
 import { freeOffset, gap, placeAround, segHitsRect, type Rect } from "../core/placement";
 import { flattenOutline, layoutOutline, layoutPastedOutline, parseOutlineGraph, type OutlineLink, type OutlineNode } from "../core/outline";
-import { alignItems, resolveOverlaps, spreadFrom, type ArrItem } from "../core/arrange";
+import { alignItems, organizeItems, resolveOverlaps, spreadFrom, type ArrItem } from "../core/arrange";
 import { fromJsonCanvas, toOutlineText } from "../core/share";
 import { readZipEntry } from "./unzip";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
@@ -51,6 +51,7 @@ export interface CanvasHost {
   /** チェックリスト・表のノートを、キャンバスの上でそのまま書く(mount の中に編集欄を作る) */
   editInline?(id: string, mount: HTMLElement, onClose: () => void): { close(): void; focus(): void };
   goToNode(id: string): void;
+  goToBacklink?(group: string, id: string, openBody: boolean): void;
   pickGroup(title: string): Promise<string | null>;
   cardHover(id: string | null, e?: MouseEvent): void;
   onViewChange(group: string, v: View): void;
@@ -198,6 +199,11 @@ export class Canvas {
   private draft: Draft | null = null;
   private renderQueued = false;
   private readonly pointerEvents = new AbortController();
+  private organizeButton: HTMLButtonElement;
+  private backlinkLayer: HTMLElement;
+  private backlinksMode = false;
+  private backlinkOffsets = new Map<string, Pt>();
+  private backlinkCards: Rect[] = [];
 
   constructor(private host: CanvasHost, parent: HTMLElement) {
     this.el = h("div", { class: "canvas", tabindex: "0" });
@@ -208,8 +214,15 @@ export class Canvas {
     this.nodesLayer = h("div", { class: "nodes" });
     this.draftLayer = h("div", { class: "nodes drafts" });
     this.outerLayer = h("div", { class: "nodes outer-layer" });
-    this.world.append(this.edgesSvg, this.strokesSvg, this.outerLayer, this.nodesLayer, this.draftLayer);
-    this.el.append(this.world);
+    this.backlinkLayer = h("div", { class: "backlink-layer" });
+    this.world.append(this.edgesSvg, this.strokesSvg, this.outerLayer, this.nodesLayer, this.backlinkLayer, this.draftLayer);
+    this.organizeButton = h("button", { class: "canvas-organize", type: "button", text: T.arrOrganize, title: T.arrOrganizeTip, hidden: true });
+    this.organizeButton.addEventListener("pointerdown", (e) => e.stopPropagation());
+    this.organizeButton.addEventListener("click", () => {
+      this.organizeSelection();
+      this.el.focus({ preventScroll: true });
+    });
+    this.el.append(this.world, this.organizeButton);
     parent.append(this.el);
     this.bind();
   }
@@ -262,6 +275,10 @@ export class Canvas {
     this.renderNow();
     if (view) this.setView(view);
     else this.fitAll(true);
+    if (this.backlinksMode) {
+      this.renderNodeBacklinks();
+      this.renderEdges();
+    }
     if (animate) {
       this.world.classList.remove("anim-in", "anim-out");
       void this.world.offsetWidth;
@@ -271,7 +288,8 @@ export class Canvas {
 
   private allBoxes(): Rect[] {
     const outer = this.surround ? this.islands.map((i) => i.box) : [];
-    return [...this.rects.values(), ...this.v.strokesOf(this.group).map(strokeBox), ...outer];
+    const nodes = [...this.rects].map(([id, r]) => this.backlinkRect(id, r));
+    return [...nodes, ...this.backlinkCards, ...this.v.strokesOf(this.group).map(strokeBox), ...outer];
   }
 
   /**
@@ -461,8 +479,10 @@ export class Canvas {
     }
     this.markCut();
     this.renderOuter();
+    this.renderNodeBacklinks();
     this.renderEdges();
     this.renderStrokes();
+    this.updateSelBar();
   }
 
   // ---------- 島(全体・まわり。2026-11-23 利用者と決めた A2) ----------
@@ -661,6 +681,164 @@ export class Canvas {
       for (const c of cites.get(id) ?? []) if (!here.has(c)) for (const p of v.parentsOf(c)) put(p, c);
     }
     return out;
+  }
+
+  setBacklinksMode(on: boolean): void {
+    this.backlinksMode = on;
+    this.renderNodeBacklinks();
+    this.renderEdges();
+  }
+
+  /** 表示中のノードへ参照元を直接つなぎ、表示位置だけを動かす。 */
+  private renderNodeBacklinks(): void {
+    this.backlinkLayer.replaceChildren();
+    for (const id of this.backlinkOffsets.keys()) this.els.get(id)?.style.removeProperty("translate");
+    this.backlinkOffsets.clear();
+    this.backlinkCards = [];
+    if (!this.backlinksMode || !this.host.goToBacklink || this.readOnly) return;
+    type Source = { id: string; group: string; body: boolean };
+    const targets = this.rects.keys();
+    const allByTarget = new Map<string, Map<string, Source>>();
+    const add = (target: string, source: Source) => {
+      if (!this.rects.has(target) || (source.id === target && source.group === this.group)) return;
+      const list = allByTarget.get(target) ?? new Map<string, Source>();
+      allByTarget.set(target, list);
+      const key = source.group + "/" + source.id;
+      list.set(key, { ...source, body: source.body || !!list.get(key)?.body });
+    };
+    const addNode = (target: string, id: string, body = false) => {
+      if (!this.rects.has(target)) return;
+      const group = this.rects.has(id) ? this.group : this.v.parentsOf(id)[0];
+      if (group) add(target, { id, group, body });
+    };
+    for (const n of this.v.nodes.values()) {
+      const target = n.type === "alias" ? n.target : n.cite ? parseCite(n.cite)?.note : null;
+      if (target) addNode(target, n.id);
+    }
+    for (const id of targets) {
+      const n = this.v.get(id);
+      if (!n || !this.rects.has(id)) continue;
+      for (const source of this.v.backlinksOf(id)) {
+        const other = this.v.get(source)!;
+        const body = bodyLinkTargets(other.body).includes(id);
+        // このボード内の通常の線は既に描かれている。
+        if (body || !this.rects.has(source)) addNode(id, source, body);
+      }
+      for (const group of this.v.quotedBy(id)) add(id, { id, group, body: false });
+      if (n.type === "group") {
+        for (const group of this.v.parentsOf(id)) add(id, { id, group, body: false });
+      }
+    }
+    if (!allByTarget.size) return;
+    const layer = svg("svg", { class: "backlink-lines", "aria-hidden": "true" });
+    const lines = svg("g", { mask: `url(#${this.edgeMask})` });
+    layer.append(lines);
+    this.backlinkLayer.append(layer);
+    const displayed = new Map(this.rects);
+    const frames = this.frameIds();
+    const external = new Map<string, { rect: Rect; body: boolean }>();
+    const linked: { target: string; source: Rect }[] = [];
+    const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w + 10 && b.x < a.x + a.w + 10
+      && a.y < b.y + b.h + 10 && b.y < a.y + a.h + 10;
+    const makeRoom = (card: Rect, anchor: string, target: Rect) => {
+      const dx = (card.x + card.w / 2) - (target.x + target.w / 2);
+      const dy = (card.y + card.h / 2) - (target.y + target.h / 2);
+      const axis = Math.abs(dx) / (target.w + card.w) >= Math.abs(dy) / (target.h + card.h) ? "x" : "y";
+      const direction = (axis === "x" ? dx : dy) >= 0 ? 1 : -1;
+      const extent = axis === "x" ? "w" : "h";
+      const start = (r: Rect) => direction === 1 ? r[axis] : -r[axis] - r[extent];
+      const fixed = [...external.values()].map(({ rect }) => rect).concat(card, target);
+      const moving: { old: Rect; next: Rect }[] = [];
+      const nearby = [...displayed].filter(([id, r]) => id !== anchor && !frames.has(id) && start(r) + r[extent] >= start(card) - 10);
+      nearby.sort((a, b) => start(a[1]) - start(b[1]));
+      for (const [id, old] of nearby) {
+        if (!overlaps(old, card) && !moving.some((m) => overlaps(old, m.next) && !overlaps(old, m.old))) continue;
+        const blockers = fixed.concat(moving.map((m) => m.next));
+        let next = { ...old };
+        for (;;) {
+          const from = start(next);
+          const end = blockers.reduce((x, r) => overlaps(next, r) ? Math.max(x, start(r) + r[extent] + 10) : x, from);
+          if (end === from) break;
+          next = { ...next, [axis]: next[axis] + direction * (end - from) };
+        }
+        moving.push({ old, next });
+        displayed.set(id, next);
+      }
+    };
+    const pickSpot = (target: Rect, size: { w: number; h: number }, key: string): Rect => {
+      const hash = [...key].reduce((a, c) => Math.imul(a ^ c.charCodeAt(0), 16777619), 2166136261) >>> 0;
+      const phase = hash / 0x100000000 * Math.PI * 2;
+      const variation = (hash >>> 12) % 24;
+      const kept = [...external.values()].map(({ rect }) => rect);
+      const { x: vx, y: vy, z } = this.view;
+      const bounds = { x: (12 - vx) / z, y: (12 - vy) / z, w: (this.el.clientWidth - 24) / z, h: (this.el.clientHeight - 24) / z };
+      const offscreen = (r: Rect) => Math.max(0, bounds.x - r.x) + Math.max(0, bounds.y - r.y)
+        + Math.max(0, r.x + r.w - bounds.x - bounds.w) + Math.max(0, r.y + r.h - bounds.y - bounds.h);
+      let fallback: Rect | undefined;
+      for (let ring = 0; ring < 8; ring++) {
+        const padding = 32 + variation + ring * 42;
+        const xRadius = (target.w + size.w) / 2 + padding;
+        const yRadius = (target.h + size.h) / 2 + padding * 0.8;
+        for (let k = 0; k < 18; k++) {
+          const angle = phase + k * 2.39996323 + ring * 0.19;
+          const dx = Math.cos(angle), dy = Math.sin(angle);
+          const step = Math.min(xRadius / Math.max(0.001, Math.abs(dx)), yRadius / Math.max(0.001, Math.abs(dy)));
+          const r = { ...size, x: Math.round(target.x + (target.w - size.w) / 2 + dx * step), y: Math.round(target.y + (target.h - size.h) / 2 + dy * step) };
+          if (kept.some((rect) => overlaps(r, rect))) continue;
+          if (offscreen(r) === 0) return r;
+          if (!fallback || offscreen(r) < offscreen(fallback)) fallback = r;
+        }
+      }
+      if (fallback) return fallback;
+      // 画面近くに置き切れない場合も、すでに置いたカードと重ねない。
+      return { ...size, x: target.x + target.w + 40, y: kept.reduce((y, r) => Math.max(y, r.y + r.h + 16), target.y) };
+    };
+    for (const [id, sources] of allByTarget) {
+      const target = displayed.get(id)!;
+      for (const [key, source] of sources) {
+        const n = this.v.get(source.id);
+        if (!n) continue;
+        const previous = external.get(key);
+        if (previous) {
+          previous.body ||= source.body;
+          linked.push({ target: id, source: previous.rect });
+          continue;
+        }
+        const groupName = source.group === ROOT_ID ? T.home : this.v.get(source.group)?.title || T.untitledGroup;
+        const title = n.type === "alias" ? this.v.get(n.target ?? "")?.title : n.title;
+        const card = h("button", { class: "node backlink-source", type: "button", title: [title, groupName].filter(Boolean).join(" · ") },
+          h("strong", { text: title || T.untitled }), h("small", { text: groupName }));
+        card.addEventListener("pointerdown", (e) => e.stopPropagation());
+        card.addEventListener("dblclick", (e) => e.stopPropagation());
+        card.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.host.goToBacklink?.(source.group, source.id, external.get(key)?.body ?? source.body);
+        });
+        this.backlinkLayer.append(card);
+        const r = pickSpot(target, { w: card.offsetWidth, h: card.offsetHeight }, key);
+        makeRoom(r, id, target);
+        this.backlinkCards.push(r);
+        card.style.left = r.x + "px";
+        card.style.top = r.y + "px";
+        external.set(key, { rect: r, body: source.body });
+        linked.push({ target: id, source: r });
+      }
+    }
+    for (const [id, r] of displayed) {
+      const original = this.rects.get(id)!;
+      const dx = r.x - original.x, dy = r.y - original.y;
+      if (dx || dy) {
+        this.backlinkOffsets.set(id, { x: dx, y: dy });
+        this.els.get(id)?.style.setProperty("translate", `${dx}px ${dy}px`);
+      }
+    }
+    for (const item of linked) {
+      const target = displayed.get(item.target)!;
+      const r = item.source;
+      const a = this.clip(target, r.x + r.w / 2, r.y + r.h / 2);
+      const b = this.clip(r, target.x + target.w / 2, target.y + target.h / 2);
+      lines.append(svg("line", { class: "backlink-line", x1: a.x, y1: a.y, x2: b.x, y2: b.y }));
+    }
   }
 
   private outerAt(target: EventTarget | null): string | null {
@@ -899,7 +1077,24 @@ export class Canvas {
     return Math.min(0.85, Math.max(0.15, at));
   }
 
+  private backlinkRect(id: string, r: Rect): Rect {
+    const offset = this.backlinkOffsets.get(id);
+    return offset ? { ...r, x: r.x + offset.x, y: r.y + offset.y } : r;
+  }
+
   private renderEdges(): void {
+    const logical = this.rects;
+    if (this.backlinkOffsets.size) {
+      this.rects = new Map([...logical].map(([id, r]) => [id, this.backlinkRect(id, r)]));
+    }
+    try {
+      this.drawEdges();
+    } finally {
+      this.rects = logical;
+    }
+  }
+
+  private drawEdges(): void {
     const defs = this.edgesSvg.querySelector("defs")!;
     this.edgesSvg.replaceChildren(defs);
     // スプレッドの囲み枠は出さない(2026-11-23 利用者「枠やっぱりいらない」)
@@ -1108,6 +1303,8 @@ export class Canvas {
     if (d.right !== undefined) d.x = Math.round(d.right - w);
     d.ta.style.left = d.x + "px";
     d.ta.style.top = d.y + "px";
+    const offset = d.id ? this.backlinkOffsets.get(d.id) : undefined;
+    d.ta.style.translate = offset ? `${offset.x}px ${offset.y}px` : "";
   }
 
   /** 書いている最中の文字と、つなぎ元とのあいだの仮の線(確定前でも線が見えるように) */
@@ -2350,6 +2547,17 @@ export class Canvas {
       }
     });
   }
+  private organizeSelection(): void {
+    if (this.readOnly || this.draft || this.pen.on) return;
+    const picked = this.arrItems(this.selection);
+    if (picked.length < 2) return;
+    const obstacles = this.obstacles(this.selection);
+    const links = picked.flatMap(({ id }) => (this.v.get(id)?.links ?? []).map((l) => ({ from: id, to: l.to })));
+    const moves = organizeItems(picked, obstacles, links);
+    if (!moves.size) return void toast(T.arrOrganizeNothing);
+    this.v.tx(() => this.applyMoves(moves));
+  }
+
   alignSelection(axis: "v" | "h"): void {
     if (this.readOnly || this.selection.size < 2) return;
     this.v.tx(() => this.applyMoves(alignItems(this.arrItems(this.selection), axis)));
@@ -2404,7 +2612,7 @@ export class Canvas {
         this.reverseEdges(keys);
         return true;
       }
-      if (e.key === "Delete" || e.key === "Backspace") {
+      if (e.key === "Delete") {
         this.removeEdges(keys);
         return true;
       }
@@ -2446,7 +2654,7 @@ export class Canvas {
       this.findInBoard();
       return true;
     }
-    if (e.key === "Delete" || e.key === "Backspace") {
+    if (e.key === "Delete") {
       if (!ids.length && !this.strokeSel.size) return false;
       this.v.tx(() => {
         this.deleteItems(ids, true);
@@ -3088,6 +3296,7 @@ export class Canvas {
           { label: T.arrSpread, hint: "Alt+↑", action: () => this.spreadSelection(1.25) },
           { label: T.arrShrink, hint: "Alt+↓", action: () => this.spreadSelection(1 / 1.25) },
           ...(many ? [
+            { label: T.arrOrganize, desc: T.arrOrganizeTip, action: () => this.organizeSelection() },
             { label: T.arrAlignV, action: () => this.alignSelection("v") },
             { label: T.arrAlignH, action: () => this.alignSelection("h") },
           ] : []),
@@ -3158,8 +3367,10 @@ export class Canvas {
     return items;
   }
 
-  /** (上に出るバーはやめた。2026-11-23 利用者「上に出るのも違う」。操作は右クリックへ) */
-  private updateSelBar(): void {}
+  private updateSelBar(): void {
+    const canOrganize = this.selection.size >= 2 && this.arrItems(this.selection).length >= 2;
+    this.organizeButton.hidden = this.readOnly || this.pen.on || !!this.draft || !canOrganize;
+  }
 
   /** 文字を書き直す(添付の文字も、名前を書き直せる) */
   private editText(id: string): void {
