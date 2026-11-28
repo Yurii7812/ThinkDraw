@@ -1,7 +1,7 @@
 {
   "name": "bresuto",
   "productName": "bresuto",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "bresuto(ブレスト。旧 ThinkDraw): ページが一つだけの無限キャンバスで考えを書き散らし、束ねて整理するアプリ",
   "main": "dist/main/main.js",
   "desktopName": "bresuto.desktop",
@@ -92,7 +92,13 @@
     },
     "mac": {
       "target": [
-        "dmg"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "category": "public.app-category.productivity",
       "icon": "assets/icon.png",
