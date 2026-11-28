@@ -113,28 +113,28 @@ test("修正16: コピーの形は貼り付けと同じ網の箇条書き(Ctrl+Q
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("親\n  (理由)子");
 });
 
-test("修正16: Tab で書いた文字は、書いたあともグループ・囲いに入らない", async () => {
-  // 書き始める場所(画面の 300,300)のすぐ右にグループ、下に囲い
+test("修正16: Tab で書いた文字は、書いて伸びたあとも囲い(枠)に入らない(左右どちらに置かれても)", async () => {
+  // 書き始める場所(画面の 600,350)の左右すぐ近くに、縦に長い囲い。上下は空いているので、Tab の文字は上か下に置かれ、書くと横に伸びる
   await page.evaluate(() => {
     const a = (window as any).__app;
     const v = a.vault, g = a.canvas.group;
-    const w = a.canvas.toWorld(300, 300);
-    v.create({ type: "group", title: "近くの箱", group: g, x: Math.round(w.x + 120), y: Math.round(w.y - 10) });
-    v.create({ type: "frame", title: "近くの枠", group: g, x: Math.round(w.x - 50), y: Math.round(w.y + 80), size: { w: 300, h: 160 } });
+    const w = a.canvas.toWorld(600, 350);
+    v.create({ type: "frame", title: "右の枠", group: g, x: Math.round(w.x + 70), y: Math.round(w.y - 300), size: { w: 400, h: 600 } });
+    v.create({ type: "frame", title: "左の枠", group: g, x: Math.round(w.x - 470), y: Math.round(w.y - 300), size: { w: 400, h: 600 } });
     a.canvas.renderNow();
   });
-  await page.mouse.click(300, 300);
+  await page.mouse.click(600, 350);
   await page.keyboard.type("元");
   await page.keyboard.press("Tab");
-  await page.keyboard.type("とても長い文章をここに書いて、まわりのグループや枠にかかるくらいまで伸ばしてみる");
+  await page.keyboard.type("とても長い文章をここに書いて、まわりの囲いにかかるくらいまで伸ばしてみる");
   await page.keyboard.press("Escape");
   await settle();
   const r = await page.evaluate(() => {
     const a = (window as any).__app;
     const rect = (f: (t: string) => boolean) => a.canvas.rectOf([...a.vault.nodes.values()].find((x: any) => f(x.title)).id);
-    return { t: rect((t) => t.startsWith("とても長い")), g: rect((t) => t === "近くの箱"), f: rect((t) => t === "近くの枠") };
+    return { t: rect((t) => t.startsWith("とても長い")), r: rect((t) => t === "右の枠"), l: rect((t) => t === "左の枠") };
   });
   const hit = (a: any, b: any) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-  expect(hit(r.t, r.g)).toBe(false);
-  expect(hit(r.t, r.f)).toBe(false);
+  expect(hit(r.t, r.r)).toBe(false);
+  expect(hit(r.t, r.l)).toBe(false);
 });

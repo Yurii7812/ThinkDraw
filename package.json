@@ -111,6 +111,12 @@
         "repo": "bresuto",
         "releaseType": "release"
       }
+    ],
+    "extraResources": [
+      {
+        "from": "downloads/BRESUTO-memo.apk",
+        "to": "BRESUTO-memo.apk"
+      }
     ]
   }
 }

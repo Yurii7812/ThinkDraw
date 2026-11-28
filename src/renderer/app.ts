@@ -22,6 +22,7 @@ import { paperStore } from "./paperstore";
 import { cardTip, closeDrawMenu, DEFAULT_CONFIG, drawLabel, drawMenuOpen, openDrawMenu, runDraw, type DrawConfig, type DrawKind } from "./tarot";
 import { api, askText, closeMenu, h, menuOpen, showMenu, svg, toast, type MenuItem } from "./ui";
 import { parseInvite, SharedClient, type Me } from "./shared";
+import { PhoneSync } from "./phonesync";
 import { authorOf, boardOf, type BoardState } from "../core/session";
 import { parseNode } from "../core/frontmatter";
 import type { TDNode } from "../core/types";
@@ -98,6 +99,7 @@ const TOP_ICONS: Record<string, string> = {
   surround: '<circle cx="12" cy="12" r="2.5"/><circle cx="5" cy="6" r="1.5"/><circle cx="19" cy="7" r="1.5"/><circle cx="6" cy="19" r="1.5"/><path d="M10 11 6 7M14 11l4-3M10.5 14 7 18"/>',
   whole: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   export: '<path d="M12 4v11M8 8l4-4 4 4"/><path d="M5 14v6h14v-6"/>',
+  phone: '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/>',
   share: '<circle cx="8" cy="9" r="3"/><circle cx="17" cy="10" r="2.5"/><path d="M3 19c.6-3 2.6-5 5-5s4.4 2 5 5M13.5 18c.4-2.2 1.8-3.6 3.5-3.6s3.1 1.4 3.5 3.6"/>',
   draw: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="m12 8 1.2 2.6 2.8.4-2 2 .5 2.8-2.5-1.4-2.5 1.4.5-2.8-2-2 2.8-.4z"/>',
 };
@@ -206,6 +208,7 @@ class App {
     this.vault = new Vault({ write: (n, c) => api().write(n, c), trash: (n, c) => api().trash(n, c) });
     this.vault.load(files);
     void paperStore.load();
+    this.phone.startAuto(); // スマホを USB でつなぐと、自動で取り込む
     if (!paperHooked) {
       paperHooked = true;
       api().onPaperProgress((p) => this.paper?.onProgress(p));
@@ -320,6 +323,7 @@ class App {
         btn("backlinks-btn", T.backlinksTip, () => this.toggleBacklinks(), T.backlinksBtn, "surround"),
         btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn, "whole"),
         btn("share-btn", T.shareTip, () => this.shareMenu(), T.shareBtn, "share"),
+        btn("phone-btn", T.phoneTip, () => this.phoneMenu(), T.phoneBtn, "phone"),
         btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn, "export"),
         h("div", { class: "split" }, this.btnDraw),
         btn("i-theme", T.theme, () => this.setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")),
@@ -1796,6 +1800,42 @@ class App {
   }
 
   // ---------- 全体の画面(見るだけ) ----------
+  // ---------- スマホ(BRESUTO のスマホ用アプリ。USB。2026-11-28) ----------
+  // vault は開いたあとで決まるので、そのつど読む
+  readonly phone: PhoneSync = new PhoneSync({
+    get vault() {
+      return app.vault;
+    },
+    dayGroupFor: (ymd) => this.dayGroupFor(ymd),
+    recordNoteFor: (day, ymd, kind) => findRecordNote(this.vault, day, kind) ?? this.ensureRecordNote(day, ymd, kind),
+    kindNames: () => this.kinds.map((k) => k.name),
+    addKinds: (names) => {
+      const add = names.filter((n) => n && n !== "日記" && n !== "メモ" && !this.kinds.some((k) => k.name === n));
+      if (add.length) this.saveKinds([...this.kinds, ...add.map((name) => ({ name, parents: [] }))]);
+    },
+    importPapers: (paths) => {
+      if (!paths.length) return;
+      if (!this.paperOpen) this.togglePaper();
+      void this.paper?.importFiles(paths);
+    },
+  });
+  private phoneMenu(): void {
+    const el = document.querySelector(".tbtn.phone-btn") as HTMLElement | null;
+    const r = el?.getBoundingClientRect();
+    showMenu(r?.left ?? 200, (r?.bottom ?? 40) + 2, [
+      { label: T.phonePull, desc: T.phonePullDesc, action: () => void this.phone.pull() },
+      {
+        label: T.phoneInstall,
+        desc: T.phoneInstallDesc,
+        action: async () => {
+          toast(T.phoneInstalling, 60000);
+          const res = await api().phoneInstall();
+          toast(res.message, 8000);
+        },
+      },
+    ]);
+  }
+
   // ---------- 共有ボード(みんなで使う。2026-11-28 利用者。質問票 br-1128a) ----------
   // 右上の「共有」から。共有ボードは右に出る(左は自分のボード)。左右のあいだは Ctrl+C → Ctrl+V(複製)・Ctrl+Q(自分だけ元へ飛べる)。
   // 終わると(開いた人が終える・自分が抜ける)、参加した全員の自分のホームにそのボードが入る

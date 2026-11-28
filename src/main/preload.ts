@@ -24,6 +24,13 @@ const api = {
     ipcRenderer.invoke("export:save", name, label, exts, data),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open", url),
   /** 窓の中の、その四角(CSS の px)を写した PNG(書き出しを画面と同じ見た目にする。2026-11-27) */
+  phoneDevices: (): Promise<{ serial: string; state: string }[]> => ipcRenderer.invoke("phone:devices"),
+  phoneInstall: (): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke("phone:install"),
+  phonePull: (): Promise<{ ok: true; files: { name: string; data: Uint8Array }[] } | { ok: false; message: string }> => ipcRenderer.invoke("phone:pull"),
+  phoneMark: (names: string[]): Promise<boolean> => ipcRenderer.invoke("phone:mark", names),
+  phoneKinds: (kinds: string[]): Promise<boolean> => ipcRenderer.invoke("phone:kinds", kinds),
+  phoneTasksDone: (ids: string[]): Promise<boolean> => ipcRenderer.invoke("phone:tasksDone", ids),
+  phoneSavePapers: (list: { name: string; data: Uint8Array }[]): Promise<string[]> => ipcRenderer.invoke("phone:savePapers", list),
   shareStart: (title: string, initial?: unknown) => ipcRenderer.invoke("share:start", title, initial),
   shareStop: () => ipcRenderer.invoke("share:stop"),
   shareInfo: () => ipcRenderer.invoke("share:info"),

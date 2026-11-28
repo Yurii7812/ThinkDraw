@@ -7,6 +7,7 @@ import { atomicWrite, FsVaultIO } from "./fsio";
 import { DEFAULT_OCR, makeEngines, type OcrSettings } from "./ocr";
 import { DEFAULT_CROP, PaperStore, type CropSettings } from "./paperio";
 import { ShareServer } from "./share";
+import * as Phone from "./phone";
 import type { BoardState } from "../core/session";
 
 // 試験のときは、利用者の設定・フォルダに触らないよう、環境変数で場所を差し替える
@@ -254,6 +255,26 @@ function registerIpc(): void {
   });
   ipcMain.handle("url:title", (_e, url: string) => urlTitle(url));
   // 共有ボード(2026-11-28): このPCで中継を始める・終える
+  // スマホ(BRESUTO のスマホ用アプリ。USB)。2026-11-28
+  ipcMain.handle("phone:devices", () => (process.env.BRESUTO_TEST ? [] : Phone.listDevices())); // 試験では、本物のスマホに触らない
+  ipcMain.handle("phone:install", () => Phone.install(Phone.apkPath(path.join(__dirname, "../.."))));
+  ipcMain.handle("phone:pull", () => Phone.pullInbox());
+  ipcMain.handle("phone:mark", (_e, names: string[]) => Phone.markInbox(names));
+  ipcMain.handle("phone:kinds", (_e, kinds: string[]) => Phone.sendKinds(kinds));
+  ipcMain.handle("phone:tasksDone", (_e, ids: string[]) => Phone.sendTasksDone(ids));
+  /** 紙のカードの写真を、紙PKM の取り込みに渡すため、一時の置き場に書く */
+  ipcMain.handle("phone:savePapers", async (_e, list: { name: string; data: Uint8Array }[]) => {
+    const dir = path.join(app.getPath("userData"), "phone-papers", new Date().toISOString().replace(/\D/g, "").slice(0, 14));
+    await fs.mkdir(dir, { recursive: true });
+    const out: string[] = [];
+    for (const f of list) {
+      if (!/^[A-Za-z0-9][\w.-]*$/.test(f.name)) continue;
+      const p = path.join(dir, f.name);
+      await fs.writeFile(p, Buffer.from(f.data));
+      out.push(p);
+    }
+    return out;
+  });
   ipcMain.handle("share:start", (_e, title: string, initial?: BoardState) => share().start(title, initial));
   ipcMain.handle("share:stop", () => share().stop());
   ipcMain.handle("share:info", () => share().info);

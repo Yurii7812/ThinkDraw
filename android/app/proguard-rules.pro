@@ -1,0 +1,2 @@
+-dontwarn **
+-keepclassmembers class net.yurii.bresuto.MainActivity$Bridge { @android.webkit.JavascriptInterface <methods>; }

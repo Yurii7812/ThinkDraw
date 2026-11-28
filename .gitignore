@@ -4,3 +4,7 @@ release/
 test-results/
 playwright-report/
 booklet/out/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
