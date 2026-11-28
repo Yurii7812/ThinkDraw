@@ -6,10 +6,14 @@
 set -eu
 say() { printf '%s\n' "$*"; }
 [ "$(uname -s)" = Darwin ] || { say "Mac だけに対応しています"; exit 1; }
-API="https://api.github.com/repos/${BRESUTO_GH:-Yurii7812/bresuto}/releases/latest"
-LIST=$(curl -fsSL "$API" | grep '"browser_download_url"' | grep '\.dmg"' | sed 's/.*"\(https[^"]*\)".*/\1/')
+# いちばん新しい版の番号は、Releases の latest の転送先から読む(GitHub の API は問い合わせが多いと断られるので使わない)
+GH="${BRESUTO_GH:-Yurii7812/bresuto}"
+TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$GH/releases/latest" | sed 's#.*/tag/##')
+V=${TAG#v}
+case "$TAG" in v[0-9]*) ;; *) say "いちばん新しい版が分かりません"; exit 1 ;; esac
 # M1 以降は -arm64.dmg、Intel はそれ以外の .dmg
-case "$(uname -m)" in arm64) URL=$(printf '%s\n' "$LIST" | grep -- '-arm64\.dmg$' | head -1) ;; *) URL=$(printf '%s\n' "$LIST" | grep -v -- '-arm64\.dmg$' | head -1) ;; esac
+case "$(uname -m)" in arm64) F="BRESUTO-$V-arm64.dmg" ;; *) F="BRESUTO-$V.dmg" ;; esac
+URL="https://github.com/$GH/releases/download/$TAG/$F"
 [ -n "$URL" ] || { say "Releases に Mac の完成品が見つかりません"; exit 1; }
 T=$(mktemp -d)
 say "取得しています: $(basename "$URL")"

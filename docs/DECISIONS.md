@@ -492,3 +492,4 @@ SPEC の前書きに従い、仮置きにも未決にも書かれていない細
 - Mac は get-mac.sh: Releases の dmg(M1 以降は arm64、Intel はそれ以外)を /Applications(書けなければ ~/Applications)へ。ダウンロードの印を外し、アドホック署名を付け直す(警告・「壊れている」を出さない)。
 - Windows は bootstrap.ps1: Releases の exe を落として /S で入れる(落とした物に印が付かないので SmartScreen も出ない)。
 - .github/workflows/install-test.yml: 入れ方を変えたら、本物の Mac・Windows・Linux で 1 行を実行し、起動して 15 秒落ちないことまで見る。
+- 最新版の番号は GitHub の API ではなく、Releases の latest の転送先から読む(API は共有の機械などで「問い合わせが多すぎる」と断られ、Mac の試験で失敗した)。

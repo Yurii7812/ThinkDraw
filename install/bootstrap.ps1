@@ -4,9 +4,14 @@
 # この形で落とした物には「インターネットから来た」印が付かないので、「PC が保護されました」も出ない。入れたあとは自動で更新する
 $ErrorActionPreference = 'Stop'
 $repo = if ($env:BRESUTO_GH) { $env:BRESUTO_GH } else { 'Yurii7812/bresuto' }
-$rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'bresuto-installer' }
-$asset = $rel.assets | Where-Object { $_.name -match '^BRESUTO-Setup-.*\.exe$' } | Select-Object -First 1
-if (-not $asset) { throw 'Releases に Windows の完成品が見つかりません' }
+# いちばん新しい版の番号は、Releases の latest の転送先から読む(GitHub の API は問い合わせが多いと断られるので使わない)
+$r = Invoke-WebRequest -Uri "https://github.com/$repo/releases/latest" -UseBasicParsing -Method Head
+$final = if ($r.BaseResponse.RequestMessage) { $r.BaseResponse.RequestMessage.RequestUri.AbsoluteUri } else { $r.BaseResponse.ResponseUri.AbsoluteUri }
+$tag = ($final -split '/tag/')[-1]
+if ($tag -notmatch '^v\d') { throw 'いちばん新しい版が分かりません' }
+$name = "BRESUTO-Setup-$($tag.Substring(1)).exe"
+$asset = @{ name = $name; browser_download_url = "https://github.com/$repo/releases/download/$tag/$name" }
+$rel = @{ tag_name = $tag }
 $exe = Join-Path $env:TEMP $asset.name
 Write-Host "取得しています: $($asset.name)"
 $ProgressPreference = 'SilentlyContinue'
