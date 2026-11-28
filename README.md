@@ -7,7 +7,23 @@
 - Electron + TypeScript。Linux で作っている。Windows・Mac 用のファイルも作る(2026-11-28 から。自分用で署名なし)。
 - 開いたフォルダに、1 ノード = 1 つの `.md`(frontmatter 付きの Markdown)で保存する。
 
+## 入れる(1 行で)
+
+**コマンドを 1 回コピーして、1 回貼り付けるだけ**(Gnosis・YuriiNote と同じ)。
+
+| OS | 貼り付けるもの |
+| --- | --- |
+| **Linux・macOS**(ターミナル) | `curl -fsSL https://raw.githubusercontent.com/Yurii7812/bresuto/main/install/bootstrap.sh \| sh` |
+| **Windows 10 / 11**(PowerShell) | `irm https://raw.githubusercontent.com/Yurii7812/bresuto/main/install/bootstrap.ps1 \| iex` |
+
+- Linux: git と Node.js が無ければ用意して、作業フォルダ(`~/.local/share/bresuto`)を取ってきて組み立てる。起動は `bresuto`(メニューにも出る)、更新は `bresuto --update`。
+- Mac: Releases のいちばん新しい完成品を「アプリケーション」に入れる(警告は出ない)。新しい版が出たら同じ 1 行をもう一度。
+- Windows: Releases のいちばん新しい完成品を入れる(警告は出ない)。そのあとは自動で更新する。
+- 共有ボードに入るだけなら、アプリは要らない(招待をブラウザで開く)。
+
 ## 入れる(配布ファイル)
+
+ターミナルを使わないなら、ファイルを落としてダブルクリックでもよい。
 
 [Releases](https://github.com/Yurii7812/bresuto/releases) から、使う OS のファイルを落とす。
 

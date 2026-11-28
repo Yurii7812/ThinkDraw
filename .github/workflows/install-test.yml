@@ -1,0 +1,53 @@
+# 1 行で入れる(install/bootstrap.*)を、本物の Mac・Windows・Linux で試す(2026-11-28)。
+# 入れ方を変えたとき(push)と、手で動かしたとき。入れたアプリが起動して 10 秒落ちないことまで見る
+name: install-test
+on:
+  push:
+    branches: [main]
+    paths: ["install/**", ".github/workflows/install-test.yml"]
+  workflow_dispatch: {}
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 1 行で入れる(この commit の get-mac.sh)
+        run: sh install/get-mac.sh
+      - name: 入ったか・起動するか
+        run: |
+          APP=/Applications/BRESUTO.app
+          test -d "$APP"
+          codesign --verify --deep "$APP"
+          xattr -p com.apple.quarantine "$APP" 2>/dev/null && { echo "ダウンロードの印が残っている"; exit 1; } || true
+          "$APP/Contents/MacOS/BRESUTO" > run.log 2>&1 &
+          sleep 15
+          pgrep -x BRESUTO || { cat run.log; exit 1; }
+          pkill -x BRESUTO || true
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 1 行で入れる(この commit の bootstrap.ps1)
+        shell: pwsh
+        run: ./install/bootstrap.ps1
+      - name: 入ったか・起動するか
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'BRESUTO.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw 'BRESUTO.exe が見つかりません' }
+          Write-Host "入った所: $($exe.FullName)"
+          Start-Process $exe.FullName
+          Start-Sleep -Seconds 15
+          if (-not (Get-Process -Name 'BRESUTO' -ErrorAction SilentlyContinue)) { throw '起動していません' }
+          Stop-Process -Name 'BRESUTO' -Force
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 1 行で入れる(この commit の get-linux.sh。取ってくるのは GitHub の main)
+        run: sh install/get-linux.sh
+      - name: 入ったか
+        run: |
+          ~/.local/bin/bresuto --version
+          test -x ~/.local/share/bresuto/src/node_modules/electron/dist/electron
+          test -f ~/.local/share/applications/bresuto.desktop

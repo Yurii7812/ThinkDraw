@@ -486,3 +486,9 @@ SPEC の前書きに従い、仮置きにも未決にも書かれていない細
 ## 配布はそのまま(2026-11-28 利用者)
 - いったん「Windows・Mac 版と Release は不要では」と外しかけたが、「簡単にアプリ入れる方法を作るべき」で、Release(GitHub Actions・electron-builder・自動更新)はそのまま使う。Windows・Mac の人は Releases のファイルをダブルクリックで入れる。Mac は Apple シリコンと Intel の両方の dmg。
 - 共有ボードに入るだけなら、ブラウザでよい。版は 0.3.0(共有ボードが入った版)。
+
+## 1 行で入れる(2026-11-28 利用者「YuriiNote・Gnosis みたいにコマンドコピペですぐ入れたい」。Linux は YuriiNote と同じ・Win/Mac は完成品)
+- install/bootstrap.sh(Linux・Mac)と install/bootstrap.ps1(Windows)。Linux は get-linux.sh(git・Node.js 22 以上を用意 → ~/.local/share/bresuto/src に取ってきて組み立て → ~/.local/bin/bresuto・BRESUTO・メニュー・アイコン。失敗したら前のまま。bresuto --update)。作業フォルダから動かす開発用の bresuto があれば触らない。
+- Mac は get-mac.sh: Releases の dmg(M1 以降は arm64、Intel はそれ以外)を /Applications(書けなければ ~/Applications)へ。ダウンロードの印を外し、アドホック署名を付け直す(警告・「壊れている」を出さない)。
+- Windows は bootstrap.ps1: Releases の exe を落として /S で入れる(落とした物に印が付かないので SmartScreen も出ない)。
+- .github/workflows/install-test.yml: 入れ方を変えたら、本物の Mac・Windows・Linux で 1 行を実行し、起動して 15 秒落ちないことまで見る。
