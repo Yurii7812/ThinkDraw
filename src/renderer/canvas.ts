@@ -2,7 +2,7 @@
 import { freeOffset, gap, placeAround, segHitsRect, type Rect } from "../core/placement";
 import { flattenOutline, layoutOutline, parseOutlineGraph, type OutlineLink, type OutlineNode } from "../core/outline";
 import { alignItems, resolveOverlaps, spreadFrom, type ArrItem } from "../core/arrange";
-import { fromJsonCanvas } from "../core/share";
+import { fromJsonCanvas, toOutlineText } from "../core/share";
 import { readZipEntry } from "./unzip";
 import { CARD_H, CARD_W } from "../core/spreadLayout";
 import { CycleError, type Vault } from "../core/vault";
@@ -19,7 +19,6 @@ import { makeChecklist, makeTable, renderBodyDom, schema as mdSchema, serializeM
 import { api, askText, h, showMenu, svg, toast, type MenuItem } from "./ui";
 import { pickIslands, placeIslands, type IslandPick } from "../core/islands";
 import { bodyLinkTargets } from "../core/links";
-import { selectionToMarkdown } from "../core/export";
 import { autoGroupTitle } from "../core/grouptitle";
 import { anchorText, citeOf, parseCite } from "../core/cite";
 import { currentClip, setClip, type PassageClip } from "./clip";
@@ -1219,7 +1218,8 @@ export class Canvas {
     const r = this.rects.get(id);
     const a = this.rects.get(parent);
     if (!r || !a) return;
-    const others = [...this.obstacles(new Set([id, parent])), ...this.edgeBoxes(id)];
+    // 書く前と同じよけ方(グループは影も含めて少し広く・囲いも。2026-11-28 修正16「Tab の文字が書いたあとにグループに入る」)
+    const others = [...this.tabObstacles(parent, new Set([id])), ...this.edgeBoxes(id)];
     const fr = this.frameIds();
     const boxes = [...this.rects.entries()].filter(([i]) => i !== id && i !== parent && !fr.has(i)).map(([, b]) => b);
     const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
@@ -2179,10 +2179,9 @@ export class Canvas {
       if (target.type === "group") {
         // グループの上に重ねた: そのグループへ移す(引用は引用のまま)
         this.v.tx(() => {
-          let k = 0;
-          const inside = this.v.itemsOf(over);
-          const baseY = inside.reduce((a, m) => Math.max(a, m.y + 60), 0);
-          for (const i of d.ids) this.v.moveToGroup(this.group, over, i, (k % 5) * 160, baseY + Math.floor(k++ / 5) * 60);
+          // 並びはそのまま、中にある物の下へ(2026-11-28 修正16「範囲選択してグループに落とすと原型をとどめない」)
+          const at = this.keepLayout(over, d.ids);
+          for (const i of d.ids) this.v.moveToGroup(this.group, over, i, at.get(i)!.x, at.get(i)!.y);
           this.v.moveStrokes(this.group, d.strokes, Math.round(d.dx), Math.round(d.dy));
         });
         toast(T.movedInto(target.title || T.untitledGroup));
@@ -2431,7 +2430,9 @@ export class Canvas {
     refCutFrom = cut ? this.group : null;
     // システムのコピーには Markdown を入れる(外のエディタや AI にそのまま貼れる。2026-11-24 統合仕様 2)。
     // bresuto の中で貼ると、同じ文字なので引用(切り取りなら移動)になる。外で別の物をコピーすると、文字が変わるので使わない
-    refClipMark = selectionToMarkdown(this.v, this.group, ids).trim() || (cut ? T.cutMark : T.copiedMark)(ids.length);
+    // コピーの形は、貼り付け(Ctrl+Q)で読む形と同じ「網の箇条書き」にそろえる(2026-11-28 修正16)。
+    // 線の木を字下げ、何度も出る物は「文 (1)」、線の言葉は「(言葉)」。ほかのアプリ・AI に貼っても読みやすく、BRESUTO に Ctrl+Q で貼ると同じ図に戻る
+    refClipMark = toOutlineText(this.v, this.group, (i) => this.rects.get(i), new Set(ids)).trim() || (cut ? T.cutMark : T.copiedMark)(ids.length);
     void navigator.clipboard?.writeText(refClipMark).catch(() => {});
     setClip({ kind: "nodes" }, refClipMark);
     toast((cut ? T.cutToast : T.copiedToast)(ids.length));
@@ -2997,6 +2998,15 @@ export class Canvas {
   }
 
   /** ほかのグループへ入れる・引用する(選んだときのバーの「グループへ」) */
+  /** ほかのグループへ移すときの位置: 今の並び(互いの位置)のまま、移す先の中にある物の下へ */
+  private keepLayout(target: string, ids: string[]): Map<string, { x: number; y: number }> {
+    const pos = ids.map((i) => ({ i, r: this.rects.get(i) ?? { ...(this.v.itemPos(this.group, i) ?? { x: 0, y: 0 }), w: 0, h: 0 } }));
+    const x0 = Math.min(...pos.map((p) => p.r.x)), y0 = Math.min(...pos.map((p) => p.r.y));
+    const inside = this.v.itemsOf(target).filter((m) => !ids.includes(m.id));
+    const left = inside.length ? Math.min(...inside.map((m) => m.x)) : 0;
+    const below = inside.length ? Math.max(...inside.map((m) => m.y)) + 80 : 0;
+    return new Map(pos.map((p) => [p.i, { x: Math.round(left + p.r.x - x0), y: Math.round(below + p.r.y - y0) }]));
+  }
   private groupMenuItems(ids: string[]): MenuItem[] {
     const items: MenuItem[] = [
       {
@@ -3007,7 +3017,8 @@ export class Canvas {
           const g = await this.host.pickGroup(T.pickMoveTitle);
           if (!g || g === this.group) return;
           try {
-            this.v.tx(() => ids.forEach((i, k) => this.v.moveToGroup(this.group, g, i, (k % 5) * 160, 40 + Math.floor(k / 5) * 60)));
+            const at = this.keepLayout(g, ids);
+            this.v.tx(() => ids.forEach((i) => this.v.moveToGroup(this.group, g, i, at.get(i)!.x, at.get(i)!.y)));
             toast(T.movedTo(this.v.get(g)?.title || T.untitledGroup));
           } catch (err) {
             if (err instanceof CycleError) toast(T.cycleRefused);
@@ -3022,7 +3033,8 @@ export class Canvas {
           const g = await this.host.pickGroup(T.pickGroupTitle);
           if (!g) return;
           try {
-            this.v.tx(() => ids.forEach((i, k) => this.v.addToGroup(g, i, (k % 5) * 160, 40 + Math.floor(k / 5) * 60)));
+            const at = this.keepLayout(g, ids);
+            this.v.tx(() => ids.forEach((i) => this.v.addToGroup(g, i, at.get(i)!.x, at.get(i)!.y)));
             toast(T.addedInto(this.v.get(g)?.title || T.untitledGroup));
           } catch (err) {
             if (err instanceof CycleError) toast(T.cycleRefused);
@@ -3036,7 +3048,8 @@ export class Canvas {
         action: async () => {
           const g = await this.host.pickGroup(T.pickQuoteTitle);
           if (!g) return;
-          this.v.tx(() => ids.forEach((i, k) => this.v.addRef(g, i, (k % 5) * 160, 40 + Math.floor(k / 5) * 60)));
+          const at = this.keepLayout(g, ids);
+          this.v.tx(() => ids.forEach((i) => this.v.addRef(g, i, at.get(i)!.x, at.get(i)!.y)));
           toast(T.quotedInto(this.v.get(g)?.title || T.untitledGroup));
         },
       },
