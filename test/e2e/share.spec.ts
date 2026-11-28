@@ -122,9 +122,14 @@ test("共有ボード: 始める・入る・同時に書く・他人の文字は
     await g.page.mouse.move(gb.x + 320, gb.y + 220);
     await expect(page.locator(".peer-cursor", { hasText: "ゲスト" })).toHaveCount(1);
     // 自分のボードの物を Ctrl+C → 共有ボードで Ctrl+Q: ゲストにはふつうの物・わたしには元へ飛ぶボタン
+    await expect(page.locator(".shared-tab")).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(".left-pane")).toBeHidden();
+    await page.locator(".tabbar .tab", { hasText: "ホーム" }).click();
+    await expect(page.locator(".shared-pane")).toBeHidden();
     await page.locator(".left-pane .node", { hasText: "自分の案" }).click({ modifiers: ["Control"] });
     await page.keyboard.press("Control+c");
     await page.waitForTimeout(200);
+    await page.locator(".shared-tab-title").click();
     await page.mouse.move(box.x + 300, box.y + 400);
     await page.locator(".shared-canvas").click({ position: { x: 300, y: 400 } });
     await page.keyboard.press("Escape");
@@ -184,6 +189,29 @@ test("共有ボード: 招待の URL をブラウザで開くだけで入れる(
   await web.keyboard.type("ブラウザの案");
   await web.keyboard.press("Escape");
   await expect(page.locator(".shared-canvas .node", { hasText: "ブラウザの案" })).toHaveCount(1);
+  const downloadPath = path.join(exportDir, "ブラウザから.canvas");
+  await app.evaluate(({ session }, file) => {
+    session.defaultSession.once("will-download", (_event, item) => item.setSavePath(file));
+  }, downloadPath);
+  await web.getByRole("button", { name: "持ち帰る" }).click();
+  await web.locator(".ctxmenu .item", { hasText: "JSON Canvas" }).click();
+  await expect.poll(() => {
+    try { return readFileSync(downloadPath, "utf8"); }
+    catch { return ""; }
+  }).toContain("ブラウザの案");
+  await page.locator(".tabbar .tab", { hasText: "ホーム" }).click();
+  const dt = await page.evaluateHandle((content) => {
+    const data = new DataTransfer();
+    data.items.add(new File([content], "ブラウザから.canvas", { type: "application/json" }));
+    return data;
+  }, readFileSync(downloadPath, "utf8"));
+  await page.locator(".left-pane .canvas").dispatchEvent("drop", { dataTransfer: dt, clientX: 220, clientY: 300 });
+  await expect(page.locator(".left-pane .node", { hasText: "ブラウザの案" })).toHaveCount(1);
+  await page.locator(".shared-tab-title").click();
+  await page.locator(".tbtn.export").click();
+  await page.locator(".ctxmenu .item", { hasText: "JSON Canvas" }).click();
+  await expect.poll(() => readdirSync(exportDir)).toContain("ブラウザ会.canvas");
+  expect(readFileSync(path.join(exportDir, "ブラウザ会.canvas"), "utf8")).toContain("ブラウザの案");
   // アプリで書く → ブラウザに届く
   const box = (await page.locator(".shared-canvas").boundingBox())!;
   await page.mouse.click(box.x + 200, box.y + 350);
@@ -198,4 +226,25 @@ test("共有ボード: 招待の URL をブラウザで開くだけで入れる(
   await expect(page.locator(".shared-pane")).toHaveCount(0, { timeout: 10000 });
   await settle();
   expect(Object.values(mdFiles()).some((s) => s.includes("title: ブラウザの案"))).toBe(true);
+});
+
+test("修正17: ブラウザの個人ボードは招待なしで開き、再読み込みしても残る", async () => {
+  const local = await page.evaluate(async () => (await (window as any).bresuto.shareStart("試験")).local);
+  const url = local.replace("ws://", "http://").replace(/ws$/, "");
+  const [web] = await Promise.all([
+    app.waitForEvent("window"),
+    app.evaluate(({ BrowserWindow }, u) => {
+      const w = new BrowserWindow({ width: 1000, height: 720, show: false, webPreferences: { contextIsolation: true, sandbox: true } });
+      void w.loadURL(u);
+    }, url),
+  ]);
+  await expect(web.locator(".web-head .shared-title")).toHaveText("自分のボード");
+  await web.locator(".shared-canvas").click({ position: { x: 300, y: 200 } });
+  await web.keyboard.type("自分のブラウザメモ");
+  await web.keyboard.press("Escape");
+  await expect(web.locator(".shared-canvas .node")).toHaveText("自分のブラウザメモ");
+  await web.reload();
+  await expect(web.locator(".shared-canvas .node")).toHaveText("自分のブラウザメモ");
+  await web.getByRole("button", { name: "持ち帰る" }).click();
+  await expect(web.locator(".ctxmenu .item", { hasText: "JSON Canvas" })).toBeVisible();
 });

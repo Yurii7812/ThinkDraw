@@ -3,6 +3,7 @@ import { _electron as electron, expect, test, type ElectronApplication, type Pag
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { flattenOutline, parseOutlineGraph } from "../../src/core/outline";
 
 // 利用者の画面に窓を出さない: Wayland を外し、xvfb の見えない画面(X11)だけで起動する。
 // xvfb-run の外では動かさない(npm run test:e2e を使う)
@@ -256,7 +257,9 @@ test("修正15(2): コピーした字下げの文章を Ctrl+Q でマインド�
   await shot("15-outline");
   // URL の文字
   await write(300, 650, "https://example.com/");
-  await page.locator(".node", { hasText: "https://example.com/" }).click();
+  const link = page.locator(".node a.node-url", { hasText: "https://example.com/" });
+  await expect(link).toHaveAttribute("href", "https://example.com/");
+  await link.click();
   await expect(page.locator("textarea.draft")).toHaveCount(0);
   await expect.poll(() => app.evaluate(() => (globalThis as { __bresutoOpened?: string[] }).__bresutoOpened ?? [])).toContain("https://example.com/");
 });
@@ -277,8 +280,16 @@ test("修正15(3): 線はまっすぐ・選ぶと線が太く色付きでつな�
   const d = await page.locator(".edge-lines .edge .vis").first().getAttribute("d");
   expect(d).toBeTruthy();
   expect(d!.match(/[LQA]/g)!.length).toBe(1);
+  // ホバーだけでも強調し、離れると選択や強調が残らない。
+  const parent = page.locator(".node", { hasText: "左の親" });
+  await parent.hover();
+  await expect(parent).toHaveClass(/hl-hover/);
+  await expect(parent).not.toHaveClass(/selected/);
+  await expect(page.locator(".edge-hot .h-vis")).toHaveCount(1);
+  await page.mouse.move(12, 70);
+  await expect(page.locator(".edge-hot .h-vis")).toHaveCount(0);
   // 選ぶと強調
-  await page.locator(".node", { hasText: "左の親" }).click({ modifiers: ["Control"] });
+  await parent.click({ modifiers: ["Control"] });
   await expect(page.locator(".edge.hl")).toHaveCount(1);
   await expect(page.locator(".edge-hot .h-vis")).toHaveCount(1); // 手前に描く写し
   await expect(page.locator(".node.hl-near", { hasText: "右の子" })).toHaveCount(1);
@@ -288,6 +299,8 @@ test("修正15(3): 線はまっすぐ・選ぶと線が太く色付きでつな�
   expect(await page.locator(".edge-hot .h-vis").evaluate((e) => getComputedStyle(e).strokeWidth)).toBe("1.5px");
   await shot("15-emphasis");
   await page.keyboard.press("Escape");
+  await expect(parent).not.toHaveClass(/selected/);
+  await page.mouse.move(12, 70);
   await expect(page.locator(".edge.hl")).toHaveCount(0);
   // Alt+D: じゃまだけが動く
   const before = await page.evaluate(() => {
@@ -333,8 +346,14 @@ test("修正15(4): JSON Canvas・網の箇条書き・OPML に書き出せる。
   }
   await expect.poll(() => readdirSync(exportDir).sort()).toEqual(["ホーム.canvas", "ホーム.md", "ホーム.opml"]);
   const outline = readFileSync(path.join(exportDir, "ホーム.md"), "utf8");
-  expect(outline).toContain("(理由)子2 (1)");
-  expect(outline).toMatch(/別\n {2}\(1\)/);
+  const linked = parseOutlineGraph(outline);
+  const flat = flattenOutline(linked.roots);
+  const connections = [
+    ...flat.filter(({ parent }) => parent >= 0).map(({ parent, node }) => [flat[parent].node.title, node.title, node.label ?? ""]),
+    ...linked.links.map(({ from, to, label }) => [from.title, to.title, label ?? ""]),
+  ];
+  expect(connections).toHaveLength(3);
+  expect(connections).toEqual(expect.arrayContaining([["親", "子1", ""], ["親", "子2", "理由"], ["別", "子2", ""]]));
   const cv = JSON.parse(readFileSync(path.join(exportDir, "ホーム.canvas"), "utf8"));
   expect(cv.nodes).toHaveLength(4);
   expect(cv.edges).toHaveLength(3);
@@ -348,4 +367,55 @@ test("修正15(4): JSON Canvas・網の箇条書き・OPML に書き出せる。
   }, text);
   await expect(page.locator(".node.t-text")).toHaveCount(8);
   await expect(page.locator(".elabel", { hasText: "理由" })).toHaveCount(2);
+});
+
+test("修正17: グループ内を広げ、外側は周囲のノードの手前で止まる", async () => {
+  const before = await page.evaluate(() => {
+    const a = (window as any).__app;
+    const v = a.vault, root = a.canvas.group;
+    const group = v.create({ type: "group", title: "グループ", group: root, x: 180, y: 200 });
+    const other = v.create({ type: "text", title: "別の文字", group: root, x: 440, y: 200 });
+    const obstacle = v.create({ type: "text", title: "障害物", group: root, x: 506, y: 200 });
+    const L = v.create({ type: "text", title: "左", group: group.id, x: 0, y: 0 });
+    const R = v.create({ type: "text", title: "右", group: group.id, x: 200, y: 0 });
+    a.canvas.renderNow();
+    const r = a.canvas.rectOf(other.id);
+    v.move(root, [{ id: obstacle.id, x: r.x + r.w + 8, y: r.y }]);
+    a.canvas.renderNow();
+    const get = (g: string, id: string) => v.itemPos(g, id).x;
+    a.canvas.setSelection([group.id, other.id]);
+    a.canvas.el.focus();
+    return { root, group: group.id, other: other.id, obstacle: obstacle.id, children: [L.id, R.id], outer: [get(root, group.id), get(root, other.id), get(root, obstacle.id)] };
+  });
+  await page.keyboard.press("Alt+ArrowUp");
+  const after = await page.evaluate(({ root, group, other, obstacle, children }) => {
+    const a = (window as any).__app;
+    const v = a.vault;
+    const get = (g: string, id: string) => v.itemPos(g, id).x;
+    return {
+      outer: [get(root, group), get(root, other), get(root, obstacle)],
+      inner: children.map((id: string) => get(group, id)),
+      right: a.canvas.rectOf(other).x + a.canvas.rectOf(other).w,
+    };
+  }, before);
+  expect(after.outer[0]).toBeLessThan(before.outer[0]);
+  expect(after.outer[1]).toBeGreaterThan(before.outer[1]);
+  expect(after.outer[2]).toBe(before.outer[2]);
+  expect(after.right).toBeLessThanOrEqual(after.outer[2]);
+  expect(after.inner[1] - after.inner[0]).toBeGreaterThan(200);
+  await page.keyboard.press("Control+z");
+  expect(await page.evaluate(({ root, group, other }) => {
+    const v = (window as any).__app.vault;
+    return [v.itemPos(root, group).x, v.itemPos(root, other).x];
+  }, before)).toEqual(before.outer.slice(0, 2));
+});
+
+test("修正17: 設定から英語を選ぶと再起動後の画面に反映する", async () => {
+  await page.keyboard.press("Control+/");
+  await expect(page.locator(".modal.settings")).toBeVisible();
+  await page.getByLabel("言語 / Language").selectOption("en");
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
+  await expect(page.locator(".share-btn")).toHaveAttribute("data-label", "Share");
+  await page.keyboard.press("Control+/");
+  await expect(page.locator(".modal.settings .modal-title").first()).toHaveText("Settings");
 });

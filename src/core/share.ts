@@ -4,7 +4,7 @@
 // - OPML: アウトライナー(Workflowy・Dynalist・Logseq など)向け。木だけ(網の線は入らない)
 import { labelOf } from "./export";
 import type { Rect } from "./placement";
-import { ROOT_ID, type LinkKind, type TDNode } from "./types";
+import { LINK_KINDS, ROOT_ID, type LinkKind, type Stroke, type TDNode } from "./types";
 import type { Vault } from "./vault";
 
 interface Item {
@@ -44,16 +44,27 @@ export function toJsonCanvas(v: Vault, group: string, rectOf: (id: string) => Re
     else nodes.push({ ...base, type: "text", text: labelOf(n).length && n.title.includes("\n") ? n.title : labelOf(n) });
   }
   const edges: Record<string, unknown>[] = [];
+  const connections = Object.create(null) as Record<string, { kind: LinkKind; color?: number; at?: number; size?: number }>;
   for (const it of items) {
     for (const l of v.get(it.id)?.links ?? []) {
       if (!here.has(l.to)) continue;
-      const e: Record<string, unknown> = { id: `${it.id}-${l.to}`, fromNode: it.id, toNode: l.to, ...endsOf(l.kind) };
+      const id = `${it.id}-${l.to}`;
+      const e: Record<string, unknown> = { id, fromNode: it.id, toNode: l.to, ...endsOf(l.kind) };
+      connections[id] = { kind: l.kind, color: l.color, at: l.at, size: l.size };
       if (l.label) e.label = l.label;
       if (l.color && CANVAS_COLOR[l.color]) e.color = CANVAS_COLOR[l.color];
       edges.push(e);
     }
   }
-  return JSON.stringify({ nodes, edges }, null, "\t") + "\n";
+  const annotations = Object.fromEntries(items.map(({ id, n }) => {
+    const byName = typeof n.extra.byName === "string" ? n.extra.byName : undefined;
+    const byColor = typeof n.extra.byColor === "string" ? n.extra.byColor : undefined;
+    const title = n.type === "note" || n.type === "group" || n.file ? n.title : undefined;
+    return [id, { color: n.color, fill: n.fill, title, byName, byColor }];
+  }));
+  // JSON Canvas が共通に持てない属性は、BRESUTO に戻すための拡張に置く。
+  const bresuto = { version: 1, annotations, connections, strokes: only ? [] : v.strokesOf(group) };
+  return JSON.stringify({ nodes, edges, bresuto }, null, "\t") + "\n";
 }
 function endsOf(kind: LinkKind): { fromEnd?: string; toEnd: string } {
   if (kind === "arrow") return { toEnd: "arrow" };
@@ -62,12 +73,23 @@ function endsOf(kind: LinkKind): { fromEnd?: string; toEnd: string } {
 }
 
 export interface CanvasImport {
-  nodes: { key: string; kind: "text" | "frame"; title: string; x: number; y: number; w: number; h: number; color: number }[];
-  edges: { from: string; to: string; label?: string; kind: LinkKind }[];
+  nodes: { key: string; kind: "text" | "frame"; title: string; x: number; y: number; w: number; h: number; color: number; fill?: number; byName?: string; byColor?: string }[];
+  edges: { from: string; to: string; label?: string; kind: LinkKind; color?: number; at?: number; size?: number }[];
+  strokes: Omit<Stroke, "id">[];
 }
 /** .canvas を読む。位置は左上を (0,0) にそろえる */
 export function fromJsonCanvas(src: string): CanvasImport {
-  const j = JSON.parse(src) as { nodes?: Record<string, unknown>[]; edges?: Record<string, unknown>[] };
+  interface Extension {
+    version?: number;
+    annotations?: Record<string, { color?: number; fill?: number; title?: string; byName?: string; byColor?: string }>;
+    connections?: Record<string, { kind?: LinkKind; color?: number; at?: number; size?: number }>;
+    strokes?: Omit<Stroke, "id">[];
+  }
+  const j = JSON.parse(src) as { nodes?: Record<string, unknown>[]; edges?: Record<string, unknown>[]; bresuto?: Extension };
+  const ext = j.bresuto?.version === 1 ? j.bresuto : undefined;
+  const bounded = (n: unknown, min: number, max: number): number | undefined =>
+    typeof n === "number" && Number.isFinite(n) && n >= min && n <= max ? n : undefined;
+  const palette = (n: unknown) => typeof n === "number" && Number.isInteger(n) ? bounded(n, 0, 8) : undefined;
   const color = (c: unknown) => {
     const k = CANVAS_COLOR.indexOf(String(c ?? ""));
     return k > 0 ? k : 0;
@@ -76,18 +98,33 @@ export function fromJsonCanvas(src: string): CanvasImport {
   const x0 = Math.min(0, ...raw.map((n) => Number(n.x) || 0)), y0 = Math.min(0, ...raw.map((n) => Number(n.y) || 0));
   const nodes = raw.map((n) => {
     const t = String(n.type ?? "text");
-    const title = t === "text" ? String(n.text ?? "") : t === "file" ? String(n.file ?? "").replace(/^.*\//, "").replace(/\.md$/, "") : t === "link" ? String(n.url ?? "") : String(n.label ?? "");
-    return { key: String(n.id), kind: (t === "group" ? "frame" : "text") as "text" | "frame", title: title.trim(), x: (Number(n.x) || 0) - x0, y: (Number(n.y) || 0) - y0, w: Number(n.width) || 160, h: Number(n.height) || 60, color: color(n.color) };
+    const a = ext?.annotations?.[String(n.id)];
+    const title = t === "text" ? String(n.text ?? "") : t === "file"
+      ? (typeof a?.title === "string" ? a.title : String(n.file ?? "").replace(/^.*\//, "").replace(/\.md$/, ""))
+      : t === "link" ? String(n.url ?? "") : String(n.label ?? "");
+    return { key: String(n.id), kind: (t === "group" ? "frame" : "text") as "text" | "frame", title: title.trim(), x: (Number(n.x) || 0) - x0, y: (Number(n.y) || 0) - y0, w: Number(n.width) || 160, h: Number(n.height) || 60,
+      color: palette(a?.color) ?? color(n.color), fill: palette(a?.fill),
+      byName: typeof a?.byName === "string" ? a.byName.slice(0, 80) : undefined,
+      byColor: typeof a?.byColor === "string" && /^#[a-f\d]{6}$/i.test(a.byColor) ? a.byColor : undefined };
   });
   const keys = new Set(nodes.map((n) => n.key));
   const edges = (j.edges ?? [])
     .filter((e) => keys.has(String(e.fromNode)) && keys.has(String(e.toNode)))
     .map((e) => {
       const to = String(e.toEnd ?? "arrow"), from = String(e.fromEnd ?? "none");
-      const kind: LinkKind = to === "arrow" && from === "arrow" ? "double" : to === "arrow" ? "arrow" : "line";
-      return { from: String(e.fromNode), to: String(e.toNode), ...(e.label ? { label: String(e.label) } : {}), kind };
+      const extra = ext?.connections?.[String(e.id)];
+      const standardKind: LinkKind = to === "arrow" && from === "arrow" ? "double" : to === "arrow" ? "arrow" : "line";
+      const kind = extra?.kind && LINK_KINDS.includes(extra.kind) ? extra.kind : standardKind;
+      return { from: String(e.fromNode), to: String(e.toNode), ...(e.label ? { label: String(e.label) } : {}), kind,
+        color: palette(extra?.color) ?? color(e.color), at: bounded(extra?.at, 0, 1), size: bounded(extra?.size, 1, 200) };
     });
-  return { nodes, edges };
+  const strokes: Omit<Stroke, "id">[] = [];
+  if (Array.isArray(ext?.strokes)) for (const s of ext.strokes) {
+    const c = palette(s?.c), w = bounded(s?.w, 1, 200);
+    if (c === undefined || w === undefined || !Array.isArray(s.p) || s.p.length < 2 || s.p.length % 2 || !s.p.every(Number.isFinite)) continue;
+    strokes.push({ c, w, hl: s.hl === true, p: s.p.map((p, i) => p - (i % 2 ? y0 : x0)) });
+  }
+  return { nodes, edges, strokes };
 }
 
 // ---------- 網の箇条書き(bresuto の書き方) ----------

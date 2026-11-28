@@ -1,6 +1,6 @@
-// UI の文字は、すべてここに置く(後から翻訳できるように)。いまは日本語のみ。
+import { EN, EN_PAPER, EN_SHORTCUT_KEYS, EN_SHORTCUTS } from "./strings.en";
 
-export const T = {
+const JA = {
   appName: "BRESUTO",
   untitled: "(無題)",
   untitledGroup: "(名前なし)",
@@ -90,7 +90,8 @@ export const T = {
   outlineGuideCopied: "書き方をコピーしました。AI への頼みごとの前に貼ってください",
   outlineGuide: `次の書き方で、マインドマップ(ノードと線)にできる文章を書いてください。bresuto というアプリに貼ると、そのまま図になります。
 
-- 1 行 = 1 つのノード。字下げ(スペースかタブ。幅は自由)で深くした行は、その上の行の子(線でつながる)。
+- 1 行 = 1 つのノード。字下げ(半角・全角スペースかタブ)で深くした行は、その上の行の子(線でつながる)。
+- 空行で分けた普通の文章は、同じ字下げの折り返しをまとめて 1 つのノードにする。
 - 行の頭の「- 」「* 」「1. 」は付けても付けなくてもよい。「# 見出し」も段になる(## はその子)。
 - 子の行の頭に「(言葉)」を書くと、親からの線にその言葉が付く。例: 「(原因)洪水」
 - 同じ物を何か所からつなぎたいときは、文の後ろに番号を付ける: 「気候変動 (1)」。
@@ -119,6 +120,7 @@ export const T = {
   phoneInstalling: "スマホにアプリを入れています…",
   // 共有ボード(2026-11-28)
   shareBtn: "共有",
+  shareLanguageDeferred: "言語の設定は次回起動時に反映されます。",
   shareTip: "共有ボード(みんなで同時に書く)を始める・入る",
   shareHead: (t: string) => `共有中: ${t}`,
   shareStart: "新しい共有ボードを始める…",
@@ -130,7 +132,7 @@ export const T = {
   shareInviteShort: "招待",
   shareEnd: "共有を終える",
   shareEndShort: "終える",
-  shareEndDesc: "みんなの共有を終える。参加した全員の自分のホームに、このボードが入る",
+  shareEndDesc: "みんなの共有を終える。アプリで参加した人はホームに保存され、ブラウザで参加した人はファイルで持ち帰れます。",
   shareLeave: "共有から抜ける",
   shareLeaveShort: "抜ける",
   shareLeaveDesc: "自分だけ抜ける。今のボードが自分のホームに入る",
@@ -387,7 +389,7 @@ export const T = {
   bookletSmaller: "小さく",
   bookletBigger: "大きく",
   bookletEd: (ed: "full" | "upright", pages: number) => (ed === "full" ? `正位置・逆位置(${pages}p)` : `正位置だけ(${pages}p)`),
-  bookletEdShort: (ed: "full" | "upright") => (ed === "full" ? "正位置・逆位置" : "正位置だけ"),
+  bookletEdShort: (ed: "full" | "upright"): string => (ed === "full" ? "正位置・逆位置" : "正位置だけ"),
   bookletRead: "PDF",
   bookletReadTip: "画面で読む用の PDF(A6 を 1 ページずつ)を保存",
   bookletPrintHead: "印刷用:",
@@ -618,6 +620,23 @@ export const T = {
   credits: "カードの画像: ライダー・ウェイト版(Pamela Colman Smith 画、1909 年、パブリックドメイン。スキャン: steve-p.org)",
 };
 
+export const T = { ...JA };
+export type Language = "ja" | "en";
+
+export function setLanguage(language: Language): void {
+  Object.assign(T, JA, language === "en" ? EN : {});
+  Object.assign(PT, JA_PAPER, language === "en" ? EN_PAPER : {});
+  document.documentElement.lang = language;
+}
+
+export function languageOfBrowser(): Language {
+  try {
+    const preference = localStorage.getItem("bresuto.language");
+    if (preference === "ja" || preference === "en") return preference;
+  } catch { /* Storage can be disabled. */ }
+  return "ja";
+}
+
 /** ショートカット一覧(見出しごと)。keys は 1 つの操作を表すキーの並び。「/」は別の押し方 */
 export interface ShortcutSection {
   title: string;
@@ -710,7 +729,7 @@ export const SHORTCUTS: ShortcutSection[] = [
 ];
 
 // ---------- 紙PKM(2026-11-23 利用者の指示書) ----------
-export const PT = {
+const JA_PAPER = {
   btnTip: "紙PKM(スキャンした紙のノート) Ctrl+P",
   title: "紙PKM",
   close: "閉じる",
@@ -785,3 +804,21 @@ export const PT = {
   setOk: "使えます",
   save: "保存",
 };
+
+export const PT = { ...JA_PAPER };
+
+export function localizedShortcuts(language: Language): ShortcutSection[] {
+  if (language === "ja") return SHORTCUTS;
+  return SHORTCUTS.map((section) => {
+    const translation = EN_SHORTCUTS[section.title];
+    if (!translation || translation.descriptions.length !== section.items.length) return section;
+    return {
+      ...section,
+      title: translation.title,
+      items: section.items.map((item, i) => ({
+        keys: item.keys.map((chord) => chord.map((key) => EN_SHORTCUT_KEYS[key] ?? key)),
+        desc: translation.descriptions[i],
+      })),
+    };
+  });
+}

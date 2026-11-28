@@ -99,16 +99,53 @@ function overlapArea(a: Rect, b: Rect): number {
   return w > 0 && h > 0 ? w * h : 0;
 }
 
-/** 選んだ物の間かくだけを広げる・狭める(真ん中を動かさない。文字の大きさは変えない) */
-export function spreadFrom(items: ArrItem[], factor: number): Map<string, { x: number; y: number }> {
+/** 選んだ物を同じ割合で動かし、移動中に新しい重なりが生じる手前までで止める。 */
+export function spreadFrom(items: ArrItem[], factor: number, obstacles: ArrItem[] = []): Map<string, { x: number; y: number }> {
   const out = new Map<string, { x: number; y: number }>();
   if (items.length < 2) return out;
   const x0 = Math.min(...items.map((i) => i.r.x)), y0 = Math.min(...items.map((i) => i.r.y));
   const x1 = Math.max(...items.map((i) => i.r.x + i.r.w)), y1 = Math.max(...items.map((i) => i.r.y + i.r.h));
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  for (const i of items) {
-    const c = center(i.r);
-    out.set(i.id, { x: Math.round(cx + (c.x - cx) * factor - i.r.w / 2), y: Math.round(cy + (c.y - cy) * factor - i.r.h / 2) });
+  const moving = items.map(({ id, r }) => {
+    const c = center(r);
+    return { id, r, dx: (c.x - cx) * (factor - 1), dy: (c.y - cy) * (factor - 1) };
+  });
+  const bodies = [...moving, ...obstacles.map(({ r }) => ({ r, dx: 0, dy: 0 }))];
+  // 2つの箱が各軸で重なる時間の範囲。両軸の範囲が重なった時刻に衝突する。
+  type Interval = [number, number];
+  const interval = (a: number, aw: number, b: number, bw: number, v: number, overlap = 0): Interval => {
+    if (overlap >= Math.min(aw, bw)) return [Infinity, -Infinity];
+    const low = b - a - aw + overlap, high = b + bw - a - overlap;
+    if (!v) return low < 0 && high > 0 ? [-Infinity, Infinity] : [Infinity, -Infinity];
+    return v > 0 ? [low / v, high / v] : [high / v, low / v];
+  };
+  const initialOverlap = (a: number, aw: number, b: number, bw: number) => Math.min(a + aw, b + bw) - Math.max(a, b);
+  let limit = 1;
+  const stopAt = (x: Interval, y: Interval) => {
+    const hit = Math.max(0, x[0], y[0]);
+    if (hit < Math.min(limit, x[1], y[1])) limit = hit;
+  };
+  for (const [i, a] of moving.entries()) {
+    for (let j = i + 1; j < bodies.length; j++) {
+      const b = bodies[j];
+      const x = (depth = 0) => interval(a.r.x, a.r.w, b.r.x, b.r.w, a.dx - b.dx, depth);
+      const y = (depth = 0) => interval(a.r.y, a.r.h, b.r.y, b.r.h, a.dy - b.dy, depth);
+      const ox = initialOverlap(a.r.x, a.r.w, b.r.x, b.r.w);
+      const oy = initialOverlap(a.r.y, a.r.h, b.r.y, b.r.h);
+      if (ox > 0 && oy > 0) {
+        // 既存の重なりは残せるが、重なりがさらに深くなる手前で止める。
+        stopAt(x(ox), y());
+        stopAt(x(), y(oy));
+      } else {
+        stopAt(x(), y());
+      }
+    }
+    if (!limit) break;
+  }
+  // 保存時の丸めで、移動しすぎないようにする。
+  for (const { id, r, dx, dy } of moving) {
+    const x = r.x + Math.trunc(dx * limit), y = r.y + Math.trunc(dy * limit);
+    if (x !== r.x || y !== r.y) out.set(id, { x, y });
   }
   return out;
 }

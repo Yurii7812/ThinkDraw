@@ -1,6 +1,6 @@
 // 無限キャンバス(SPEC 4.2)。1 つのグループの中身(所属 + 引用)とペンの線を描き、操作をデータの操作に翻訳する。
 import { freeOffset, gap, placeAround, segHitsRect, type Rect } from "../core/placement";
-import { flattenOutline, layoutOutline, parseOutlineGraph, type OutlineLink, type OutlineNode } from "../core/outline";
+import { flattenOutline, layoutOutline, layoutPastedOutline, parseOutlineGraph, type OutlineLink, type OutlineNode } from "../core/outline";
 import { alignItems, resolveOverlaps, spreadFrom, type ArrItem } from "../core/arrange";
 import { fromJsonCanvas, toOutlineText } from "../core/share";
 import { readZipEntry } from "./unzip";
@@ -182,6 +182,8 @@ export class Canvas {
   private world: HTMLElement;
   private edgesSvg: SVGSVGElement;
   private strokesSvg: SVGSVGElement;
+  private static edgeMaskCount = 0;
+  private readonly edgeMask = "edge-mask-" + ++Canvas.edgeMaskCount;
   private nodesLayer: HTMLElement;
   /** 書いている途中の文字の置き場(描き直しで消えないよう、ノードとは別の層) */
   private draftLayer: HTMLElement;
@@ -195,6 +197,7 @@ export class Canvas {
   private outerLayer: HTMLElement;
   private draft: Draft | null = null;
   private renderQueued = false;
+  private readonly pointerEvents = new AbortController();
 
   constructor(private host: CanvasHost, parent: HTMLElement) {
     this.el = h("div", { class: "canvas", tabindex: "0" });
@@ -209,6 +212,12 @@ export class Canvas {
     this.el.append(this.world);
     parent.append(this.el);
     this.bind();
+  }
+
+  dispose(): void {
+    this.pointerEvents.abort();
+    this.dragGhost(null, { clientX: 0, clientY: 0 }, false);
+    this.el.remove();
   }
 
   private get v(): Vault {
@@ -246,6 +255,7 @@ export class Canvas {
     this.commitDraft("esc");
     if (group !== this.group) this.closeFind();
     this.group = group;
+    this.hoverNode = this.hoverEdge = null;
     this.selection.clear();
     this.strokeSel.clear();
     this.host.onSelectionChange([]);
@@ -401,7 +411,7 @@ export class Canvas {
     this.renderQueued = true;
     requestAnimationFrame(() => {
       this.renderQueued = false;
-      this.renderNow();
+      if (!this.pointerEvents.signal.aborted) this.renderNow();
     });
   }
 
@@ -721,6 +731,16 @@ export class Canvas {
     return el;
   }
 
+  private nodeUrl(n: TDNode): string | null {
+    const title = n.title.trim();
+    return n.type === "text" && !n.file && !n.paper && !n.cite && this.isExternalUrl(title) ? title : null;
+  }
+
+  private isExternalUrl(text: string): boolean {
+    if (!/^https?:\/\/[^\s<>]+$/i.test(text)) return false;
+    return URL.canParse(text);
+  }
+
   private nodeEl0(n: TDNode, ref: boolean): HTMLElement {
     const el = h("div", { class: `node t-${n.type}${n.color ? " c" + n.color : ""}${n.fill ? " f" + n.fill : ""}${ref ? " ref" : ""}`, "data-id": n.id });
     if (ref) el.title = T.refMark;
@@ -751,8 +771,30 @@ export class Canvas {
         el.append(h("span", { class: "label", text: this.citeText(n) || T.untitled }));
         return el;
       }
+      const label = h("span", { class: "label" });
       const parts = splitTags(n.title || T.untitled);
-      el.append(h("span", { class: "label" }, ...parts.map((p) => (p.tag ? h("span", { class: "tag", "data-tag": p.tag, text: p.text }) : p.text))));
+      if (this.nodeUrl(n)) {
+        const url = this.nodeUrl(n)!;
+        label.append(h("a", { class: "node-url", href: url, "data-url": url, draggable: "false", text: n.title }));
+      } else {
+        for (const p of parts) {
+          if (p.tag) {
+            label.append(h("span", { class: "tag", "data-tag": p.tag, text: p.text }));
+            continue;
+          }
+          let end = 0;
+          for (const match of p.text.matchAll(/https?:\/\/[^\s<>"「」『』、。]+/gi)) {
+            let url = match[0].replace(/[.,;!?]+$/, "");
+            while (url.endsWith(")") && url.split(")").length > url.split("(").length) url = url.slice(0, -1);
+            if (!this.isExternalUrl(url)) continue;
+            const start = match.index;
+            label.append(p.text.slice(end, start), h("a", { class: "node-url", href: url, "data-url": url, draggable: "false", text: url }));
+            end = start + url.length;
+          }
+          label.append(p.text.slice(end));
+        }
+      }
+      el.append(label);
       if (n.body.trim()) el.append(h("span", { class: "bodymark", title: T.hasBody, "data-act": "body" }, "¶"));
     } else if (n.type === "note") {
       // ノートはタイトルだけ。中身はクリックして開いたときにだけ見せる(2026-11-23 利用者)
@@ -890,7 +932,7 @@ export class Canvas {
     }
     const hops = findHops(segs);
     // 線の本体・終わりの印(下)と、線の文字(上)を別の層に。ノードと線の文字の所は線を描かない(マスク。2026-11-24 修正8)
-    const linesG = svg("g", { class: "edge-lines", mask: "url(#edge-mask)" });
+    const linesG = svg("g", { class: "edge-lines", mask: `url(#${this.edgeMask})` });
     const labelsG = svg("g", { class: "edge-labels" });
     this.edgesSvg.append(linesG, labelsG);
     const labels: SVGGElement[] = [];
@@ -948,10 +990,10 @@ export class Canvas {
     const fr = this.frameIds();
     for (const [id, r] of this.rects) if (!fr.has(id)) holes.push({ x: r.x - 2, y: r.y - 2, w: r.w + 4, h: r.h + 4 });
     const big = { x: -1e6, y: -1e6, width: 2e6, height: 2e6 };
-    const mask = svg("mask", { id: "edge-mask", maskUnits: "userSpaceOnUse", ...big });
+    const mask = svg("mask", { id: this.edgeMask, maskUnits: "userSpaceOnUse", ...big });
     mask.append(svg("rect", { ...big, fill: "white" }));
     for (const r of holes) mask.append(svg("rect", { x: r.x, y: r.y, width: r.w, height: r.h, rx: 3, fill: "black" }));
-    defs.querySelector("#edge-mask")?.remove();
+    defs.querySelector("#" + this.edgeMask)?.remove();
     defs.append(mask);
     this.drawOuterEdges();
     this.draftLine();
@@ -962,16 +1004,25 @@ export class Canvas {
    * 選んだ文・線を目立たせる(2026-11-27 利用者。zip 4.2): 選んだ文の線(と選んだ線)は太く色付きで、ほかの線より手前に。
    * その線の先の文には色の下線。ほかの文・線は薄くしない
    */
+  private hoverNode: string | null = null;
+  private hoverEdge: string | null = null;
+  private setHover(node: string | null, edge: string | null): void {
+    if (this.hoverNode === node && this.hoverEdge === edge) return;
+    this.hoverNode = node;
+    this.hoverEdge = edge;
+    this.applyEmphasis();
+  }
+
   private applyEmphasis(): void {
     const linesG = this.edgesSvg.querySelector(".edge-lines");
     const near = new Set<string>();
     this.edgesSvg.querySelector(".edge-hot")?.remove();
     if (linesG) {
       // 手前に描く写し(元の線は並べ替えない。並べ替えるとダブルクリックが効かなくなる)
-      const hotG = svg("g", { class: "edge-hot", mask: "url(#edge-mask)" });
+      const hotG = svg("g", { class: "edge-hot", mask: `url(#${this.edgeMask})` });
       for (const g of linesG.querySelectorAll<SVGGElement>(".edge[data-from]")) {
         const f = g.getAttribute("data-from")!, t = g.getAttribute("data-to")!;
-        const on = this.selection.has(f) || this.selection.has(t) || this.edgeSel.has(f + ">" + t);
+        const on = this.selection.has(f) || this.selection.has(t) || this.edgeSel.has(f + ">" + t) || this.hoverNode === f || this.hoverNode === t || this.hoverEdge === f + ">" + t;
         g.classList.toggle("hl", on);
         if (!on) continue;
         near.add(f);
@@ -989,7 +1040,10 @@ export class Canvas {
       }
       if (hotG.childNodes.length) linesG.after(hotG);
     }
-    for (const [id, el] of this.els) el.classList.toggle("hl-near", near.has(id) && !this.selection.has(id));
+    for (const [id, el] of this.els) {
+      el.classList.toggle("hl-hover", id === this.hoverNode);
+      el.classList.toggle("hl-near", near.has(id) && !this.selection.has(id) && id !== this.hoverNode);
+    }
   }
 
   private renderStrokes(): void {
@@ -1339,8 +1393,9 @@ export class Canvas {
     const el = this.el;
     el.addEventListener("contextmenu", (e) => e.preventDefault());
     el.addEventListener("pointerdown", (e) => this.onDown(e));
-    addEventListener("pointermove", (e) => this.onMove(e));
-    addEventListener("pointerup", (e) => this.onUp(e));
+    const { signal } = this.pointerEvents;
+    addEventListener("pointermove", (e) => this.onMove(e), { signal });
+    addEventListener("pointerup", (e) => this.onUp(e), { signal });
     el.addEventListener("auxclick", (e) => {
       if (e.button !== 1) return;
       const id = this.nodeAt(e.target);
@@ -1420,9 +1475,21 @@ export class Canvas {
       this.view.y -= dy;
       this.applyView();
     });
-    // マインドマップを貼る場所(最後にマウスがあった所)
+    // マインドマップを貼る場所と、選択を変えずに強調する対象。
     el.addEventListener("pointermove", (e) => {
       this.lastPt = this.toWorld(e.clientX, e.clientY);
+      if (e.pointerType === "touch" || this.drag || this.pen.on) return this.setHover(null, null);
+      const node = this.nodeAt(e.target);
+      const edge = node ? null : (e.target as Element).closest<SVGElement>(".edge[data-from], .elabel");
+      this.setHover(node, edge ? edge.dataset.from + ">" + edge.dataset.to : null);
+    });
+    el.addEventListener("pointerleave", () => this.setHover(null, null));
+    el.addEventListener("click", (e) => {
+      const link = (e.target as Element).closest<HTMLAnchorElement>("a[data-url]");
+      if (!link) return;
+      e.preventDefault();
+      // ポインター操作は clickNode から開く。キーボードでのリンク操作はこちら。
+      if (e.detail === 0) void api().openExternal(link.dataset.url!);
     });
   }
 
@@ -1917,9 +1984,10 @@ export class Canvas {
       return this.openCite(id);
     }
     // URL だけの文字は、1 回クリックでブラウザで開く(書き直すのは右クリック → 名前を変える / R。2026-11-27 利用者)
-    if (node.type === "text" && !node.file && !node.paper && !node.cite && /^https?:\/\/\S+$/.test(node.title.trim())) {
+    const url = target.closest<HTMLElement>("[data-url]")?.dataset.url ?? this.nodeUrl(node);
+    if (url) {
       this.setSelection([id]);
-      void api().openExternal(node.title.trim());
+      void api().openExternal(url);
       return;
     }
     if (node.type === "text" && !node.file && !node.paper) {
@@ -2257,8 +2325,30 @@ export class Canvas {
   }
   /** Alt+↑ / Alt+↓: 選んだ物の間かくを広げる・狭める */
   spreadSelection(factor: number): void {
-    if (this.readOnly || this.selection.size < 2) return;
-    this.v.tx(() => this.applyMoves(spreadFrom(this.arrItems(this.selection), factor)));
+    if (this.readOnly || !this.selection.size) return;
+    const all = this.arrItems();
+    const picked = all.filter(({ id }) => this.selection.has(id));
+    const outside = [...this.rects].filter(([id]) => !this.selection.has(id)).map(([id, r]) => ({ id, r }));
+    this.v.tx(() => {
+      this.applyMoves(spreadFrom(picked, factor, outside));
+      for (const { id } of picked) {
+        if (this.v.get(id)?.type !== "group" || this.v.isRefIn(this.group, id)) continue;
+        const items: ArrItem[] = [], frames: ArrItem[] = [];
+        for (const item of this.v.itemsOf(id)) {
+          const n = this.v.get(item.id);
+          if (!n) continue;
+          const el = this.nodeEl(n, item.ref);
+          if (item.w) el.style.setProperty("--img-w", item.w + "px");
+          el.style.visibility = "hidden";
+          this.nodesLayer.append(el);
+          const r = { x: item.x, y: item.y, w: el.offsetWidth || 80, h: el.offsetHeight || 24 };
+          el.remove();
+          (n.type === "frame" ? frames : items).push({ id: item.id, r });
+        }
+        const positions = [...spreadFrom(items, factor, frames)].map(([member, p]) => ({ id: member, ...p }));
+        if (positions.length) this.v.move(id, positions);
+      }
+    });
   }
   alignSelection(axis: "v" | "h"): void {
     if (this.readOnly || this.selection.size < 2) return;
@@ -2375,7 +2465,7 @@ export class Canvas {
       this.resolveOverlapsNow();
       return true;
     }
-    if (e.altKey && !e.ctrlKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && this.selection.size > 1) {
+    if (e.altKey && !e.ctrlKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && (this.selection.size > 1 || ids.some((id) => this.v.get(id)?.type === "group"))) {
       this.spreadSelection(e.key === "ArrowUp" ? 1.25 : 1 / 1.25);
       return true;
     }
@@ -2619,7 +2709,7 @@ export class Canvas {
     }
     const { roots, links } = parseOutlineGraph(text);
     if (!roots.length) return false;
-    this.placeOutline(roots, at ?? this.lastPt ?? this.visibleCenter(), links);
+    this.placeOutline(roots, at ?? this.lastPt ?? this.visibleCenter(), links, true);
     return true;
   }
   /** OPML・FreeMind・XMind のファイルを落とした: マインドマップにして置く。読めなければ null(ふつうの添付にする) */
@@ -2644,13 +2734,14 @@ export class Canvas {
     } catch {
       return false;
     }
-    if (!c.nodes.length) return false;
+    if (!c.nodes.length && !c.strokes.length) return false;
     const idOf = new Map<string, string>();
     const made: string[] = [];
     this.v.tx(() => {
       for (const n of c.nodes) {
         const x = Math.round(at.x + n.x), y = Math.round(at.y + n.y);
-        const id = n.kind === "frame" ? this.v.create({ type: "frame", title: n.title, group: this.group, x, y, size: { w: Math.round(n.w), h: Math.round(n.h) }, color: n.color }).id : this.v.create({ type: "text", title: n.title || T.untitled, group: this.group, x, y, color: n.color }).id;
+        const id = n.kind === "frame" ? this.v.create({ type: "frame", title: n.title, group: this.group, x, y, size: { w: Math.round(n.w), h: Math.round(n.h) }, color: n.color, fill: n.fill }).id : this.v.create({ type: "text", title: n.title || T.untitled, group: this.group, x, y, color: n.color, fill: n.fill }).id;
+        if (n.byName || n.byColor) this.v.setExtra(id, { byName: n.byName, byColor: n.byColor });
         idOf.set(n.key, id);
         made.push(id);
       }
@@ -2659,6 +2750,10 @@ export class Canvas {
         if (!a || !b || a === b) continue;
         this.v.addLink(a, b, e.kind);
         if (e.label) this.v.setLinkLabel(a, b, e.label);
+        this.v.setLinkProps(a, b, { color: e.color, at: e.at, size: e.size });
+      }
+      for (const stroke of c.strokes) {
+        this.v.addStroke(this.group, { ...stroke, p: stroke.p.map((p, i) => Math.round(p + (i % 2 ? at.y : at.x))) });
       }
     });
     this.renderNow();
@@ -2666,7 +2761,7 @@ export class Canvas {
     toast(T.outlinePlaced(made.length));
     return true;
   }
-  placeOutline(roots: OutlineNode[], at: { x: number; y: number }, extra: OutlineLink[] = []): void {
+  placeOutline(roots: OutlineNode[], at: { x: number; y: number }, extra: OutlineLink[] = [], scatter = false): void {
     const flat = flattenOutline(roots);
     if (flat.length > 2000) return void toast(T.outlineTooMany(flat.length));
     const ids: string[] = [];
@@ -2692,10 +2787,10 @@ export class Canvas {
         const r = this.rects.get(ids[i]);
         return { w: r?.w ?? 80, h: r?.h ?? 24 };
       };
-      const pos = layoutOutline(roots, size, at.x, at.y);
       const mine = new Set(ids);
       const obstacles = [...this.rects].filter(([id]) => !mine.has(id)).map(([, r]) => r);
-      const off = freeOffset(pos.map((p, i) => ({ x: p.x, y: p.y, ...size(i) })), obstacles);
+      const pos = scatter ? layoutPastedOutline(flat, size, at, obstacles) : layoutOutline(roots, size, at.x, at.y);
+      const off = scatter ? { dx: 0, dy: 0 } : freeOffset(pos.map((p, i) => ({ ...p, ...size(i) })), obstacles);
       this.v.move(this.group, pos.map((p, i) => ({ id: ids[i], x: p.x + off.dx, y: p.y + off.dy })));
     });
     this.renderNow();
@@ -2985,15 +3080,17 @@ export class Canvas {
     if (!many && !isRef && n.type === "text" && n.cite) more.push({ label: T.citeToPlain, action: () => this.v.update(id, { title: this.citeText(n), cite: null }) });
     if (!many && !isRef && n.type === "card" && n.card?.deck === "tarot") more.push({ label: T.cardFlip, checked: n.card.reversed, action: () => this.v.setCard(id, { ...n.card!, reversed: !n.card!.reversed }) });
     // 配置の補助(2026-11-27)。いくつか選んだときだけ(1 つのときのメニューは小さいまま。見本 X)
-    if (many)
+    if (many || (!isRef && n.type === "group"))
       items.push({
         label: T.arrMenu,
         sub: [
           { label: T.arrResolve, hint: "Alt+D", desc: T.arrResolveSelDesc, action: () => this.resolveOverlapsNow() },
           { label: T.arrSpread, hint: "Alt+↑", action: () => this.spreadSelection(1.25) },
           { label: T.arrShrink, hint: "Alt+↓", action: () => this.spreadSelection(1 / 1.25) },
-          { label: T.arrAlignV, action: () => this.alignSelection("v") },
-          { label: T.arrAlignH, action: () => this.alignSelection("h") },
+          ...(many ? [
+            { label: T.arrAlignV, action: () => this.alignSelection("v") },
+            { label: T.arrAlignH, action: () => this.alignSelection("h") },
+          ] : []),
         ],
       });
     items.push({ label: T.mMoreMenu, sub: more });

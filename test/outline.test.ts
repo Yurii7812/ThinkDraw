@@ -1,11 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { layoutOutline, parseOutline, type OutlineNode } from "../src/core/outline";
+import { flattenOutline, layoutOutline, layoutPastedOutline, parseOutline, type OutlineNode } from "../src/core/outline";
 
 const show = (ns: OutlineNode[]): unknown => ns.map((n) => (n.children.length ? { [n.title]: show(n.children) } : n.title));
 
 describe("文章からマインドマップ(2026-11-27)", () => {
   it("スペースの字下げ(幅はばらばらでよい)", () => {
     expect(show(parseOutline("a\n aa\n   aaa\n"))).toEqual([{ a: [{ aa: ["aaa"] }] }]);
+  });
+  it("空行のある文章の折り返しをまとめ、全角と半角の字下げを読む", () => {
+    expect(show(parseOutline("心の税金\n予定の前の時間が短く感じる\n\n手軽なことを始める\n  数分の動画を見る\n　 動画を見続ける\n　　　結局2時間になる\n\n- 一口サイズの罠\n- ちゃんとやりたい"))).toEqual([
+      "心の税金 予定の前の時間が短く感じる",
+      { 手軽なことを始める: [{ "数分の動画を見る 動画を見続ける": ["結局2時間になる"] }] },
+      "一口サイズの罠", "ちゃんとやりたい",
+    ]);
+    expect(show(parseOutline("親\n　子1\n 子2\n　　孫"))).toEqual([{ 親: ["子1", { 子2: ["孫"] }] }]);
+  });
+  it("貼り付けは周囲の空きを使い、乱数によって配置が変わる", () => {
+    const nodes = flattenOutline(parseOutline("親\n 子1\n 子2\n 子3\n 子4"));
+    const obstacle = { x: -30, y: -20, w: 60, h: 40 };
+    const a = layoutPastedOutline(nodes, () => ({ w: 80, h: 24 }), { x: 0, y: 0 }, [obstacle], () => 0.1);
+    const b = layoutPastedOutline(nodes, () => ({ w: 80, h: 24 }), { x: 0, y: 0 }, [obstacle], () => 0.8);
+    expect(a).not.toEqual(b);
+    for (const [i, r] of a.entries()) {
+      for (const q of [obstacle, ...a.slice(0, i)]) {
+        expect(r.x >= q.x + q.w || q.x >= r.x + r.w || r.y >= q.y + q.h || q.y >= r.y + r.h).toBe(true);
+      }
+    }
   });
   it("タブの字下げ", () => {
     expect(show(parseOutline("a\n\ta\n\tb\n\t\ta\n"))).toEqual([{ a: ["a", { b: ["a"] }] }]);

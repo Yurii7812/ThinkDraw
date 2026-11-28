@@ -1,3 +1,5 @@
+import { gap, placeAround, type Rect } from "./placement";
+
 // 文章からマインドマップ(2026-11-27 利用者。質問票 br-1127b)。
 // 受け付ける形: 字下げ(スペース・タブ。幅はいくつでもよい)・箇条書きの記号(- * + 1. 1))・Markdown の見出し(#)・
 // OPML(Workflowy など)・FreeMind(.mm)・XMind(content.json / content.xml。zip を開くのは画面側)。
@@ -94,6 +96,41 @@ function parseXmindXml(src: string): OutlineNode[] {
   return prune(roots);
 }
 
+const leadingIndent = /^[ \t\u3000]*/;
+const listMarker = /^([-*+•・]|\d+[.)])\s+/;
+const heading = /^(#{1,6})\s+/;
+const numberedLink = /^\(\d{1,4}\)(?:\s*[:：]|$)|\(\d{1,4}\)$/;
+
+/** 空行で区切られた文章は、同じ字下げの折り返しを一つにまとめる。 */
+function outlineLines(text: string): string[] {
+  const lines = text.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").split("\n");
+  const first = lines.findIndex((line) => line.trim());
+  let last = lines.length - 1;
+  while (last >= 0 && !lines[last].trim()) last--;
+  if (first < 0) return [];
+  const content = lines.slice(first, last + 1);
+  if (!content.some((line) => !line.trim())) return content;
+  const structured = (line: string) => heading.test(line) || listMarker.test(line) || numberedLink.test(line) || /^\(|^(```|~~~)/.test(line);
+  const combined: string[] = [];
+  let previousIndent = -1;
+  let fence = false;
+  let previousPlain = false;
+  for (const line of content) {
+    const body = line.trim();
+    if (/^(```|~~~)/.test(body)) fence = !fence;
+    const indent = leadingIndent.exec(line)![0].length;
+    const plain = !!body && !fence && !structured(body);
+    if (plain && previousPlain && indent === previousIndent) {
+      combined[combined.length - 1] += " " + body;
+    } else {
+      combined.push(line);
+    }
+    previousIndent = indent;
+    previousPlain = plain;
+  }
+  return combined;
+}
+
 /**
  * 字下げ・箇条書き・見出しの文章(2026-11-27)。網にする書き方も読む(AI にも書きやすいように、記号は少しだけ。
  * 2026-11-27 夜に利用者と決め直した。矢印の記号は使わない):
@@ -134,13 +171,13 @@ function parseIndented(text: string): { roots: OutlineNode[]; links: OutlineLink
     if (t.ref) named.set(t.ref, n);
     return n;
   };
-  for (const raw of text.replace(/\r\n?/g, "\n").split("\n")) {
+  for (const raw of outlineLines(text)) {
     if (/^\s*(```|~~~)/.test(raw)) {
       fence = !fence;
       continue;
     }
     if (fence || !raw.trim()) continue;
-    const line = raw.replace(/\t/g, "    ");
+    const line = raw;
     let rank: number;
     let body: string;
     const h = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
@@ -148,10 +185,10 @@ function parseIndented(text: string): { roots: OutlineNode[]; links: OutlineLink
       rank = h[1].length;
       body = h[2];
     } else {
-      rank = 10 + /^ */.exec(line)![0].length;
+      rank = 10 + leadingIndent.exec(line)![0].length;
       body = line
         .trim()
-        .replace(/^([-*+•・]|\d+[.)])\s+/, "")
+        .replace(listMarker, "")
         .replace(/^\[[ xX]\]\s+/, "");
     }
     body = body.replace(/\s+/g, " ").trim();
@@ -298,6 +335,34 @@ export function flattenOutline(roots: OutlineNode[]): { node: OutlineNode; paren
   };
   roots.forEach((r) => walk(r, -1));
   return out;
+}
+
+/** 貼り付けは Tab と同じように、親の周りの空いた方向へ散らす。 */
+export function layoutPastedOutline(
+  flat: ReturnType<typeof flattenOutline>,
+  size: (i: number) => Box,
+  at: { x: number; y: number },
+  obstacles: Rect[],
+  rand = Math.random,
+): Rect[] {
+  const placed: Rect[] = [];
+  const origin = { ...at, w: 0, h: 0 };
+  for (const [i, entry] of flat.entries()) {
+    const box = size(i);
+    const anchor = placed[entry.parent] ?? origin;
+    const occupied = obstacles.concat(placed);
+    const others = occupied.filter((r) => r !== anchor);
+    const lineBlockers = entry.parent < 0 ? undefined : others;
+    let p = i === 0 ? { x: Math.round(at.x - box.w / 2), y: Math.round(at.y - box.h / 2) } : null;
+    if (!p || occupied.some((r) => gap({ ...box, ...p! }, r) < 24)) {
+      p = placeAround(anchor, others, { size: box, lineBlockers, rand });
+    }
+    if (occupied.some((r) => gap({ ...box, ...p! }, r) < 8)) {
+      p = { x: Math.ceil(occupied.reduce((right, r) => Math.max(right, r.x + r.w), anchor.x) + 40), y: Math.round(anchor.y) };
+    }
+    placed.push({ ...box, ...p });
+  }
+  return placed;
 }
 
 /** 木を字下げの箇条書きに(書き出し・Ctrl+C 用) */

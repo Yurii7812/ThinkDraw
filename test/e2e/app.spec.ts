@@ -1382,7 +1382,7 @@ test("2026-11-24 修正8: 括弧はノードの手前で欠けない・線は文
     expect(await clear(), `${dx},${dy}`).toBe(true);
   }
   // 線は文字の所を描かない(マスク)、ラベルは線より手前の層
-  await expect(page.locator("mask#edge-mask rect[fill=black]")).not.toHaveCount(0);
+  await expect(page.locator("mask[id^=edge-mask-] rect[fill=black]")).not.toHaveCount(0);
   const order = await page.evaluate(() => [...document.querySelector(".edges")!.children].map((c) => c.getAttribute("class") ?? c.tagName));
   expect(order.indexOf("edge-lines")).toBeLessThan(order.indexOf("edge-labels"));
   // Shift+ドラッグ: 線だけを範囲で選ぶ(両端のノードは範囲の外でも)。右クリックで色をまとめて・Delete で線だけ消す

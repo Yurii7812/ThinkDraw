@@ -16,7 +16,7 @@ import { showGroupTree } from "./grouptree";
 import type { Rect } from "../core/placement";
 import { openPicker } from "./picker";
 import { SidePanel, type SideTab } from "./side";
-import { PT, SHORTCUTS, T } from "./strings";
+import { languageOfBrowser, localizedShortcuts, PT, setLanguage, T } from "./strings";
 import { PaperView } from "./paperview";
 import { paperStore } from "./paperstore";
 import { cardTip, closeDrawMenu, DEFAULT_CONFIG, drawLabel, drawMenuOpen, openDrawMenu, runDraw, type DrawConfig, type DrawKind } from "./tarot";
@@ -24,6 +24,7 @@ import { api, askText, closeMenu, h, menuOpen, showMenu, svg, toast, type MenuIt
 import { parseInvite, SharedClient, type Me } from "./shared";
 import { PhoneSync } from "./phonesync";
 import { authorOf, boardOf, type BoardState } from "../core/session";
+import { toJsonCanvas, toOutlineText } from "../core/share";
 import { parseNode } from "../core/frontmatter";
 import type { TDNode } from "../core/types";
 
@@ -163,6 +164,7 @@ class App {
   private main!: HTMLElement;
 
   async boot(): Promise<void> {
+    setLanguage(languageOfBrowser());
     this.config = (await api().getConfig()) ?? {};
     // 線の種類のいつもの色の初期値(利用者が決めた色。2026-11-25 修正11)。設定で変えたらそちら
     if (!this.config.edgeColors) this.config.edgeColors = { ...DEFAULT_EDGE_COLORS };
@@ -302,11 +304,17 @@ class App {
       this.ancestorMenu();
     });
     const search = h("button", { class: "searchbox", text: T.searchPlaceholder });
-    search.addEventListener("click", () => this.search());
+    search.addEventListener("click", () => {
+      if (this.sharedActive) this.showSharedTab(false);
+      this.search();
+    });
     this.btnDraw = btn("draw", T.drawMenu, () => this.openDraw(), T.draw, "draw");
     this.btnPen = btn("i-pen", T.penOn, () => this.togglePen(), T.pen, "pen");
     // ボードに添付(ファイル・チェックリスト・表をノードとして置く)。いま使っている画面に入る
-    const attachBtn = btn("attach-btn", T.attachBtnTip, () => (this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas).openAttachMenu(attachBtn), T.attachBtn, "attach");
+    const attachBtn = btn("attach-btn", T.attachBtnTip, () => {
+      if (this.sharedActive) this.showSharedTab(false);
+      (this.peek && this.main.dataset.active === "right" ? this.peek : this.canvas).openAttachMenu(attachBtn);
+    }, T.attachBtn, "attach");
     const bar = h(
       "header",
       { class: "topbar" },
@@ -324,7 +332,10 @@ class App {
         btn("whole-btn", T.wholeTip, () => this.toggleWhole(), T.wholeBtn, "whole"),
         btn("share-btn", T.shareTip, () => this.shareMenu(), T.shareBtn, "share"),
         btn("phone-btn", T.phoneTip, () => this.phoneMenu(), T.phoneBtn, "phone"),
-        btn("export", T.exportTip, (() => this.openExport()) as () => void, T.exportBtn, "export"),
+        btn("export", T.exportTip, () => {
+          if (this.sharedActive) this.openSharedExport();
+          else this.openExport();
+        }, T.exportBtn, "export"),
         h("div", { class: "split" }, this.btnDraw),
         btn("i-theme", T.theme, () => this.setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark")),
         btn("i-settings", T.settings + " (Ctrl+/)", () => this.settings()),
@@ -356,7 +367,7 @@ class App {
         vault: this.vault,
         // 共有ボードから貼った物(複製)に「元: 誰・どの共有ボード」、自分が持ち込んだ物は元へ飛べる(2026-11-28)
         foreignExtra: (src) => this.sharedPasteExtra(src),
-        nodeDecor: (n, el) => this.decorOrigin(n, el),
+        nodeDecor: (n, el) => this.decorAuthorAndOrigin(n, el),
         kindColor: (k: string) => this.config.edgeColors?.[k] ?? 0,
         openGroup: (id) => this.openGroup(id),
         openBody: (id) => this.openBody(id),
@@ -515,6 +526,13 @@ class App {
     document.querySelector(".tbtn.backlinks-btn")?.classList.toggle("on", !!on);
   }
   private updateBar(): void {
+    if (this.sharedActive && this.shared) {
+      this.titleEl.textContent = this.shared.title || T.shareUntitled;
+      document.title = `${this.titleEl.textContent} — ${T.appName}`;
+      this.renameBtn.hidden = true;
+      this.btnBack.disabled = this.btnFwd.disabled = this.upBtn.disabled = true;
+      return;
+    }
     queueMicrotask(() => this.syncBacklinksBtn());
     const g = this.vault.get(this.canvas.group);
     this.titleEl.textContent = this.canvas.group === ROOT_ID ? T.home : g?.title || T.untitledGroup;
@@ -616,6 +634,7 @@ class App {
     this.syncTab();
   }
   private activate(side: Side, i: number): void {
+    if (this.sharedActive) this.showSharedTab(false);
     if (side === "left") {
       if (i < 0 || i >= this.tabs.length) return;
       this.syncTab();
@@ -638,6 +657,7 @@ class App {
     const at = atEnd ? this.tabs.length : this.activeTab + 1;
     this.tabs.splice(at, 0, { group, back: [], fwd: [] });
     if (activate) {
+      if (this.sharedActive) this.showSharedTab(false);
       this.loadTab(at);
       if (focusNode) {
         this.canvas.centerOn(focusNode);
@@ -823,13 +843,15 @@ class App {
     const els = tabs.map((t, i) => {
       const x = h("button", { class: "tab-x", title: T.tabClose + " (Ctrl+W)", "aria-label": T.tabClose, text: "×" });
       const label = this.tabLabel(t);
-      const el = h("div", { class: "tab" + (i === act ? " active" : "") + (t.note ? " note-tab" : ""), role: "tab", "aria-selected": String(i === act), title: label, draggable: "true", "data-side": side, "data-i": String(i) }, h("span", { class: "tab-t", text: label }), x);
+      const active = i === act && !this.sharedActive;
+      const el = h("div", { class: "tab" + (active ? " active" : "") + (t.note ? " note-tab" : ""), role: "tab", "aria-selected": String(active), title: label, draggable: "true", "data-side": side, "data-i": String(i) }, h("span", { class: "tab-t", text: label }), x);
       el.addEventListener("mousedown", (e) => {
         if (e.button === 1) e.preventDefault(); // 中ボタンのスクロールを出さない
       });
       el.addEventListener("click", (e) => {
         if (e.target === x) return this.closeTab(i, side);
-        if (i === act) this.setActivePane(side);
+        if (this.sharedActive) this.activate(side, i);
+        else if (i === act) this.setActivePane(side);
         else this.switchTab(i, side);
       });
       el.addEventListener("auxclick", (e) => e.button === 1 && this.closeTab(i, side));
@@ -874,12 +896,14 @@ class App {
       "wheel",
       (e) => {
         const n = this.tabsOf(side).length;
-        if (n < 2) return;
+        const hasShared = strip === this.tabBar && !!this.shared;
+        if (n < 2 && !hasShared) return;
         const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
         if (!d) return;
         e.preventDefault();
-        const i = this.activeOf(side) + (d > 0 ? 1 : -1);
-        if (i >= 0 && i < n) this.switchTab(i, side);
+        const i = (hasShared && this.sharedActive ? n : this.activeOf(side)) + (d > 0 ? 1 : -1);
+        if (i === n && hasShared) this.showSharedTab(true);
+        else if (i >= 0 && i < n) this.activate(side, i);
       },
       { passive: false },
     );
@@ -972,10 +996,20 @@ class App {
     if (!this.tabBar || this.tabDrag) return; // ドラッグの間は作り直さない
     const split = !!this.peek;
     // 分けていないときは上に 1 列(1 枚なら出さない)。分けたときは、左右それぞれの見出しにタブの列
-    const top = !split && this.tabs.length >= 2;
+    const top = !!this.shared || (!split && this.tabs.length >= 2);
     this.tabBar.classList.toggle("hidden", !top);
-    this.tabBar.replaceChildren(...(top ? this.tabStrip("left") : []));
-    this.lStrip.replaceChildren(...(split ? this.tabStrip("left") : []));
+    const tabs = top ? this.tabStrip("left") : [];
+    if (this.shared) {
+      const label = "👥 " + (this.shared.title || T.shareUntitled);
+      const title = h("button", { class: "tab-t shared-tab-title", text: label });
+      title.addEventListener("click", () => this.showSharedTab(true));
+      const close = h("button", { class: "tab-x", text: "×", title: this.shared.host ? T.shareEnd : T.shareLeave, "aria-label": this.shared.host ? T.shareEnd : T.shareLeave });
+      close.addEventListener("click", () => void this.endShared());
+      const tab = h("div", { class: "tab shared-tab" + (this.sharedActive ? " active" : ""), role: "tab", "aria-selected": String(this.sharedActive), title: label }, title, close);
+      tabs.splice(tabs.length - 1, 0, tab);
+    }
+    this.tabBar.replaceChildren(...tabs);
+    this.lStrip.replaceChildren(...(split && !top ? this.tabStrip("left") : []));
     this.rStrip?.replaceChildren(...this.tabStrip("right"));
   }
   /** 題の横の▾: 所属先とホームへ移る */
@@ -1019,6 +1053,7 @@ class App {
   }
   // ---------- 紙PKM(Ctrl+P) ----------
   togglePaper(start?: string): void {
+    if (this.sharedActive) this.showSharedTab(false);
     if (this.paperOpen && !start) return this.closePaper();
     if (this.records) this.closeRecords();
     this.closePopup();
@@ -1072,6 +1107,7 @@ class App {
   }
   // ---------- 記録一覧(Ctrl+J) ----------
   toggleRecords(): void {
+    if (this.sharedActive) this.showSharedTab(false);
     if (this.records) return this.closeRecords();
     this.closePopup();
     this.canvas.commitDraft("esc");
@@ -1252,6 +1288,7 @@ class App {
     showMenu(r.left, r.bottom + 2, items, { nav: true });
   }
   openGroup(id: string, focusNode?: string): void {
+    if (this.sharedActive) this.showSharedTab(false);
     if (this.vault.get(id)?.type !== "group") return;
     this.leaveNoteTab(); // ノートのタブを見ていたら、ボードのタブへ
     this.closePopup();
@@ -1595,6 +1632,7 @@ class App {
     this.updateDrawTitle();
   }
   openDraw(tab?: "tarot" | "iching" | "prompt" | "settings"): void {
+    if (this.sharedActive) this.showSharedTab(false);
     if (drawMenuOpen()) {
       closeDrawMenu();
       return;
@@ -1775,6 +1813,7 @@ class App {
   }
   /** 右上の「バックリンク」: ノートのタブならそのノートの周りに、ボードならこの画面のまま周りに出す(2026-11-27 利用者) */
   toggleBacklinks(): void {
+    if (this.sharedActive) this.showSharedTab(false);
     const side = this.activeSide();
     const pop = side === "left" ? this.popup : this.popupR;
     if (pop && this.popupTab[side]) {
@@ -1837,11 +1876,12 @@ class App {
   }
 
   // ---------- 共有ボード(みんなで使う。2026-11-28 利用者。質問票 br-1128a) ----------
-  // 右上の「共有」から。共有ボードは右に出る(左は自分のボード)。左右のあいだは Ctrl+C → Ctrl+V(複製)・Ctrl+Q(自分だけ元へ飛べる)。
+  // 右上の「共有」から専用タブを開く。自分のタブとの間では Ctrl+C → Ctrl+V / Ctrl+Q が使える。
   // 終わると(開いた人が終える・自分が抜ける)、参加した全員の自分のホームにそのボードが入る
   shared: SharedClient | null = null;
   sharedCanvas: Canvas | null = null;
   private sharedWrap: HTMLElement | null = null;
+  private sharedActive = false;
   private sharedPeople: HTMLElement | null = null;
   private sharedInvite: { invite: string | null; lanInvite: string | null; code: string; tunnelError?: string } | null = null;
 
@@ -1942,8 +1982,6 @@ class App {
   private async openShared(url: string, code: string, me: Me, host: boolean): Promise<void> {
     const c = new SharedClient(url, code, me, host);
     await c.connect();
-    if (this.whole) this.closeWhole();
-    if (this.peek) this.closePeek();
     this.shared = c;
     const title = h("span", { class: "pane-title shared-title", text: "👥 " + (c.title || T.shareUntitled) });
     this.sharedPeople = h("span", { class: "shared-people" });
@@ -1968,7 +2006,7 @@ class App {
           const by = authorOf(c.vault.get(id));
           return !by || by === me.pid;
         },
-        nodeDecor: (n, el) => this.decorShared(n, el),
+        nodeDecor: (n, el) => this.decorAuthorAndOrigin(n, el),
         // 自分のボード → 共有ボード: Ctrl+Q は、ほかの人にはふつうの物・自分だけ元へ飛べる(利用者)
         foreignExtra: (src, mode) => (mode === "quote" ? { origin: src.id, originBy: me.pid } : null),
       },
@@ -1976,12 +2014,8 @@ class App {
     );
     sc.el.classList.add("shared-canvas");
     this.sharedCanvas = sc;
-    this.splitBar = h("div", { class: "split-bar", title: T.splitBarTip });
-    this.splitBar.addEventListener("pointerdown", (e) => this.dragSplit(e));
-    this.splitBar.addEventListener("dblclick", () => this.setSplit(0.5));
-    this.leftPane.after(this.splitBar, this.sharedWrap);
-    this.main.classList.add("split");
-    this.setSplit(this.state.splitRatio ?? 0.5);
+    this.leftPane.after(this.sharedWrap);
+    this.showSharedTab(true);
     sc.show(ROOT_ID, null);
     sc.fitAll(true);
     sc.el.addEventListener("pointermove", (e) => {
@@ -2009,7 +2043,9 @@ class App {
       this.saveShared(st ?? boardOf(c.vault), c);
       this.closeShared();
     };
-    c.vault.onChange(() => sc.requestRender());
+    c.vault.onChange(() => {
+      if (this.sharedActive) sc.requestRender();
+    });
     this.renderPeople();
   }
   private renderPeople(): void {
@@ -2023,8 +2059,8 @@ class App {
       }),
     );
   }
-  /** 共有ボードの物の飾り: 書いた人の色の点・自分が Ctrl+Q で持ち込んだ物は元へ飛ぶ */
-  private decorShared(n: TDNode, el: HTMLElement): void {
+  /** 書いた人の色と、自分のボードへの引用元を表示する。 */
+  private decorAuthorAndOrigin(n: TDNode, el: HTMLElement): void {
     if (typeof n.extra.byColor === "string") {
       const dot = h("span", { class: "by-dot", title: T.shareBy(String(n.extra.byName ?? "?")) });
       dot.style.setProperty("--pc", String(n.extra.byColor));
@@ -2041,6 +2077,7 @@ class App {
     b.addEventListener("pointerdown", (e) => e.stopPropagation());
     b.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (this.sharedActive) this.showSharedTab(false);
       this.goToNode(o, false, true);
     });
     el.append(b);
@@ -2057,6 +2094,7 @@ class App {
   private async endShared(): Promise<void> {
     const c = this.shared;
     if (!c) return;
+    this.sharedCanvas?.commitDraft("esc");
     if (c.host) {
       await api().shareStop(); // みんなに「終わり」が届き、それぞれ自分のホームに保存する(自分のところにも届く)
       setTimeout(() => {
@@ -2070,7 +2108,46 @@ class App {
       this.closeShared();
     }
   }
+  private openSharedExport(): void {
+    const c = this.shared, canvas = this.sharedCanvas;
+    if (!c || !canvas) return;
+    canvas.commitDraft("esc");
+    const r = document.querySelector(".tbtn.export")?.getBoundingClientRect();
+    const name = (c.title || T.shareUntitled).replace(/[\\/:*?"<>|]/g, "_");
+    const rect = (id: string) => canvas.rectOf(id);
+    const save = async (ext: string, content: string) => {
+      try {
+        const result = await api().exportSave(name + "." + ext, ext === "canvas" ? "JSON Canvas" : "Markdown", [ext], content);
+        if (result) toast(T.bookletSaved(result));
+      } catch (e) {
+        toast(T.saveFailed((e as Error).message));
+      }
+    };
+    showMenu(r?.left ?? 200, (r?.bottom ?? 40) + 2, [
+      { label: T.exportCanvas, action: () => void save("canvas", toJsonCanvas(c.vault, ROOT_ID, rect)) },
+      { label: T.exportOutline, action: () => void save("md", toOutlineText(c.vault, ROOT_ID, rect)) },
+    ]);
+  }
+  private showSharedTab(active: boolean): void {
+    if (active && !this.sharedCanvas) return;
+    if (active) this.canvas.commitDraft("esc");
+    else this.sharedCanvas?.commitDraft("esc");
+    this.sharedActive = active;
+    if (this.sharedWrap) this.sharedWrap.hidden = !active;
+    this.main.classList.toggle("shared-active", active);
+    this.btnPen.classList.toggle("on", active ? !!this.sharedCanvas?.pen.on : this.canvas.pen.on);
+    this.updateBar();
+    if (active) this.renderTabs(); // updateBar redraws the tabs itself on the private board.
+    const canvas = active ? this.sharedCanvas! : this.canvas;
+    canvas.el.focus({ preventScroll: true });
+    canvas.requestRender();
+    if (!active) {
+      this.peek?.requestRender();
+      this.whole?.requestRender();
+    }
+  }
   private closeShared(): void {
+    this.sharedCanvas?.dispose();
     this.shared?.close();
     this.shared = null;
     this.sharedCanvas = null;
@@ -2078,10 +2155,8 @@ class App {
     this.sharedWrap = null;
     this.sharedPeople = null;
     this.sharedInvite = null;
-    this.splitBar?.remove();
-    this.splitBar = null;
-    this.main.classList.remove("split");
-    this.leftPane.style.flex = "";
+    if (this.sharedActive) this.showSharedTab(false);
+    else this.renderTabs();
   }
   /** 共有ボードを、自分のホームに 1 つのグループとして保存する(位置・線・言葉・色・ペン・書いた人のまま) */
   private saveShared(st: BoardState, c: SharedClient): void {
@@ -2130,6 +2205,7 @@ class App {
   }
 
   toggleWhole(): void {
+    if (this.sharedActive) this.showSharedTab(false);
     if (this.whole) this.closeWhole();
     else this.openWhole();
   }
@@ -2243,6 +2319,7 @@ class App {
   }
   /** Ctrl+\: 今のタブを反対側へ(分けていなければ、右に分ける) */
   toggleBeside(): void {
+    if (this.sharedActive) this.showSharedTab(false);
     this.moveActiveTabAcross();
   }
   /** 新しいタブで開く: グループならその中を、ほかはそれのある所(所属先、なければ引用している所)を開いて選ぶ */
@@ -2399,6 +2476,11 @@ class App {
 
   // ---------- ペン ----------
   togglePen(on?: boolean): void {
+    if (this.sharedActive && this.sharedCanvas) {
+      this.sharedCanvas.setPen({ on: on ?? !this.sharedCanvas.pen.on });
+      this.btnPen.classList.toggle("on", this.sharedCanvas.pen.on);
+      return;
+    }
     this.canvas.setPen({ on: on ?? !this.canvas.pen.on });
     this.renderPenBar();
   }
@@ -2479,6 +2561,15 @@ class App {
       r.addEventListener("change", () => this.setTheme(t));
       return h("label", { class: "check" }, r, t === "system" ? T.themeSystem : t === "light" ? T.themeLight : T.themeDark);
     });
+    const language = h("select", { "aria-label": "言語 / Language" }, h("option", { value: "ja", text: "日本語" }), h("option", { value: "en", text: "English" }));
+    language.value = languageOfBrowser();
+    language.addEventListener("change", async () => {
+      const next = language.value;
+      await this.flushAll();
+      localStorage.setItem("bresuto.language", next);
+      if (this.shared) return void toast(T.shareLanguageDeferred);
+      location.reload();
+    });
     const drawSet = h("button", { class: "btn", text: T.drawSettings });
     const lineSet = h("button", { class: "btn", text: T.lineSettings });
     lineSet.addEventListener("click", () => this.lineSettings());
@@ -2507,12 +2598,12 @@ class App {
       }
     });
     // ショートカットは見出しごとのカードに、キーはキーの形で(2026-11-23 利用者「羅列で見づらい」)
-    const isKey = (k: string) => [...k].length <= 6 && !/クリック|ドラッグ|ホイール|ペン/.test(k);
+    const isKey = (k: string) => [...k].length <= 6 && !/クリック|ドラッグ|ホイール|ペン|click|wheel|pen/i.test(k);
     const keyRow = (combo: string[]) => h("span", { class: "combo" }, ...combo.flatMap((k, i) => [i ? h("span", { class: "plus", text: "+" }) : null, h(isKey(k) ? "kbd" : "span", { class: isKey(k) ? "" : "act", text: k })]).filter(Boolean) as HTMLElement[]);
     const table = h(
       "div",
       { class: "sc-grid" },
-      ...SHORTCUTS.map((sec) =>
+      ...localizedShortcuts(languageOfBrowser()).map((sec) =>
         h(
           "section",
           { class: "sc-card" },
@@ -2528,6 +2619,7 @@ class App {
       "div",
       { class: "modal settings wide" },
       h("div", { class: "modal-title", text: T.settingsTitle }),
+      h("label", { class: "set-row" }, h("span", { class: "set-label", text: "言語 / Language" }), language),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.theme }), ...radios),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.draw }), drawSet),
       h("div", { class: "set-row" }, h("span", { class: "set-label", text: T.lineSettingsShort }), lineSet),
@@ -2570,9 +2662,8 @@ class App {
       const files = e.clipboardData?.files;
       const inField = (e.target as Element)?.closest?.("input, textarea, .ProseMirror");
       const rightActive = !!this.peek && this.main.dataset.active === "right";
-      if (inField || (rightActive ? this.popupR : this.popup) || this.records || this.paperOpen) return;
-      const sharedOn = !!this.sharedCanvas && this.sharedCanvas.el.contains(document.activeElement);
-      const c = sharedOn ? this.sharedCanvas! : rightActive ? this.peek! : this.canvas;
+      if (inField || (!this.sharedActive && ((rightActive ? this.popupR : this.popup) || this.records || this.paperOpen))) return;
+      const c = this.sharedActive ? this.sharedCanvas! : rightActive ? this.peek! : this.canvas;
       // Ctrl+C でコピーした物(目印の文字が入っている)は、複製して貼る(引用は Ctrl+Q。2026-11-26 修正14)
       const norm = (t: string) => t.replace(/\r\n/g, "\n").trim();
       if (!files?.length && refClipboard.size && norm(e.clipboardData?.getData("text/plain") ?? "") === norm(refClipboard.mark)) {
@@ -2593,6 +2684,7 @@ class App {
       // 検索は Ctrl+F・ボードの中を探すのは Ctrl+K(2026-11-26 利用者が入れ替え)
       if (e.ctrlKey && !e.shiftKey && k === "f") {
         e.preventDefault();
+        if (this.sharedActive) this.showSharedTab(false);
         this.search();
         return;
       }
@@ -2611,6 +2703,10 @@ class App {
       // Ctrl+W・Ctrl+Tab は、今使っている側のタブに(2026-11-26 修正14)
       if (e.ctrlKey && !e.shiftKey && k === "w") {
         e.preventDefault();
+        if (this.sharedActive) {
+          void this.endShared();
+          return;
+        }
         const side = this.activeSide();
         this.closeTab(this.activeOf(side), side);
         return;
@@ -2619,10 +2715,24 @@ class App {
         e.preventDefault();
         const side = this.activeSide();
         const n = this.tabsOf(side).length;
-        if (n > 1) {
-          const d = e.key === "PageUp" || (e.key === "Tab" && e.shiftKey) ? -1 : 1;
-          this.switchTab((this.activeOf(side) + d + n) % n, side);
-        }
+        const d = e.key === "PageUp" || (e.key === "Tab" && e.shiftKey) ? -1 : 1;
+        if (this.sharedActive || (this.shared && side === "left")) {
+          const count = this.tabs.length + 1;
+          const current = this.sharedActive ? this.tabs.length : this.activeTab;
+          const next = (current + d + count) % count;
+          if (next === this.tabs.length) this.showSharedTab(true);
+          else this.activate("left", next);
+        } else if (n > 1) this.switchTab((this.activeOf(side) + d + n) % n, side);
+        return;
+      }
+      if (this.sharedActive && !(e.ctrlKey && e.key === "/")) {
+        if (inField) return;
+        const c = this.shared!;
+        if (e.key === "Escape" && this.sharedCanvas!.pen.on) this.togglePen(false);
+        else if (e.ctrlKey && k === "z") c.vault.undo();
+        else if (e.ctrlKey && k === "y") c.vault.redo();
+        else if (!this.sharedCanvas!.handleKey(e)) return;
+        e.preventDefault();
         return;
       }
       if (e.ctrlKey && (e.key === "[" || e.code === "BracketLeft")) {
@@ -2715,7 +2825,7 @@ class App {
         this.vault.redo();
         return;
       }
-      const active = this.sharedCanvas && this.sharedCanvas.el.contains(document.activeElement) ? this.sharedCanvas : this.peek && this.peek.el.contains(document.activeElement) ? this.peek : this.canvas;
+      const active = this.peek && this.peek.el.contains(document.activeElement) ? this.peek : this.canvas;
       if (e.key === "Escape" && active === this.peek && !this.peek.selection.size) {
         this.closePeek();
         return;

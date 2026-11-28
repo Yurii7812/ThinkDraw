@@ -52,6 +52,18 @@ describe("共有の書き出し(2026-11-28)", () => {
     expect(back.edges.find((x) => x.label === "原因")?.kind).toBe("arrow");
     expect(back.edges.filter((x) => x.kind === "line")).toHaveLength(3);
   });
+  it("BRESUTO 拡張付きの .canvas はペン、色、著者、線種を持ち帰れる", async () => {
+    const { v, rect, ids } = await board();
+    v.move(ROOT_ID, [{ id: ids.a, x: -100, y: -50 }]);
+    v.setExtra(ids.a, { byName: "Alex", byColor: "#333333" });
+    v.setLinkProps(ids.a, ids.b, { kind: "dashed", color: 8, at: 0.7, size: 18 });
+    v.addStroke(ROOT_ID, { c: 2, w: 8, hl: true, p: [-100, -50, 15, 25] });
+    const file = toJsonCanvas(v, ROOT_ID, rect);
+    const imported = fromJsonCanvas(file);
+    expect(imported.nodes[0]).toMatchObject({ title: "気候変動", x: 0, y: 0, byName: "Alex", byColor: "#333333" });
+    expect(imported.edges.find((e) => e.from === ids.a)).toMatchObject({ kind: "dashed", color: 8, at: 0.7, size: 18 });
+    expect(imported.strokes).toEqual([{ c: 2, w: 8, hl: true, p: [0, 0, 115, 75] }]);
+  });
   it("OPML は木(アウトライナーで読める)", async () => {
     const { v, rect } = await board();
     const o = toOpml(v, ROOT_ID, rect, "ホーム");
